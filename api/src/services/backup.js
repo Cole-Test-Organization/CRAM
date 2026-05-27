@@ -228,24 +228,68 @@ export class BackupService {
     catch { throw Object.assign(new Error(`backup not found: ${filename}`), { statusCode: 404 }); }
 
     const conn = parsePgConnection(this.databaseUrl);
-    logger.warn({ event: 'restore.start', filename }, 'starting pg_restore --clean');
+    logger.warn({ event: 'restore.start', filename }, 'starting restore');
     const startedAt = Date.now();
+
     try {
+      // Step 1: Wipe the public schema. `pg_restore --clean --if-exists` only
+      // knows to drop objects that exist *in the dump* — if the live DB has
+      // newer tables (e.g. a backup taken before migration 028 added
+      // user_memories, restored into a DB that has it), pg_restore can't see
+      // user_memories to drop its FK, and the constraint-drop of users_pkey
+      // fails because user_memories.user_id_fkey still depends on it. Wiping
+      // the schema is the only forward-drift-safe approach. CASCADE handles
+      // the pg_trgm extension and the pgmigrations table, both of which the
+      // dump re-creates.
+      await runProcess(
+        'psql',
+        ['-v', 'ON_ERROR_STOP=1', '-d', conn.database, '-c',
+         'DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public AUTHORIZATION CURRENT_USER; GRANT ALL ON SCHEMA public TO PUBLIC;'],
+        pgEnv(conn)
+      );
+
+      // Step 2: pg_restore into the now-empty schema. No --clean needed.
+      // --no-owner / --no-privileges keep the dump portable across role names;
+      // --exit-on-error halts on the first non-fatal issue.
       await runProcess(
         'pg_restore',
-        // --clean drops existing objects before recreating; --if-exists prevents
-        // errors when targets are missing (e.g. restoring into a freshly-init'd
-        // database). --no-owner / --no-privileges keep the dump portable across
-        // role names; --exit-on-error halts on the first non-fatal issue.
-        ['--clean', '--if-exists', '--no-owner', '--no-privileges', '--exit-on-error', '-d', conn.database, fullPath],
+        ['--no-owner', '--no-privileges', '--exit-on-error', '-d', conn.database, fullPath],
         pgEnv(conn)
       );
     } catch (err) {
-      logger.error({ event: 'restore.failed', err: err.message }, 'pg_restore failed');
+      logger.error({ event: 'restore.failed', err: err.message }, 'restore failed');
       throw err;
     }
-    const result = { filename, restored_at: new Date().toISOString(), duration_ms: Date.now() - startedAt };
-    logger.warn({ event: 'restore.completed', ...result }, 'pg_restore completed');
+
+    // Step 3: Apply migrations newer than what's in the dump. The entrypoint
+    // does this on every container start; repeating it here makes restore
+    // self-contained so the user doesn't have to restart the API to use a
+    // dump that predates the current code's schema. node-pg-migrate is
+    // idempotent — if pgmigrations is already at HEAD, this is a no-op.
+    let migrations = null;
+    try {
+      const { stdout } = await runProcess(
+        'npm',
+        ['--prefix', '/app/api', 'run', 'db:migrate'],
+        process.env
+      );
+      migrations = stdout.trim().split('\n').filter((l) => l.includes('Migrating') || l.includes('No migrations')).join(' | ') || 'applied';
+      logger.info({ event: 'restore.migrate', migrations }, 'post-restore migrations applied');
+    } catch (err) {
+      logger.error({ event: 'restore.migrate_failed', err: err.message }, 'post-restore migrations failed');
+      throw Object.assign(
+        new Error(`Restore succeeded but post-restore migrations failed: ${err.message}`),
+        { statusCode: 500 }
+      );
+    }
+
+    const result = {
+      filename,
+      restored_at: new Date().toISOString(),
+      duration_ms: Date.now() - startedAt,
+      migrations,
+    };
+    logger.warn({ event: 'restore.completed', ...result }, 'restore completed');
     return result;
   }
 

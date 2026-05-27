@@ -162,13 +162,20 @@ export class ImportExportService {
       [accountId]
     )).rows;
     for (const m of meetings) {
+      // Carry the full portable contact shape per attendee so the importer can
+      // recreate a missing contact (e.g. a teammate who attended a meeting but
+      // isn't linked to the customer via account_contacts, and isn't reachable
+      // via a partner shell). Pre-fix, attendee_refs only had {email, full_name}
+      // and the importer silently dropped any attendee whose name/email didn't
+      // already exist in the destination tenant.
       const attendees = (await client.query(
-        `SELECT c.full_name, c.email
+        `SELECT c.full_name, c.company, c.title, c.email, c.phone, c.linkedin,
+                c.notes, c.kind, c.location_raw, c.city, c.state, c.country
          FROM meeting_attendees ma JOIN contacts c ON c.id = ma.contact_id
          WHERE ma.meeting_id = $1`,
         [m.id]
       )).rows;
-      m.attendee_refs = attendees.map((a) => ({ email: a.email || null, full_name: a.full_name }));
+      m.attendee_refs = attendees;
       delete m.id;
     }
     return meetings;
@@ -602,12 +609,22 @@ export class ImportExportService {
         updated.meetings++;
       }
 
-      // Resolve and refresh attendee links.
+      // Resolve and refresh attendee links. If the attendee isn't in the
+      // destination yet, recreate them as a standalone contact (no account
+      // link) so the meeting attendance survives. Pre-enrichment bundles only
+      // carried {email, full_name} — for those we default kind='internal' since
+      // orphan attendees are typically teammates. Post-enrichment bundles carry
+      // the full portable contact shape, so kind is preserved.
       const attendeeIds = [];
       for (const ref of m.attendee_refs || []) {
         let id = null;
         if (ref.email) id = lookup.byEmail.get(ref.email.toLowerCase());
         if (!id && ref.full_name) id = lookup.byName.get(ref.full_name.toLowerCase());
+        if (!id && (ref.email || ref.full_name)) {
+          id = await this._upsertContactRow(client, ref, ref.kind || 'internal');
+          if (ref.email) lookup.byEmail.set(ref.email.toLowerCase(), id);
+          if (ref.full_name) lookup.byName.set(ref.full_name.toLowerCase(), id);
+        }
         if (id) attendeeIds.push(id);
       }
       if (attendeeIds.length > 0) {
