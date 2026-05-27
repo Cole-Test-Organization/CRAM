@@ -1,0 +1,33 @@
+{
+  "name": "cram-api",
+  "version": "2.0.0",
+  "description": "CRAM API — accounts, contacts, meetings, events, and the in-process agent loop",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch-path=src src/index.js",
+    "mcp": "node src/mcp/server.js",
+    "db:migrate": "node-pg-migrate --migrations-dir migrations up",
+    "db:migrate:down": "node-pg-migrate --migrations-dir migrations down",
+    "db:migrate:create": "node-pg-migrate --migrations-dir migrations create",
+    "db:schema": "node ../dev/scripts/dump-schema.js",
+    "test": "node --test test/endpoints.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.40.0",
+    "@fastify/cors": "^10.0.0",
+    "@fastify/static": "^9.0.0",
+    "@fastify/swagger": "^9.0.0",
+    "@fastify/swagger-ui": "^5.0.0",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "express": "^5.2.1",
+    "fastify": "^5.0.0",
+    "node-pg-migrate": "^7.9.0",
+    "pg": "^8.13.0",
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0",
+    "undici": "^6.25.0",
+    "zod": "^3.25.1"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "cram-outreach",
+  "version": "1.0.0",
+  "description": "CRAM outreach — LinkedIn + web enrichment for CRM contacts. Invoked from the API queue, not directly.",
+  "main": "index.js",
+  "type": "module",
+  "bin": {
+    "research": "./src/index.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["research", "linkedin", "outreach", "cybersecurity"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0",
+    "puppeteer": "^22.0.0"
+  }
+}

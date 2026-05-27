@@ -1,0 +1,17 @@
+node_modules
+npm-debug.log*
+.git
+.gitignore
+.claude
+.DS_Store
+*.md
+!README.md
+
+# Built GUI (rebuilt in Docker)
+api/public
+
+# Dev artifacts
+gui/node_modules
+api/node_modules
+todoist/node_modules
+outreach/node_modules

@@ -1,0 +1,644 @@
+@import "tailwindcss";
+
+@theme {
+  /* Vintage dark mode — warm CRT amber on coffee-black.
+     Token names (surf/cerulean/papaya/amber/scarlet/base) are preserved
+     for class-class-compatibility; hex values are retuned to a warm palette. */
+
+  /* surf → Mustard / aged amber (primary accent — formerly turquoise) */
+  --color-surf-50:  #fdecc8;
+  --color-surf-100: #f9dca3;
+  --color-surf-200: #f2c677;
+  --color-surf-300: #e6ac4a;
+  --color-surf-400: #d49322;
+  --color-surf-500: #b57800;
+  --color-surf-600: #8c5f00;
+  --color-surf-700: #6b4800;
+  --color-surf-800: #4a3200;
+  --color-surf-900: #2a1c00;
+  --color-surf-950: #140d00;
+
+  /* cerulean → Rust / burnt sienna (secondary accent — formerly teal) */
+  --color-cerulean-50:  #f6e0ce;
+  --color-cerulean-100: #eec6ad;
+  --color-cerulean-200: #e5a986;
+  --color-cerulean-300: #d88a5c;
+  --color-cerulean-400: #c86933;
+  --color-cerulean-500: #b04c13;
+  --color-cerulean-600: #8f3c08;
+  --color-cerulean-700: #702b00;
+  --color-cerulean-800: #4d1c00;
+  --color-cerulean-900: #2d0e00;
+  --color-cerulean-950: #180600;
+
+  /* amber — bright goldenrod (warnings) */
+  --color-amber-50:  #fff6d0;
+  --color-amber-100: #ffebaa;
+  --color-amber-200: #ffdb71;
+  --color-amber-300: #ffc938;
+  --color-amber-400: #f2b700;
+  --color-amber-500: #d4a000;
+  --color-amber-600: #a17900;
+  --color-amber-700: #755800;
+  --color-amber-800: #4a3800;
+  --color-amber-900: #241b00;
+  --color-amber-950: #171100;
+
+  /* papaya → Olive / moss (tertiary — partner/accent) */
+  --color-papaya-50:  #eff0d8;
+  --color-papaya-100: #dde0b1;
+  --color-papaya-200: #c6cb87;
+  --color-papaya-300: #a9b15c;
+  --color-papaya-400: #8e9845;
+  --color-papaya-500: #707a34;
+  --color-papaya-600: #575f28;
+  --color-papaya-700: #41471d;
+  --color-papaya-800: #2c3013;
+  --color-papaya-900: #161809;
+  --color-papaya-950: #0d0f05;
+
+  /* scarlet — aged brick red (destructive) */
+  --color-scarlet-50:  #f8dcd7;
+  --color-scarlet-100: #efb6ad;
+  --color-scarlet-200: #e38a7c;
+  --color-scarlet-300: #d25c4c;
+  --color-scarlet-400: #b63d2e;
+  --color-scarlet-500: #912a1e;
+  --color-scarlet-600: #721f15;
+  --color-scarlet-700: #54170f;
+  --color-scarlet-800: #370f0a;
+  --color-scarlet-900: #1b0705;
+  --color-scarlet-950: #120503;
+
+  /* base — warm coffee-black / parchment neutrals */
+  --color-base-50:  #f2e7d0;
+  --color-base-100: #e0cfb3;
+  --color-base-200: #c5b295;
+  --color-base-300: #9f8b71;
+  --color-base-400: #7a6952;
+  --color-base-500: #564834;
+  --color-base-600: #3a3022;
+  --color-base-700: #2a231a;
+  --color-base-800: #1e1912;
+  --color-base-900: #14110c;
+  --color-base-950: #0d0b08;
+
+  /* Sidebar width */
+  --spacing-sidebar: 220px;
+
+  /* Mobile top bar height — matches hamburger tap target */
+  --spacing-topbar: 52px;
+
+  /* Sharper radii — borderline rectangular for neobrutalism */
+  --radius-sm: 0px;
+  --radius: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
+  --radius-2xl: 0px;
+  --radius-3xl: 0px;
+  --radius-full: 999px;
+
+  /* Fonts — monospace-forward for vintage CRT feel, serif for headings */
+  --font-sans: ui-monospace, 'SF Mono', 'Monaco', 'Menlo', 'Courier New', monospace;
+  --font-mono: ui-monospace, 'SF Mono', 'Monaco', 'Menlo', 'Courier New', monospace;
+  --font-display: Georgia, 'Times New Roman', Cambria, 'Iowan Old Style', serif;
+}
+
+/* Theme-controllable visual effects. These live outside @theme because they're
+   not Tailwind tokens — they're plain CSS vars the body background and a few
+   inline-formatted blocks read. The ThemeProvider in the GUI overrides them
+   via a runtime <style id="active-theme-vars"> element. Defaults below match
+   the Vintage CRT palette so the GUI renders correctly even before the active
+   theme is fetched (e.g. on first paint, or when the API is unreachable). */
+:root {
+  --scanline-color: rgba(181, 120, 0, 0.015);
+  --scanline-spacing: 3px;
+  --highlight-mark-color: rgba(212, 147, 34, 0.25);
+}
+
+/* Base styles */
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background: var(--color-base-950);
+    color: var(--color-base-50);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    /* Repeating scanline texture — theme-controlled via --scanline-color
+       (set to transparent to disable) and --scanline-spacing. */
+    background-image: repeating-linear-gradient(
+      0deg,
+      var(--scanline-color) 0px,
+      var(--scanline-color) 1px,
+      transparent 1px,
+      transparent var(--scanline-spacing)
+    );
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+
+  a {
+    color: var(--color-surf-400);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+  a:hover {
+    color: var(--color-surf-300);
+  }
+}
+
+/* ============================================================
+   Press primitives — neobrutalism shadow + translate-on-active
+   Used by <Button>, <PressCard>, nav links, and any clickable.
+   ============================================================ */
+@layer components {
+  .press {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-family: var(--font-sans);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border: 2px solid var(--color-base-200);
+    background: var(--color-base-800);
+    color: var(--color-base-50);
+    box-shadow: 3px 3px 0 0 var(--color-base-200);
+    transition: transform 80ms ease-out, box-shadow 80ms ease-out, background-color 120ms;
+    cursor: pointer;
+    user-select: none;
+    text-align: center;
+    text-decoration: none;
+    padding: 6px 14px;
+    font-size: 12px;
+    line-height: 1.2;
+    border-radius: 0;
+  }
+  .press:hover { background: var(--color-base-700); }
+  .press:active,
+  .press[data-pressed="true"] {
+    transform: translate(3px, 3px);
+    box-shadow: 0 0 0 0 var(--color-base-200);
+  }
+  .press:focus-visible {
+    outline: 2px solid var(--color-surf-300);
+    outline-offset: 3px;
+  }
+  .press:disabled,
+  .press[aria-disabled="true"] {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .press:disabled:active,
+  .press[aria-disabled="true"]:active {
+    transform: none;
+    box-shadow: 3px 3px 0 0 var(--color-base-200);
+  }
+
+  /* Primary — mustard */
+  .press-primary {
+    background: var(--color-surf-500);
+    border-color: var(--color-surf-200);
+    color: var(--color-base-950);
+    box-shadow: 3px 3px 0 0 var(--color-surf-200);
+  }
+  .press-primary:hover { background: var(--color-surf-400); }
+  .press-primary:active,
+  .press-primary[data-pressed="true"] {
+    box-shadow: 0 0 0 0 var(--color-surf-200);
+  }
+  .press-primary:disabled:active,
+  .press-primary[aria-disabled="true"]:active {
+    box-shadow: 3px 3px 0 0 var(--color-surf-200);
+  }
+
+  /* Secondary — rust */
+  .press-secondary {
+    background: var(--color-cerulean-600);
+    border-color: var(--color-cerulean-200);
+    color: var(--color-base-50);
+    box-shadow: 3px 3px 0 0 var(--color-cerulean-200);
+  }
+  .press-secondary:hover { background: var(--color-cerulean-500); }
+  .press-secondary:active,
+  .press-secondary[data-pressed="true"] {
+    box-shadow: 0 0 0 0 var(--color-cerulean-200);
+  }
+  .press-secondary:disabled:active,
+  .press-secondary[aria-disabled="true"]:active {
+    box-shadow: 3px 3px 0 0 var(--color-cerulean-200);
+  }
+
+  /* Danger — brick red */
+  .press-danger {
+    background: var(--color-scarlet-600);
+    border-color: var(--color-scarlet-200);
+    color: var(--color-base-50);
+    box-shadow: 3px 3px 0 0 var(--color-scarlet-200);
+  }
+  .press-danger:hover { background: var(--color-scarlet-500); }
+  .press-danger:active,
+  .press-danger[data-pressed="true"] {
+    box-shadow: 0 0 0 0 var(--color-scarlet-200);
+  }
+  .press-danger:disabled:active,
+  .press-danger[aria-disabled="true"]:active {
+    box-shadow: 3px 3px 0 0 var(--color-scarlet-200);
+  }
+
+  /* Ghost — outline only, no fill (subtle tertiary) */
+  .press-ghost {
+    background: transparent;
+    border-color: var(--color-base-500);
+    color: var(--color-base-200);
+    box-shadow: 3px 3px 0 0 var(--color-base-500);
+  }
+  .press-ghost:hover {
+    background: var(--color-base-800);
+    color: var(--color-base-50);
+  }
+  .press-ghost:active,
+  .press-ghost[data-pressed="true"] {
+    box-shadow: 0 0 0 0 var(--color-base-500);
+  }
+  .press-ghost:disabled:active,
+  .press-ghost[aria-disabled="true"]:active {
+    box-shadow: 3px 3px 0 0 var(--color-base-500);
+  }
+
+  /* Sizes */
+  .press-sm { padding: 3px 9px; font-size: 11px; }
+  .press-md { padding: 6px 14px; font-size: 12px; } /* default */
+  .press-lg { padding: 10px 20px; font-size: 14px; }
+
+  /* -------- Card-shaped press (for tiles, stat cards) -------- */
+  .press-card {
+    display: block;
+    padding: 18px;
+    background: var(--color-base-800);
+    border: 2px solid var(--color-base-300);
+    color: var(--color-base-50);
+    box-shadow: 4px 4px 0 0 var(--color-base-300);
+    transition: transform 80ms ease-out, box-shadow 80ms ease-out, background-color 120ms;
+    cursor: pointer;
+    user-select: none;
+    text-align: left;
+    text-decoration: none;
+  }
+  .press-card:hover { background: var(--color-base-700); }
+  .press-card:active,
+  .press-card[data-pressed="true"] {
+    transform: translate(4px, 4px);
+    box-shadow: 0 0 0 0 var(--color-base-300);
+  }
+  .press-card:focus-visible {
+    outline: 2px solid var(--color-surf-300);
+    outline-offset: 3px;
+  }
+
+  /* Accent-border variant (primary tinted shadow/border for stat cards) */
+  .press-card-primary {
+    border-color: var(--color-surf-300);
+    box-shadow: 4px 4px 0 0 var(--color-surf-300);
+  }
+  .press-card-primary:active,
+  .press-card-primary[data-pressed="true"] {
+    box-shadow: 0 0 0 0 var(--color-surf-300);
+  }
+
+  /* -------- Nav pill press (sidebar items) -------- */
+  .press-nav {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 11px;
+    background: transparent;
+    border: 2px solid transparent;
+    color: var(--color-base-200);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    text-decoration: none;
+    cursor: pointer;
+    transition: transform 80ms ease-out, box-shadow 80ms ease-out,
+                background-color 120ms, border-color 120ms, color 120ms;
+  }
+  .press-nav:hover {
+    background: var(--color-base-800);
+    border-color: var(--color-base-500);
+    color: var(--color-base-50);
+    box-shadow: 3px 3px 0 0 var(--color-base-500);
+  }
+  .press-nav:active,
+  .press-nav[data-pressed="true"] {
+    transform: translate(3px, 3px);
+    box-shadow: 0 0 0 0 var(--color-base-500);
+  }
+  .press-nav-active {
+    background: var(--color-surf-500);
+    border-color: var(--color-surf-200);
+    color: var(--color-base-950);
+    box-shadow: 3px 3px 0 0 var(--color-surf-200);
+  }
+  .press-nav-active:hover {
+    background: var(--color-surf-400);
+    border-color: var(--color-surf-200);
+    color: var(--color-base-950);
+    box-shadow: 3px 3px 0 0 var(--color-surf-200);
+  }
+  /* Must come AFTER :hover — when both match on click, :active must win
+     so the shadow collapses (button presses into it) rather than the shadow
+     appearing to move with the button. */
+  .press-nav-active:active,
+  .press-nav-active[data-pressed="true"] {
+    transform: translate(3px, 3px);
+    box-shadow: 0 0 0 0 var(--color-surf-200);
+  }
+
+  /* -------- Row press (list rows — subtler, no shadow shift) -------- */
+  .press-row {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    border-left: 3px solid transparent;
+    background: transparent;
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 120ms, border-left-color 120ms;
+  }
+  .press-row:hover {
+    background: var(--color-base-700);
+    border-left-color: var(--color-surf-400);
+  }
+  .press-row:active {
+    background: var(--color-base-600);
+  }
+
+  /* -------- Panel (non-clickable framed surface) -------- */
+  .panel {
+    background: var(--color-base-800);
+    border: 2px solid var(--color-base-500);
+    box-shadow: 4px 4px 0 0 var(--color-base-600);
+  }
+  .panel-accent {
+    border-top: 3px solid var(--color-surf-500);
+  }
+
+  /* -------- Form input vintage treatment -------- */
+  .input-vintage {
+    width: 100%;
+    background: var(--color-base-950);
+    border: 2px solid var(--color-base-500);
+    color: var(--color-base-50);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    padding: 7px 10px;
+    outline: none;
+    border-radius: 0;
+    transition: border-color 120ms, box-shadow 120ms;
+  }
+  .input-vintage::placeholder { color: var(--color-base-400); }
+  .input-vintage:focus {
+    border-color: var(--color-surf-300);
+    box-shadow: 2px 2px 0 0 var(--color-surf-300);
+  }
+  .input-vintage:disabled { opacity: 0.5; cursor: not-allowed; }
+  textarea.input-vintage {
+    resize: vertical;
+    line-height: 1.5;
+  }
+}
+
+/* Markdown body — CSS because innerHTML can't use utilities */
+@layer components {
+  .md-body {
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  .md-body h1 { font-family: var(--font-display); font-size: 22px; margin: 24px 0 12px; font-weight: 700; color: var(--color-base-50); }
+  .md-body h2 { font-family: var(--font-display); font-size: 18px; margin: 20px 0 10px; font-weight: 600; color: var(--color-base-50); }
+  .md-body h3 { font-family: var(--font-display); font-size: 15px; margin: 16px 0 8px; font-weight: 600; color: var(--color-base-50); }
+  .md-body p { margin: 8px 0; }
+  .md-body ul, .md-body ol { margin: 8px 0; padding-left: 24px; }
+  .md-body li { margin: 4px 0; }
+  .md-body code {
+    background: var(--color-base-900);
+    padding: 2px 6px;
+    border: 1px solid var(--color-base-600);
+    font-size: 12px;
+    color: var(--color-surf-300);
+  }
+  .md-body pre {
+    background: var(--color-base-900);
+    padding: 14px;
+    overflow-x: auto;
+    margin: 12px 0;
+    border: 2px solid var(--color-base-600);
+    box-shadow: 3px 3px 0 0 var(--color-base-700);
+  }
+  .md-body pre code { background: none; padding: 0; border: none; }
+  .md-body blockquote {
+    border-left: 3px solid var(--color-surf-400);
+    padding-left: 16px;
+    color: var(--color-base-200);
+    margin: 12px 0;
+    background: var(--color-base-900);
+    padding: 8px 16px;
+  }
+  .md-body mark {
+    background: var(--highlight-mark-color);
+    color: var(--color-base-50);
+    padding: 1px 2px;
+  }
+  .md-body hr {
+    border: none;
+    border-top: 2px solid var(--color-base-600);
+    margin: 20px 0;
+  }
+  .md-body strong { color: var(--color-base-50); }
+
+  /* Search snippet highlights */
+  .sr-snippet mark {
+    background: var(--highlight-mark-color);
+    color: var(--color-base-50);
+    padding: 1px 2px;
+  }
+
+  /* Long URLs / inline content must wrap on narrow viewports rather than
+     force horizontal scroll. */
+  .md-body {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .md-body img { max-width: 100%; height: auto; }
+}
+
+/* ============================================================
+   Mobile press primitives — inline-edit field class
+   ============================================================ */
+@layer components {
+  /* Inline-edit field — invisible until hover/focus, used across the app
+     wherever a value is directly editable in place (AccountDetail header,
+     domains, technical profile, partners, threads, etc.) */
+  .press-field {
+    background: transparent;
+    border: 2px solid transparent;
+    color: var(--color-base-50);
+    font-size: 13px;
+    padding: 4px 8px;
+    outline: none;
+    transition: border-color 150ms, background-color 150ms;
+  }
+  .press-field:hover { border-color: var(--color-base-600); }
+  .press-field:focus {
+    border-color: var(--color-surf-300);
+    background: var(--color-base-950);
+  }
+
+  /* Tiny X remove button — now a real class (was an inline string
+     duplicated in several files). Compact on desktop, finger-friendly
+     on mobile. */
+  .btn-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 2px solid transparent;
+    color: var(--color-base-400);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    transition: color 150ms, border-color 150ms, background-color 150ms;
+  }
+  .btn-x:hover {
+    color: var(--color-scarlet-300);
+    border-color: color-mix(in srgb, var(--color-scarlet-500) 50%, transparent);
+    background: color-mix(in srgb, var(--color-scarlet-500) 10%, transparent);
+  }
+
+  /* Mobile top bar — sticky, 52px tall, matches neobrutalism borders.
+     Hidden at md: and above (sidebar replaces it). */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    height: var(--spacing-topbar);
+    background: var(--color-base-900);
+    border-bottom: 2px solid var(--color-base-600);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 12px;
+  }
+
+  /* Off-canvas drawer panel — below md, sidebar is absolutely positioned
+     and slides in from the left. At md: and above the drawer class is
+     effectively a no-op (component uses md:translate-x-0 on the <aside>). */
+  .drawer-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(2px);
+  }
+}
+
+/* ============================================================
+   Mobile (<768px) overrides — touch targets, shadow scaling,
+   iOS zoom prevention on input focus.
+   ============================================================ */
+@media (max-width: 767px) {
+  @layer components {
+    /* Bump the global press sizes so every button hits the 44px touch
+       minimum without a per-call-site change. */
+    .press-sm { padding: 7px 12px; font-size: 12px; min-height: 36px; }
+    .press-md { padding: 10px 16px; font-size: 13px; min-height: 44px; }
+    .press-lg { padding: 12px 22px; font-size: 15px; min-height: 48px; }
+
+    /* Press-card shadow reduces from 4px → 2px on mobile so the card's
+       right edge doesn't cause viewport overflow when flush with page padding. */
+    .press-card {
+      box-shadow: 2px 2px 0 0 var(--color-base-300);
+    }
+    .press-card:active,
+    .press-card[data-pressed="true"] {
+      transform: translate(2px, 2px);
+      box-shadow: 0 0 0 0 var(--color-base-300);
+    }
+    .press-card-primary {
+      box-shadow: 2px 2px 0 0 var(--color-surf-300);
+    }
+    .press-card-primary:active,
+    .press-card-primary[data-pressed="true"] {
+      box-shadow: 0 0 0 0 var(--color-surf-300);
+    }
+
+    /* Inputs: 16px font-size prevents iOS Safari auto-zoom on focus.
+       Padding bumps give a comfortable ~44px touch target. */
+    .input-vintage {
+      font-size: 16px;
+      padding: 10px 12px;
+      min-height: 44px;
+    }
+    textarea.input-vintage {
+      min-height: auto;
+    }
+    .press-field {
+      font-size: 16px;
+      padding: 8px 10px;
+      min-height: 40px;
+    }
+
+    /* Bigger close-button on mobile. */
+    .btn-x {
+      width: 32px;
+      height: 32px;
+      font-size: 20px;
+    }
+
+    /* Press-nav (sidebar/drawer items) — bump touch height too. */
+    .press-nav {
+      padding: 11px 14px;
+      font-size: 13px;
+    }
+
+    /* Markdown long content: wide user-pasted markdown tables scroll
+       horizontally inside their own container instead of breaking layout. */
+    .md-body table {
+      display: block;
+      overflow-x: auto;
+      max-width: 100%;
+    }
+  }
+
+  /* Modal full-screen treatment — applied via the .mobile-modal class on
+     the modal content element. Footer/body become flex-laid-out so the
+     footer sticks to the bottom and the body scrolls independently. */
+  .mobile-modal {
+    width: 100vw !important;
+    height: 100svh !important;
+    max-width: none !important;
+    margin: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    display: flex !important;
+    flex-direction: column;
+  }
+}

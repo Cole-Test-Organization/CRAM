@@ -1,0 +1,27 @@
+node_modules/
+.DS_Store
+*.log
+
+# Env / secrets
+.env
+todoist/.env
+
+# DB backups
+backups/
+
+# Per-user Claude Code settings (shared settings.json stays)
+.claude/
+
+# Per-machine dev artifacts (DEV.md cheat-sheet, local observability stack) — shared dev scripts live under dev/scripts/ and stay tracked
+dev/DEV.md
+dev/observability/
+
+# Operator-specific infra (VM / LXC / inference host configs) — never part of the OSS distribution
+observability/
+
+# Local-only compose override (observability stack wiring, etc.) — auto-merged by docker compose if present
+docker-compose.override.yml
+
+# LinkedIn session + rate-limit state — materialized at runtime by the outreach module
+outreach/cookies.json
+outreach/.ratelimit.json

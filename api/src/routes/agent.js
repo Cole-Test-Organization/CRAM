@@ -1,0 +1,233 @@
+import { buildAgentMarkdown } from '../instructions.js';
+import {
+  listSessions,
+  loadSession,
+  deleteSession,
+} from '../services/agentSessions.js';
+import { runAgent } from '../agent/loop.js';
+
+export default async function agentRoutes(fastify, { agentSettingsService, memoriesService }) {
+  fastify.get('/agent', {
+    schema: {
+      description: 'Returns a markdown reference for LLM agents: workflows, when-to-use guidance, the caller\'s active memories, and pointers to schemas (which live in /docs). MCP clients get the same content (with tool-call syntax) automatically in the initialize handshake (InitializeResult.instructions).',
+      tags: ['agent'],
+      produces: ['text/markdown'],
+      response: {
+        200: { type: 'string' },
+      },
+    },
+  }, async (request, reply) => {
+    const baseUrl = process.env.API_BASE_URL || 'http://localhost';
+    let memories = [];
+    try {
+      memories = await memoriesService.listEnabledForInjection(request.userId);
+    } catch {
+      memories = [];
+    }
+    reply.type('text/markdown').send(buildAgentMarkdown({ baseUrl, mode: 'http', memories }));
+  });
+
+  fastify.post('/agent/query', {
+    schema: {
+      description: 'Run a prompt through the in-process agent loop and stream events as Server-Sent Events. Tool calls are routed through the in-memory CRM MCP client automatically. Pass sessionId to continue a multi-turn conversation; pass provider/model to override the configured defaults.',
+      tags: ['agent'],
+      body: {
+        type: 'object',
+        required: ['prompt'],
+        properties: {
+          prompt: { type: 'string', minLength: 1 },
+          notes: { type: 'string' },
+          sessionId: { type: 'string' },
+          provider: { type: 'string' },
+          model: { type: 'string' },
+          localBaseUrl: { type: 'string', description: 'Per-request override for the local provider\'s base URL. Falls back to LOCAL_BASE_URL env if absent.' },
+          allowedTools: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Restrict MCP tools the model sees on this turn. Omit for all tools; pass [] to cut tools off entirely (text-only answer); pass a list of tool names to expose only those.',
+          },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { prompt, notes, sessionId, allowedTools } = request.body;
+    let { provider, model, localBaseUrl } = request.body;
+
+    // Resolve unspecified fields from the user's saved settings (with env
+    // fallback baked into the service). Request body still wins per-call.
+    if (!provider || !model || !localBaseUrl) {
+      const effective = await agentSettingsService.getEffective(request.userId);
+      provider     = provider     || effective.provider;
+      model        = model        || effective.model;
+      localBaseUrl = localBaseUrl || effective.local_base_url || undefined;
+    }
+
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    const send = (event) => {
+      if (!reply.raw.writableEnded) {
+        reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+      }
+    };
+
+    const abort = new AbortController();
+    request.raw.on('close', () => abort.abort());
+
+    try {
+      await runAgent({
+        userId: request.userId,
+        prompt,
+        notes,
+        sessionId,
+        provider,
+        model,
+        localBaseUrl,
+        allowedTools,
+        send,
+        signal: abort.signal,
+      });
+    } catch (err) {
+      fastify.log.error({ err }, 'agent run failed');
+      send({ type: 'error', message: err?.message || String(err) });
+    } finally {
+      if (!reply.raw.writableEnded) reply.raw.end();
+    }
+  });
+
+  fastify.get('/agent/sessions', {
+    schema: {
+      description: 'List past agent sessions for the authenticated user. Sorted most-recent first. Pass ?search=q to full-text search across titles and message contents — matches include a snippet. Pass ?limit=N to cap the number of returned sessions; total is always the unfiltered/filtered count.',
+      tags: ['agent'],
+      querystring: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', minimum: 1, maximum: 200 },
+          search: { type: 'string' },
+        },
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            total: { type: 'integer' },
+            sessions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  title: { type: 'string' },
+                  messageCount: { type: 'integer' },
+                  createdAt: { type: 'string' },
+                  updatedAt: { type: 'string' },
+                  match: {
+                    type: 'object',
+                    properties: {
+                      before: { type: 'string' },
+                      match: { type: 'string' },
+                      after: { type: 'string' },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  }, async (request) => {
+    const { limit, search } = request.query;
+    return listSessions(request.userId, { limit, search });
+  });
+
+  fastify.get('/agent/sessions/:id', {
+    schema: {
+      description: 'Load a past agent session: returns the event stream (user prompts, assistant text, tool calls, tool results) reconstructed from stored messages. Use the returned id with POST /agent/query to continue the conversation.',
+      tags: ['agent'],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: { id: { type: 'string' } },
+      },
+    },
+  }, async (request, reply) => {
+    try {
+      return await loadSession(request.userId, request.params.id);
+    } catch (err) {
+      if (err.statusCode) return reply.code(err.statusCode).send({ error: err.message });
+      throw err;
+    }
+  });
+
+  // Per-user agent provider config (provider, model, local server URL).
+  // Replaces the browser-localStorage state the GUI used to keep. Reading it
+  // server-side lets background workers (contact enrichment, etc.) call the
+  // same provider the user has configured for the in-app agent.
+  fastify.get('/agent/settings', {
+    schema: {
+      description: 'Get the calling user\'s agent provider config (provider, model, local_base_url). Empty fields fall through to env vars (AGENT_PROVIDER / AGENT_MODEL / LOCAL_BASE_URL) for unmigrated installs.',
+      tags: ['agent'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            provider:       { type: ['string', 'null'] },
+            model:          { type: ['string', 'null'] },
+            local_base_url: { type: ['string', 'null'] },
+            updated_at:     { type: ['string', 'null'] },
+          },
+        },
+      },
+    },
+  }, async (request) => {
+    return agentSettingsService.get(request.userId);
+  });
+
+  fastify.patch('/agent/settings', {
+    schema: {
+      description: 'Update the agent provider config. Pass any subset of `provider`, `model`, `local_base_url`. Pass null on a field to clear it. Provider must be one of: anthropic, local. local_base_url has its trailing slash stripped before storage.',
+      tags: ['agent'],
+      body: {
+        type: 'object',
+        properties: {
+          provider:       { type: ['string', 'null'], enum: ['anthropic', 'local', null] },
+          model:          { type: ['string', 'null'] },
+          local_base_url: { type: ['string', 'null'] },
+        },
+        additionalProperties: false,
+      },
+    },
+  }, async (request, reply) => {
+    try {
+      return await agentSettingsService.update(request.userId, request.body);
+    } catch (err) {
+      if (err.statusCode === 400) { reply.code(400); return { error: err.message }; }
+      throw err;
+    }
+  });
+
+  fastify.delete('/agent/sessions/:id', {
+    schema: {
+      description: 'Delete a past agent session. Cannot be undone.',
+      tags: ['agent'],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: { id: { type: 'string' } },
+      },
+    },
+  }, async (request, reply) => {
+    try {
+      await deleteSession(request.userId, request.params.id);
+      return { ok: true };
+    } catch (err) {
+      if (err.statusCode) return reply.code(err.statusCode).send({ error: err.message });
+      throw err;
+    }
+  });
+}

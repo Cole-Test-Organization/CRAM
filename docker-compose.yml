@@ -1,0 +1,160 @@
+services:
+  # ---- Postgres (shared by dev and prod profiles) ----
+  db:
+    image: postgres:16-alpine
+    container_name: se-operating-system-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-crm}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crm} -d ${POSTGRES_DB:-crm}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    profiles: ["dev", "prod"]
+
+  # ---- Production ----
+  app:
+    build:
+      context: .
+      target: production
+    container_name: se-operating-system
+    restart: unless-stopped
+    environment:
+      # NODE_ENV=production makes the Pino loggers emit raw JSON (one line per
+      # event, easy to ship to a log aggregator). Dev profile leaves it unset
+      # so pino-pretty kicks in for terminal readability.
+      - NODE_ENV=production
+      - PORT=3200
+      - HOST=0.0.0.0
+      - MCP_PORT=3100
+      - MCP_HOST=0.0.0.0
+      - DATABASE_URL=postgres://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-devpassword}@db:5432/${POSTGRES_DB:-crm}
+      # Identity (set by setup.sh)
+      - VENDOR_NAME=${VENDOR_NAME:-Acme Corp}
+      - USER_ROLE=${USER_ROLE:-Sales Engineer}
+      # Agent loop
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AGENT_PROVIDER=${AGENT_PROVIDER:-anthropic}
+      - AGENT_MODEL=${AGENT_MODEL:-claude-sonnet-4-6}
+      # Local LLM (Ollama / LM Studio / llama.cpp / vLLM on host or LAN).
+      # Use host.docker.internal:<port> to hit an inference server on the
+      # Docker host itself (see extra_hosts below).
+      - LOCAL_BASE_URL=${LOCAL_BASE_URL:-}
+      - LOCAL_API_KEY=${LOCAL_API_KEY:-}
+      # Todoist (optional). TODOIST_ENABLED defaults to true; set to "false" in
+      # .env to skip route/tool/instructions registration entirely. The token
+      # passes through from .env so the container reads it from process.env (no
+      # host file mount required).
+      - TODOIST_ENABLED=${TODOIST_ENABLED:-true}
+      - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
+      - TODOIST_DEFAULT_PROJECT=${TODOIST_DEFAULT_PROJECT:-Inbox}
+      - TODOIST_DEFAULT_SECTION=${TODOIST_DEFAULT_SECTION:-}
+      # In-container path the scheduled pg_dump writes to. Must live under the
+      # /backups bind mount below — the host source of that mount is BACKUP_HOST_DIR.
+      - BACKUP_DIR=${BACKUP_DIR:-/backups}
+    # Makes host.docker.internal resolve to the Docker host on Linux. No-op on
+    # Mac/Windows Docker Desktop (host.docker.internal works there natively).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # LinkedIn session + rate-limit state persist across restarts.
+      # Host must run `node outreach/src/index.js login` once to populate cookies.json.
+      - ./outreach/cookies.json:/app/outreach/cookies.json
+      - ./outreach/.ratelimit.json:/app/outreach/.ratelimit.json
+      # pg_dump backups land here. BACKUP_HOST_DIR can be any absolute host path
+      # (e.g. /Volumes/Backups/crm) — it does not have to live under the repo.
+      # Defaults to ./backups so a fresh clone "just works" without .env edits.
+      - ${BACKUP_HOST_DIR:-./backups}:/backups
+    ports:
+      - "3200:3200"
+      - "3100:3100"
+    profiles: ["prod"]
+
+  # ---- Development (hot-reload) ----
+  app-dev:
+    build:
+      context: .
+      target: dev
+    container_name: se-operating-system-dev
+    restart: unless-stopped
+    environment:
+      - PORT=3200
+      - HOST=0.0.0.0
+      - DATABASE_URL=postgres://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-devpassword}@db:5432/${POSTGRES_DB:-crm}
+      - VENDOR_NAME=${VENDOR_NAME:-Acme Corp}
+      - USER_ROLE=${USER_ROLE:-Sales Engineer}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AGENT_PROVIDER=${AGENT_PROVIDER:-anthropic}
+      - AGENT_MODEL=${AGENT_MODEL:-claude-sonnet-4-6}
+      # Local LLM (Ollama / LM Studio / llama.cpp / vLLM). For an inference
+      # server running on the Docker host, use host.docker.internal:<port>.
+      - LOCAL_BASE_URL=${LOCAL_BASE_URL:-}
+      - LOCAL_API_KEY=${LOCAL_API_KEY:-}
+      # Todoist (optional). See app service above for semantics.
+      - TODOIST_ENABLED=${TODOIST_ENABLED:-true}
+      - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
+      - TODOIST_DEFAULT_PROJECT=${TODOIST_DEFAULT_PROJECT:-Inbox}
+      - TODOIST_DEFAULT_SECTION=${TODOIST_DEFAULT_SECTION:-}
+      - BACKUP_DIR=${BACKUP_DIR:-/backups}
+    # Makes host.docker.internal resolve to the Docker host on Linux. No-op on
+    # Mac/Windows Docker Desktop (where the name resolves natively).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      # Mount source for hot-reload (node_modules stay in container)
+      - ./api/src:/app/api/src
+      - ./api/migrations:/app/api/migrations
+      - ./gui/src:/app/gui/src
+      - ./gui/public:/app/gui/public
+      - ./gui/index.html:/app/gui/index.html
+      - ./gui/vite.config.ts:/app/gui/vite.config.ts
+      - ./tools:/app/tools
+      - ./todoist/src:/app/todoist/src
+      - ./outreach/src:/app/outreach/src
+      - ./outreach/cookies.json:/app/outreach/cookies.json
+      - ./outreach/.ratelimit.json:/app/outreach/.ratelimit.json
+      - ./events/src:/app/events/src
+      - ${BACKUP_HOST_DIR:-./backups}:/backups
+    ports:
+      - "3200:3200"
+      - "3100:3100"
+      - "80:80"
+    profiles: ["dev"]
+
+  # ---- Dev seed (opt-in) ----
+  # One-shot container that populates the DB with realistic test accounts,
+  # contacts, opportunities, and meetings. Pair with --profile dev:
+  #   docker compose --profile dev --profile seed up
+  # The script refuses to run if the DB already has tenant data, so it's safe
+  # to leave the seed profile attached across restarts — it'll exit fast.
+  seed:
+    build:
+      context: .
+      target: dev
+    image: se-operating-system-app-dev
+    container_name: cram-seed
+    environment:
+      - API_BASE=http://app-dev:3200/api
+    depends_on:
+      - app-dev
+    volumes:
+      - ./dev/scripts:/app/dev/scripts:ro
+    command: node /app/dev/scripts/seed-dev-data.js
+    restart: "no"
+    profiles: ["seed"]
+
+volumes:
+  postgres_data:

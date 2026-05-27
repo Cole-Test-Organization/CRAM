@@ -1,0 +1,10 @@
+{
+  "name": "se-operating-system-dev-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Host-runnable dev/ops scripts (schema dump, seed data, ad-hoc cleanup). Kept separate from api/ so it can be invoked from the host without leaning on api's runtime deps.",
+  "type": "module",
+  "dependencies": {
+    "pg": "^8.13.0"
+  }
+}

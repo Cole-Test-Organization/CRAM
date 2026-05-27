@@ -1,0 +1,14 @@
+{
+  "name": "cram-todoist",
+  "version": "1.0.0",
+  "description": "CRAM Todoist integration — task creation/listing from the API or directly via CLI.",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "pino": "^9.5.0",
+    "pino-pretty": "^11.3.0"
+  }
+}
