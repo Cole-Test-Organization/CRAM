@@ -46,6 +46,8 @@ export default function BackupSettings(props: Props) {
     const [saving, setSaving] = createSignal(false);
     const [running, setRunning] = createSignal(false);
     const [restoring, setRestoring] = createSignal<string | null>(null);
+    const [importing, setImporting] = createSignal(false);
+    let fileInput: HTMLInputElement | undefined;
 
     const save = async () => {
         setSaving(true);
@@ -104,6 +106,27 @@ export default function BackupSettings(props: Props) {
             props.flash("err", `Restore failed: ${err.message || err}`);
         } finally {
             setRestoring(null);
+        }
+    };
+
+    const onPickFile = async (e: Event) => {
+        const target = e.currentTarget as HTMLInputElement;
+        const file = target.files?.[0];
+        // Always clear the input value so picking the same file twice still fires change.
+        target.value = "";
+        if (!file) return;
+        setImporting(true);
+        try {
+            const result = await api.importBackup(file);
+            props.flash(
+                "ok",
+                `Imported ${file.name} as ${result.filename} (${fmtBytes(result.size_bytes)})`,
+            );
+            await refetchList();
+        } catch (err: any) {
+            props.flash("err", `Import failed: ${err.message || err}`);
+        } finally {
+            setImporting(false);
         }
     };
 
@@ -240,7 +263,39 @@ export default function BackupSettings(props: Props) {
                             >
                                 {running() ? "Running…" : "Run backup now"}
                             </Button>
+                            <Button
+                                variant="secondary"
+                                disabled={importing()}
+                                onClick={() => fileInput?.click()}
+                            >
+                                {importing()
+                                    ? "Importing…"
+                                    : "Import from disk"}
+                            </Button>
+                            <input
+                                ref={fileInput}
+                                type="file"
+                                accept=".dump,application/octet-stream"
+                                class="hidden"
+                                onChange={onPickFile}
+                            />
                         </div>
+                        <p class="text-[11px] text-base-400">
+                            Import accepts a pg_dump custom-format file
+                            (produced by{" "}
+                            <code class="text-surf-300">pg_dump -Fc</code> or
+                            downloaded above). It lands in the list as{" "}
+                            <code class="text-surf-300">
+                                crm-imported-&lt;timestamp&gt;.dump
+                            </code>{" "}
+                            and can then be restored like any other backup. A
+                            full dump contains every tenant's data{" "}
+                            <strong class="text-base-200">
+                                including all settings tables
+                            </strong>{" "}
+                            (agent config, internal domains, memories, themes,
+                            backup schedule).
+                        </p>
                     </div>
                 </Show>
             </div>

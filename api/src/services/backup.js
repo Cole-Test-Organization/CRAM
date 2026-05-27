@@ -9,7 +9,9 @@
 
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
-import { createReadStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { URL } from 'node:url';
 import { getPool } from '../db/connection.js';
@@ -27,7 +29,13 @@ const DEFAULT_SETTINGS = {
 
 const FILENAME_PREFIX = 'crm-';
 const FILENAME_EXT = '.dump';
-const FILENAME_RE = /^crm-[0-9TZ\-]+\.dump$/;
+// Two shapes land in target_dir: scheduled dumps (`crm-<timestamp>.dump`) and
+// imported ones (`crm-imported-<timestamp>.dump`). list/restore/delete/download
+// all gate on this regex so imports become first-class citizens.
+const FILENAME_RE = /^crm-(imported-)?[0-9TZ\-]+\.dump$/;
+// pg_dump custom-format header. Used to refuse plain-SQL dumps, random files,
+// or HTML error pages a misconfigured download might produce.
+const PG_DUMP_MAGIC = Buffer.from('PGDMP', 'ascii');
 
 function timestampForFilename(date = new Date()) {
   // ISO with `:` swapped for `-` so the filename is filesystem-safe everywhere.
@@ -238,6 +246,76 @@ export class BackupService {
     }
     const result = { filename, restored_at: new Date().toISOString(), duration_ms: Date.now() - startedAt };
     logger.warn({ event: 'restore.completed', ...result }, 'pg_restore completed');
+    return result;
+  }
+
+  // Bring an externally-produced dump into the managed target directory so it
+  // shows up in list/restore/download alongside scheduled dumps. Accepts either
+  // a readable stream (HTTP upload) or an absolute sourcePath (operator put a
+  // file on the host's bind mount and wants to register it). originalName is
+  // optional and surfaces in the response/logs only — the on-disk name is
+  // always normalized to `crm-imported-<timestamp>.dump` so it sorts cleanly
+  // and never collides with a scheduled dump.
+  async importBackup({ stream, sourcePath, originalName } = {}) {
+    if (!stream && !sourcePath) {
+      throw Object.assign(new Error('importBackup requires either stream or sourcePath'), { statusCode: 400 });
+    }
+    if (sourcePath !== undefined) {
+      if (typeof sourcePath !== 'string' || !path.isAbsolute(sourcePath)) {
+        throw Object.assign(new Error('sourcePath must be an absolute path'), { statusCode: 400 });
+      }
+    }
+
+    const target_dir = await this._ensureTargetDir();
+    const filename = `${FILENAME_PREFIX}imported-${timestampForFilename()}${FILENAME_EXT}`;
+    const finalPath = path.join(target_dir, filename);
+    // Stage to a hidden temp file so a half-written upload never matches
+    // FILENAME_RE and never appears in list().
+    const tempPath = path.join(target_dir, `.${filename}.${randomBytes(4).toString('hex')}.tmp`);
+
+    logger.info({ event: 'backup.import.start', filename, source: sourcePath || 'stream' }, 'importing backup');
+    const startedAt = Date.now();
+
+    try {
+      if (sourcePath) {
+        try { await fs.access(sourcePath); }
+        catch { throw Object.assign(new Error(`source file not found: ${sourcePath}`), { statusCode: 404 }); }
+        await pipeline(createReadStream(sourcePath), createWriteStream(tempPath));
+      } else {
+        await pipeline(stream, createWriteStream(tempPath));
+      }
+
+      // Refuse non-pg_dump-custom-format files before they pollute the listing.
+      const fh = await fs.open(tempPath, 'r');
+      try {
+        const buf = Buffer.alloc(PG_DUMP_MAGIC.length);
+        const { bytesRead } = await fh.read(buf, 0, PG_DUMP_MAGIC.length, 0);
+        if (bytesRead < PG_DUMP_MAGIC.length || !buf.equals(PG_DUMP_MAGIC)) {
+          throw Object.assign(
+            new Error('not a pg_dump custom-format backup (missing PGDMP magic header — produce with `pg_dump -Fc`)'),
+            { statusCode: 400 }
+          );
+        }
+      } finally {
+        await fh.close();
+      }
+
+      await fs.rename(tempPath, finalPath);
+    } catch (err) {
+      await fs.unlink(tempPath).catch(() => {});
+      logger.error({ event: 'backup.import.failed', err: err.message }, 'import failed');
+      throw err;
+    }
+
+    const st = await fs.stat(finalPath);
+    const result = {
+      filename,
+      size_bytes: st.size,
+      created_at: st.mtime.toISOString(),
+      original_name: originalName || null,
+      duration_ms: Date.now() - startedAt,
+    };
+    logger.info({ event: 'backup.import.completed', ...result }, 'import completed');
     return result;
   }
 

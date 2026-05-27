@@ -146,6 +146,8 @@ const REFS = {
   'backup.update_settings': { http: 'PUT /api/backup/settings',           mcp: { tool: 'backup', action: 'update_settings' } },
   'backup.list':            { http: 'GET /api/backup',                    mcp: { tool: 'backup', action: 'list' } },
   'backup.run':             { http: 'POST /api/backup/run',               mcp: { tool: 'backup', action: 'run' } },
+  'backup.import':          { http: 'POST /api/backup/import',            mcp: null },
+  'backup.import_from_path':{ http: 'POST /api/backup/import-from-path',  mcp: { tool: 'backup', action: 'import_from_path' } },
   'backup.restore':         { http: 'POST /api/backup/restore',           mcp: { tool: 'backup', action: 'restore' } },
   'backup.download':        { http: 'GET /api/backup/download/:filename', mcp: null },
   'backup.delete':          { http: 'DELETE /api/backup/:filename',       mcp: { tool: 'backup', action: 'delete' } },
@@ -292,7 +294,7 @@ ${todoistEnabled ? `
 Tasks default to ${todoistDest}. Use labels = account slug (\`["bank-of-america"]\`) so per-account views can filter.
 ` : ''}
 ### Backups
-Backups are **instance-wide** (one dump captures every tenant's data), not per-user — these endpoints intentionally don't scope by the calling user. ${ref('backup.restore')} is destructive: \`pg_restore --clean --if-exists\` drops and recreates every object. Only call when intentionally rolling back.${isMcp ? '' : `
+Backups are **instance-wide** (one dump captures every tenant's data), not per-user — these endpoints intentionally don't scope by the calling user. A dump is a full \`pg_dump -Fc\` of the database, which means **every settings table is included** (\`app_settings\`, \`user_agent_settings\`, \`user_internal_domains\`, \`user_memories\`, \`user_theme_settings\`, \`themes\`) alongside the operational tables. Host-side operator config (\`.env\`, \`outreach/cookies.json\`) lives outside the DB and is **not** captured. Use ${ref('backup.import_from_path')} to register an externally-produced dump that already sits on the API container's filesystem (e.g. an operator scp'd it onto the host bind mount); files uploaded from a browser go through \`POST /api/backup/import\` (octet-stream body, not exposed via MCP). ${ref('backup.restore')} is destructive: \`pg_restore --clean --if-exists\` drops and recreates every object. Only call when intentionally rolling back.${isMcp ? '' : `
 
 ### Health
 - ${ref('health')} returns DB record counts and uptime. Use it to verify the API is running.`}`;

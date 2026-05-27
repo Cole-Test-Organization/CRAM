@@ -519,6 +519,25 @@ export const api = {
   restoreBackup: (filename: string) => post<any>('/backup/restore', { filename }),
   deleteBackup: (filename: string) => del<any>(`/backup/${encodeURIComponent(filename)}`),
   backupDownloadUrl: (filename: string) => `/api/backup/download/${encodeURIComponent(filename)}`,
+  importBackup: async (file: File) => {
+    // Send the file as a raw octet-stream — the API streams it straight to disk
+    // without buffering, so multi-GB dumps don't OOM the request handler.
+    const res = await fetch(
+      `/api/backup/import?filename=${encodeURIComponent(file.name)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: file,
+      }
+    );
+    if (!res.ok) {
+      const body = await res.text();
+      let msg = `${res.status} ${res.statusText}`;
+      try { msg = JSON.parse(body).error || msg; } catch {}
+      throw new Error(msg);
+    }
+    return res.json() as Promise<{ filename: string; size_bytes: number; created_at: string; original_name: string | null; duration_ms: number }>;
+  },
 
   // Themes — built-in palettes + user-authored custom themes, plus the
   // per-user "active theme" pointer. The GUI applies whichever theme is
