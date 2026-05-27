@@ -30,10 +30,10 @@ cd cram
 docker compose --profile prod up -d --build
 ```
 
-CRAM is now reachable on your LAN at:
+CRAM is now reachable at:
 
-- **GUI/API**: `http://<mini-pc-ip>:3200`
-- **MCP server**: `http://<mini-pc-ip>:3100/mcp`
+- **GUI/API**: `http://<mini-pc-ip>:3200` from any device on the LAN, or `http://localhost:3200` from the mini-PC itself.
+- **MCP server**: `http://<mini-pc-ip>:3100/mcp` from the LAN, or `http://localhost:3100/mcp` from the mini-PC itself.
 
 Find the mini-PC's IP with `ip addr` or in your router's admin page. Consider giving it a DHCP reservation so the address doesn't change.
 
