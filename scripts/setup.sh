@@ -81,11 +81,6 @@ default_pw=$(random_password)
 POSTGRES_PASSWORD=$(prompt "Postgres password" "$default_pw")
 echo
 
-bold "Anthropic API key (optional)"; echo
-echo "Provider and model are picked per-request in the GUI Agent page (persisted in localStorage). The only thing that has to live in .env is the Anthropic API key, because there's no per-request override for it. Leave blank to skip — you can still use a local LLM (Ollama / LM Studio / llama.cpp / vLLM) configured entirely from the GUI."
-ANTHROPIC_API_KEY=$(prompt_secret "Anthropic API key")
-echo
-
 bold "Todoist (optional)"; echo
 echo "Todoist is the bundled task manager. Answer N to skip the integration entirely — no HTTP routes, no MCP tools, no agent guidance about Todoist will be loaded."
 use_todoist=$(prompt "Do you use Todoist? (y/N)" "N")
@@ -105,10 +100,6 @@ case "$use_todoist" in
 esac
 echo
 
-bold "Optional Postgres tuning"; echo
-DATABASE_SSL=$(prompt "Enable SSL on the DB connection? (true/false)" "false")
-echo
-
 # Write .env at repo root
 {
   cat <<EOF
@@ -123,10 +114,12 @@ USER_ROLE="$USER_ROLE"
 POSTGRES_USER=$POSTGRES_USER
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 POSTGRES_DB=$POSTGRES_DB
-DATABASE_SSL=$DATABASE_SSL
+DATABASE_SSL=false
 
-# Anthropic API key (only env-only LLM setting — provider/model are chosen in the GUI)
-ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY
+# Anthropic API key — fill in to use Claude as the agent provider. Leave blank
+# to use a local LLM (Ollama / LM Studio / llama.cpp / vLLM) configured from
+# the GUI Agent page. Provider and model are picked per-request in the GUI.
+ANTHROPIC_API_KEY=
 
 # Todoist
 EOF

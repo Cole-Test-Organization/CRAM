@@ -2,7 +2,7 @@ services:
   # ---- Postgres (shared by dev and prod profiles) ----
   db:
     image: postgres:16-alpine
-    container_name: se-operating-system-db
+    container_name: cram-db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-crm}
@@ -24,7 +24,7 @@ services:
     build:
       context: .
       target: production
-    container_name: se-operating-system
+    container_name: cram
     restart: unless-stopped
     environment:
       # NODE_ENV=production makes the Pino loggers emit raw JSON (one line per
@@ -85,7 +85,7 @@ services:
     build:
       context: .
       target: dev
-    container_name: se-operating-system-dev
+    container_name: cram-dev
     restart: unless-stopped
     environment:
       - PORT=3200
@@ -144,7 +144,7 @@ services:
     build:
       context: .
       target: dev
-    image: se-operating-system-app-dev
+    image: cram-app-dev
     container_name: cram-seed
     environment:
       - API_BASE=http://app-dev:3200/api
