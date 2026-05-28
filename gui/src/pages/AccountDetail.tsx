@@ -3,12 +3,14 @@ import { A, useParams, useNavigate } from '@solidjs/router';
 import { api } from '../lib/api';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import { createAutoSave, type SaveStatus } from '../lib/editing';
-import { AccountFormModal, ContactFormModal, MeetingFormModal, OpportunityFormModal } from '../components/FormModals';
-import { stageShort, stageChipClass } from '../lib/stages';
+import { AccountFormModal } from '../components/FormModals';
 import AccountPicker from '../components/AccountPicker';
 import Button from '../components/Button';
 import TechnicalProfilePanel from '../components/accounts/TechnicalProfilePanel';
 import NotesPanel from '../components/NotesPanel';
+import MeetingsList from './MeetingsList';
+import ContactList from './ContactList';
+import OpportunitiesList from './OpportunitiesList';
 
 function SaveIndicator(props: { status: SaveStatus }) {
   return (
@@ -82,22 +84,7 @@ export default function AccountDetail() {
     if (acct) await api.patchAccount(acct.id, patch);
   });
 
-  const [contactModalOpen, setContactModalOpen] = createSignal(false);
-  const [editingContact, setEditingContact] = createSignal<any>(null);
-  const [meetingModalOpen, setMeetingModalOpen] = createSignal(false);
   const [accountModalOpen, setAccountModalOpen] = createSignal(false);
-  const [oppModalOpen, setOppModalOpen] = createSignal(false);
-
-  const deleteContact = async (id: number) => {
-    if (!confirm('Delete this contact?')) return;
-    await api.deleteContact(id);
-    refetch();
-  };
-
-  const deleteMeeting = async (id: number) => {
-    await api.deleteMeeting(id);
-    refetch();
-  };
 
   const deleteAccount = async () => {
     const acct = data();
@@ -343,63 +330,32 @@ export default function AccountDetail() {
 
               {/* === CONTACTS TAB === */}
               <Show when={tab() === 'contacts'}>
-                <div class="mb-4">
-                  <Button variant="primary" size="sm" onClick={() => { setEditingContact(null); setContactModalOpen(true); }}>+ New Contact</Button>
-                </div>
-
-                <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                  <For each={account().contacts || []} fallback={<div class="text-base-300 text-center p-10 text-sm">No contacts</div>}>
-                    {(c: any) => <ContactCard
-                      contact={c}
-                      onEdit={() => { setEditingContact(c); setContactModalOpen(true); }}
-                      onDelete={() => deleteContact(c.id)}
-                    />}
-                  </For>
-                </div>
+                <ContactList
+                  accountId={account().id}
+                  accountName={account().name}
+                  onAfterCreate={() => refetch()}
+                  onAfterDelete={() => refetch()}
+                />
               </Show>
 
               {/* === MEETINGS TAB === */}
               <Show when={tab() === 'meetings'}>
-                <div class="mb-4">
-                  <Button variant="primary" size="sm" onClick={() => setMeetingModalOpen(true)}>+ New Meeting</Button>
-                </div>
-
-                <div class="panel panel-accent">
-                  <For each={account().meetings || []} fallback={<div class="text-base-300 text-center p-10 text-sm">No meetings</div>}>
-                    {(m: any) => (
-                      <div class="flex items-center gap-2 border-b border-base-700 last:border-b-0 transition-colors duration-150 hover:bg-base-700">
-                        <A href={`/meetings/${m.id}`} class="flex-1 press-row gap-4 flex-wrap min-w-0">
-                          <span class="flex-1 min-w-[60%] md:min-w-0 font-semibold text-sm text-base-50">{m.title || m.filename}</span>
-                          <span class="text-base-300 text-[12px]">{m.date}</span>
-                        </A>
-                        <button class={`${btnX} mr-2 md:mr-3 shrink-0`} onClick={() => deleteMeeting(m.id)} title="Delete meeting">×</button>
-                      </div>
-                    )}
-                  </For>
-                </div>
+                <MeetingsList
+                  accountId={account().id}
+                  accountName={account().name}
+                  onAfterCreate={() => refetch()}
+                  onAfterDelete={() => refetch()}
+                />
               </Show>
 
               {/* === OPPORTUNITIES TAB === */}
               <Show when={tab() === 'opportunities'}>
-                <div class="mb-4 flex items-center justify-between gap-2 flex-wrap">
-                  <Button variant="primary" size="sm" onClick={() => setOppModalOpen(true)}>+ New Opportunity</Button>
-                </div>
-
-                <div class="panel panel-accent">
-                  <For each={account().opportunities || []} fallback={<div class="text-base-300 text-center p-10 text-sm">No opportunities yet. Click + New Opportunity to track a deal on this account.</div>}>
-                    {(o: any) => (
-                      <A href={`/opportunities/${o.id}`} class="press-row gap-4 flex-wrap border-b border-base-700 last:border-b-0">
-                        <span class="flex-1 min-w-[60%] md:min-w-[240px] font-semibold text-sm text-base-50">{o.name}</span>
-                        <span class={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 border ${stageChipClass(o.stage)}`}>
-                          {stageShort(o.stage)}
-                        </span>
-                        <Show when={typeof o.product_count === 'number'}>
-                          <span class="text-surf-300 text-[11px] uppercase tracking-wider">{o.product_count} prod{o.product_count === 1 ? '' : 's'}</span>
-                        </Show>
-                      </A>
-                    )}
-                  </For>
-                </div>
+                <OpportunitiesList
+                  accountId={account().id}
+                  accountName={account().name}
+                  onAfterCreate={() => refetch()}
+                  onAfterDelete={() => refetch()}
+                />
               </Show>
 
               {/* === NOTES TAB === */}
@@ -414,72 +370,14 @@ export default function AccountDetail() {
 
       <Show when={data()}>
         {(account) => (
-          <>
-            <AccountFormModal
-              open={accountModalOpen()}
-              onClose={() => setAccountModalOpen(false)}
-              existing={account()}
-              onSaved={() => refetch()}
-            />
-            <ContactFormModal
-              open={contactModalOpen()}
-              onClose={() => { setContactModalOpen(false); setEditingContact(null); }}
-              existing={editingContact()}
-              fixedAccountId={account().id}
-              fixedAccountName={account().name}
-              onSaved={() => refetch()}
-            />
-            <MeetingFormModal
-              open={meetingModalOpen()}
-              onClose={() => setMeetingModalOpen(false)}
-              fixedAccountId={account().id}
-              fixedAccountName={account().name}
-              onSaved={() => refetch()}
-            />
-            <OpportunityFormModal
-              open={oppModalOpen()}
-              onClose={() => setOppModalOpen(false)}
-              fixedAccountId={account().id}
-              fixedAccountName={account().name}
-              onSaved={() => refetch()}
-            />
-          </>
+          <AccountFormModal
+            open={accountModalOpen()}
+            onClose={() => setAccountModalOpen(false)}
+            existing={account()}
+            onSaved={() => refetch()}
+          />
         )}
       </Show>
-    </div>
-  );
-}
-
-function ContactCard(props: { contact: any; onEdit: () => void; onDelete: () => void }) {
-  const c = props.contact;
-
-  return (
-    <div class="panel panel-accent p-4">
-      <div class="flex justify-between items-center mb-3">
-        <div class="flex items-center gap-2 flex-wrap min-w-0">
-          <A href={`/contacts/${c.id}`} class="font-bold text-[15px] text-base-50 no-underline hover:text-surf-300 font-[family-name:var(--font-display)]">{c.full_name}</A>
-          <Show when={c.kind && c.kind !== 'account'}>
-            <span class={`text-[10px] uppercase tracking-wider font-bold ${c.kind === 'partner' ? 'text-surf-300' : 'text-scarlet-300'}`}>
-              {c.kind}
-            </span>
-          </Show>
-        </div>
-        <div class="flex gap-2 items-center">
-          <button
-            type="button"
-            class="press press-ghost press-sm"
-            onClick={props.onEdit}
-          >
-            Edit
-          </button>
-          <button class="btn-x" onClick={props.onDelete}>×</button>
-        </div>
-      </div>
-      <Show when={c.title}><div class="text-[13px] text-base-300 my-0.5">{c.title}</div></Show>
-      <Show when={c.email}><div class="text-[13px] text-base-300 my-0.5"><a href={`mailto:${c.email}`}>{c.email}</a></div></Show>
-      <Show when={c.phone}><div class="text-[13px] text-base-300 my-0.5">{c.phone}</div></Show>
-      <Show when={c.linkedin}><div class="text-[13px] text-base-300 my-0.5"><a href={c.linkedin} target="_blank">LinkedIn</a></div></Show>
-      <Show when={c.notes}><div class="text-[13px] text-base-50 mt-1.5 whitespace-pre-wrap">{c.notes}</div></Show>
     </div>
   );
 }

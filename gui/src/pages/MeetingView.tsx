@@ -4,6 +4,8 @@ import { api } from '../lib/api';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import { MeetingFormModal } from '../components/FormModals';
 import Button from '../components/Button';
+import ExportActions from '../components/ExportActions';
+import { buildMeetingsExport } from '../lib/meetingExport';
 
 type EnrichmentJob = {
   jobId: string;
@@ -102,7 +104,8 @@ export default function MeetingView() {
                   </Show>
                 </div>
               </div>
-              <div class="flex gap-3 items-center">
+              <div class="flex gap-3 items-center flex-wrap">
+                <ExportActions ids={() => [m().id]} build={buildMeetingsExport} />
                 <Button variant="ghost" size="sm" onClick={() => setEditOpen(true)}>Edit</Button>
                 <Button variant="danger" size="sm" onClick={deleteMeeting}>Delete</Button>
               </div>

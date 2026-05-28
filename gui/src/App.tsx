@@ -23,13 +23,13 @@ export default function App() {
       <Route path="/accounts" component={() => <AccountList type="account" />} />
       <Route path="/partners" component={() => <AccountList type="partner" />} />
       <Route path="/accounts/:slug" component={AccountDetail} />
-      <Route path="/meetings" component={MeetingsList} />
+      <Route path="/meetings" component={() => <MeetingsList />} />
       <Route path="/meetings/:id" component={MeetingView} />
-      <Route path="/contacts" component={ContactList} />
+      <Route path="/contacts" component={() => <ContactList />} />
       <Route path="/contacts/:id" component={ContactDetail} />
       <Route path="/events" component={EventsList} />
       <Route path="/events/:id" component={EventDetail} />
-      <Route path="/opportunities" component={OpportunitiesList} />
+      <Route path="/opportunities" component={() => <OpportunitiesList />} />
       <Route path="/opportunities/:id" component={OpportunityDetail} />
       <Route path="/products" component={Products} />
       <Route path="/agent" component={Agent} />
