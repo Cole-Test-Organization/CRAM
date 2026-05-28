@@ -421,6 +421,70 @@
     resize: vertical;
     line-height: 1.5;
   }
+
+  /* -------- Checkbox vintage treatment --------
+     Native checkboxes ignore most CSS, so we strip the appearance and draw
+     our own square + check glyph using theme CSS vars. Stays in sync with
+     whatever palette the active theme has loaded. */
+  .press-checkbox {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    background: var(--color-base-950);
+    border: 2px solid var(--color-base-500);
+    border-radius: 0;
+    cursor: pointer;
+    position: relative;
+    display: inline-block;
+    vertical-align: middle;
+    box-shadow: 2px 2px 0 0 var(--color-base-600);
+    transition: background-color 120ms, border-color 120ms, box-shadow 120ms;
+  }
+  .press-checkbox:hover {
+    border-color: var(--color-surf-400);
+  }
+  .press-checkbox:focus-visible {
+    outline: none;
+    border-color: var(--color-surf-300);
+    box-shadow: 2px 2px 0 0 var(--color-surf-300);
+  }
+  .press-checkbox:checked {
+    background: var(--color-surf-500);
+    border-color: var(--color-surf-200);
+    box-shadow: 2px 2px 0 0 var(--color-surf-200);
+  }
+  .press-checkbox:checked::after {
+    content: '';
+    position: absolute;
+    left: 3px;
+    top: -1px;
+    width: 4px;
+    height: 9px;
+    border-right: 2px solid var(--color-base-950);
+    border-bottom: 2px solid var(--color-base-950);
+    transform: rotate(45deg);
+  }
+  .press-checkbox:indeterminate {
+    background: var(--color-surf-500);
+    border-color: var(--color-surf-200);
+    box-shadow: 2px 2px 0 0 var(--color-surf-200);
+  }
+  .press-checkbox:indeterminate::after {
+    content: '';
+    position: absolute;
+    left: 2px;
+    top: 5px;
+    width: 8px;
+    height: 2px;
+    background: var(--color-base-950);
+  }
+  .press-checkbox:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 }
 
 /* Markdown body — CSS because innerHTML can't use utilities */
@@ -611,6 +675,23 @@
       width: 32px;
       height: 32px;
       font-size: 20px;
+    }
+
+    /* Bigger checkboxes for finger taps. */
+    .press-checkbox {
+      width: 20px;
+      height: 20px;
+    }
+    .press-checkbox:checked::after {
+      left: 4px;
+      top: 0;
+      width: 5px;
+      height: 11px;
+    }
+    .press-checkbox:indeterminate::after {
+      left: 3px;
+      top: 7px;
+      width: 10px;
     }
 
     /* Press-nav (sidebar/drawer items) — bump touch height too. */

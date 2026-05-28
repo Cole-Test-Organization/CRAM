@@ -135,7 +135,7 @@ export default function MeetingsList(props: Props = {}) {
           <label class="flex items-center gap-2 cursor-pointer text-[11px] uppercase tracking-wider font-semibold text-base-200">
             <input
               type="checkbox"
-              class="accent-surf-400 w-4 h-4 cursor-pointer"
+              class="press-checkbox"
               checked={allVisibleSelected()}
               onChange={toggleSelectAllVisible}
             />
@@ -164,7 +164,7 @@ export default function MeetingsList(props: Props = {}) {
                 <label class="flex items-center self-stretch pl-3 pr-1 cursor-pointer">
                   <input
                     type="checkbox"
-                    class="accent-surf-400 w-4 h-4 cursor-pointer"
+                    class="press-checkbox"
                     checked={selectedIds().has(m.id)}
                     onChange={() => toggleSelect(m.id)}
                   />
