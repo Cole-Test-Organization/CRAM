@@ -1,9 +1,11 @@
-import { createSignal, createResource, createEffect, For, Show } from 'solid-js';
-import { A, useNavigate } from '@solidjs/router';
+import { createSignal, createResource, For, Show } from 'solid-js';
+import { useNavigate } from '@solidjs/router';
 import { api } from '../lib/api';
 import { ContactFormModal } from '../components/FormModals';
 import Button from '../components/Button';
-import ExportActions from '../components/ExportActions';
+import ListRows from '../components/ListRows';
+import SelectionToolbar from '../components/SelectionToolbar';
+import { createSelection } from '../components/createSelection';
 import { buildContactsExport } from '../lib/contactExport';
 
 type Props = {
@@ -21,7 +23,6 @@ export default function ContactList(props: Props = {}) {
   const [search, setSearch] = createSignal('');
   const [company, setCompany] = createSignal('');
   const [modalOpen, setModalOpen] = createSignal(false);
-  const [selectedIds, setSelectedIds] = createSignal<Set<number>>(new Set<number>());
   const navigate = useNavigate();
 
   const isEmbedded = () => props.accountId !== undefined && props.accountId !== null;
@@ -46,12 +47,6 @@ export default function ContactList(props: Props = {}) {
     },
   );
 
-  // Drop any stale selection when the scope changes.
-  createEffect(() => {
-    void props.accountId;
-    setSelectedIds(new Set<number>());
-  });
-
   const matchesSearch = (c: any, q: string) =>
     (c.full_name || '').toLowerCase().includes(q) ||
     (c.email || '').toLowerCase().includes(q) ||
@@ -61,44 +56,16 @@ export default function ContactList(props: Props = {}) {
 
   const filtered = () => {
     const list = contacts() || [];
-    // In embedded mode the API didn't filter, so do it here.
     if (!isEmbedded()) return list;
     const q = search().toLowerCase();
     if (!q) return list;
     return list.filter((c: any) => matchesSearch(c, q));
   };
 
-  const toggleSelect = (id: number) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const visibleIds = () => filtered().map((c: any) => c.id as number);
-
-  const allVisibleSelected = () => {
-    const ids = visibleIds();
-    if (ids.length === 0) return false;
-    const sel = selectedIds();
-    return ids.every((id) => sel.has(id));
-  };
-
-  const toggleSelectAllVisible = () => {
-    const ids = visibleIds();
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (allVisibleSelected()) ids.forEach((id) => next.delete(id));
-      else ids.forEach((id) => next.add(id));
-      return next;
-    });
-  };
-
-  const clearSelection = () => setSelectedIds(new Set<number>());
-  const selectedCount = () => selectedIds().size;
-  const selectedIdList = () => Array.from(selectedIds());
+  const sel = createSelection(
+    () => filtered().map((c: any) => c.id),
+    () => props.accountId,
+  );
 
   const buildExport = (ids: number[]) => {
     const idSet = new Set(ids);
@@ -109,11 +76,7 @@ export default function ContactList(props: Props = {}) {
   const deleteContact = async (id: number) => {
     if (!confirm('Delete this contact?')) return;
     await api.deleteContact(id);
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
+    sel.remove(id);
     refetch();
     refetchCompanies();
     props.onAfterDelete?.();
@@ -161,69 +124,32 @@ export default function ContactList(props: Props = {}) {
         </Show>
       </div>
 
-      <div class="flex flex-col gap-3 mb-3 md:flex-row md:items-center md:justify-between">
-        <div class="flex items-center gap-3 flex-wrap">
-          <label class="flex items-center gap-2 cursor-pointer text-[11px] uppercase tracking-wider font-semibold text-base-200">
-            <input
-              type="checkbox"
-              class="press-checkbox"
-              checked={allVisibleSelected()}
-              onChange={toggleSelectAllVisible}
-            />
-            Select all
-          </label>
-          <span class="text-base-300 text-[11px] uppercase tracking-wider">
-            {selectedCount()} selected
-          </span>
-          <Show when={selectedCount() > 0}>
-            <button
-              class="text-base-300 text-[11px] uppercase tracking-wider hover:text-base-50"
-              onClick={clearSelection}
-            >
-              Clear
-            </button>
-          </Show>
-        </div>
-        <ExportActions ids={selectedIdList} build={buildExport} disabled={() => contacts.loading} />
-      </div>
+      <SelectionToolbar selection={sel} buildExport={buildExport} loading={() => contacts.loading} />
 
-      <Show when={!contacts.loading} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
-        <div class="panel panel-accent">
-          <For each={filtered()} fallback={<div class="text-base-300 text-center p-10 text-sm">No contacts found</div>}>
-            {(c: any) => (
-              <div class="flex items-center border-b border-base-700 last:border-b-0">
-                <label class="flex items-center self-stretch pl-3 pr-1 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    class="press-checkbox"
-                    checked={selectedIds().has(c.id)}
-                    onChange={() => toggleSelect(c.id)}
-                  />
-                </label>
-                <A href={`/contacts/${c.id}`} class="press-row gap-4 flex-wrap flex-1 min-w-0">
-                  <span class="flex-1 min-w-full md:min-w-0 font-semibold text-sm text-base-50">{c.full_name}</span>
-                  <Show when={c.title}>
-                    <span class="text-base-300 text-[12px]">{c.title}</span>
-                  </Show>
-                  <Show when={!isEmbedded() && c.account_names}>
-                    <span class="text-base-300 text-[12px]">{c.account_names}</span>
-                  </Show>
-                  <Show when={c.email}>
-                    <span class="text-base-300 text-[12px]">{c.email}</span>
-                  </Show>
-                </A>
-                <button
-                  class="btn-x mr-2 md:mr-3 shrink-0"
-                  onClick={() => deleteContact(c.id)}
-                  title="Delete contact"
-                >
-                  ×
-                </button>
-              </div>
-            )}
-          </For>
-        </div>
-      </Show>
+      <ListRows
+        items={filtered}
+        loading={() => contacts.loading}
+        getId={(c: any) => c.id}
+        getHref={(c: any) => `/contacts/${c.id}`}
+        renderRow={(c: any) => (
+          <>
+            <span class="flex-1 min-w-full md:min-w-0 font-semibold text-sm text-base-50">{c.full_name}</span>
+            <Show when={c.title}>
+              <span class="text-base-300 text-[12px]">{c.title}</span>
+            </Show>
+            <Show when={!isEmbedded() && c.account_names}>
+              <span class="text-base-300 text-[12px]">{c.account_names}</span>
+            </Show>
+            <Show when={c.email}>
+              <span class="text-base-300 text-[12px]">{c.email}</span>
+            </Show>
+          </>
+        )}
+        selection={sel}
+        onDelete={deleteContact}
+        deleteTitle="Delete contact"
+        emptyState={<div class="text-base-300 text-center p-10 text-sm">No contacts found</div>}
+      />
 
       <ContactFormModal
         open={modalOpen()}

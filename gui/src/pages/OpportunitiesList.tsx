@@ -1,9 +1,11 @@
-import { createResource, createSignal, createEffect, createMemo, For, Show } from 'solid-js';
-import { A, useNavigate } from '@solidjs/router';
+import { createResource, createSignal, createMemo, For, Show } from 'solid-js';
+import { useNavigate } from '@solidjs/router';
 import { api } from '../lib/api';
 import { OpportunityFormModal } from '../components/FormModals';
 import Button from '../components/Button';
-import ExportActions from '../components/ExportActions';
+import ListRows from '../components/ListRows';
+import SelectionToolbar from '../components/SelectionToolbar';
+import { createSelection } from '../components/createSelection';
 import { buildOpportunitiesExport } from '../lib/opportunityExport';
 import { STAGES, STAGE_BY_ID, stageShort, stageChipClass, type OpportunityStage } from '../lib/stages';
 
@@ -29,7 +31,6 @@ export default function OpportunitiesList(props: Props = {}) {
   const [filter, setFilter] = createSignal('');
   const [stageFilter, setStageFilter] = createSignal('');
   const [modalOpen, setModalOpen] = createSignal(false);
-  const [selectedIds, setSelectedIds] = createSignal<Set<number>>(new Set<number>());
   const navigate = useNavigate();
 
   const isEmbedded = () => props.accountId !== undefined && props.accountId !== null;
@@ -45,12 +46,6 @@ export default function OpportunitiesList(props: Props = {}) {
         limit: 500,
       }),
   );
-
-  // Clear any stale selection when the scope changes.
-  createEffect(() => {
-    void props.accountId;
-    setSelectedIds(new Set<number>());
-  });
 
   const stageIndex = (s: string | null | undefined) =>
     STAGE_BY_ID[s as OpportunityStage]?.index ?? 999;
@@ -73,37 +68,10 @@ export default function OpportunitiesList(props: Props = {}) {
     return result.slice().sort((a: any, b: any) => stageIndex(a.stage) - stageIndex(b.stage));
   });
 
-  const toggleSelect = (id: number) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const visibleIds = () => filtered().map((o: any) => o.id as number);
-
-  const allVisibleSelected = () => {
-    const ids = visibleIds();
-    if (ids.length === 0) return false;
-    const sel = selectedIds();
-    return ids.every((id) => sel.has(id));
-  };
-
-  const toggleSelectAllVisible = () => {
-    const ids = visibleIds();
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (allVisibleSelected()) ids.forEach((id) => next.delete(id));
-      else ids.forEach((id) => next.add(id));
-      return next;
-    });
-  };
-
-  const clearSelection = () => setSelectedIds(new Set<number>());
-  const selectedCount = () => selectedIds().size;
-  const selectedIdList = () => Array.from(selectedIds());
+  const sel = createSelection(
+    () => filtered().map((o: any) => o.id),
+    () => props.accountId,
+  );
 
   const buildExport = (ids: number[]) => {
     const idSet = new Set(ids);
@@ -114,11 +82,7 @@ export default function OpportunitiesList(props: Props = {}) {
   const deleteOpportunity = async (id: number) => {
     if (!confirm('Delete this opportunity?')) return;
     await api.deleteOpportunity(id);
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      return next;
-    });
+    sel.remove(id);
     refetch();
     props.onAfterDelete?.();
   };
@@ -161,74 +125,37 @@ export default function OpportunitiesList(props: Props = {}) {
         </select>
       </div>
 
-      <div class="flex flex-col gap-3 mb-3 md:flex-row md:items-center md:justify-between">
-        <div class="flex items-center gap-3 flex-wrap">
-          <label class="flex items-center gap-2 cursor-pointer text-[11px] uppercase tracking-wider font-semibold text-base-200">
-            <input
-              type="checkbox"
-              class="press-checkbox"
-              checked={allVisibleSelected()}
-              onChange={toggleSelectAllVisible}
-            />
-            Select all
-          </label>
-          <span class="text-base-300 text-[11px] uppercase tracking-wider">
-            {selectedCount()} selected
-          </span>
-          <Show when={selectedCount() > 0}>
-            <button
-              class="text-base-300 text-[11px] uppercase tracking-wider hover:text-base-50"
-              onClick={clearSelection}
-            >
-              Clear
-            </button>
-          </Show>
-        </div>
-        <ExportActions ids={selectedIdList} build={buildExport} disabled={() => data.loading} />
-      </div>
+      <SelectionToolbar selection={sel} buildExport={buildExport} loading={() => data.loading} />
 
-      <div class="panel panel-accent">
-        <Show when={!data.loading} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
-          <For each={filtered()} fallback={
-            <div class="text-base-300 text-center p-10 text-sm">
-              No opportunities yet. <button class="text-surf-300 underline" onClick={() => setModalOpen(true)}>Create the first one</button>.
-            </div>
-          }>
-            {(opp: any) => (
-              <div class="flex items-center border-b border-base-700 last:border-b-0">
-                <label class="flex items-center self-stretch pl-3 pr-1 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    class="press-checkbox"
-                    checked={selectedIds().has(opp.id)}
-                    onChange={() => toggleSelect(opp.id)}
-                  />
-                </label>
-                <A href={`/opportunities/${opp.id}`} class="press-row gap-4 flex-wrap flex-1 min-w-0">
-                  <span class="flex-1 min-w-full md:min-w-[280px] font-semibold text-sm text-base-50">{opp.name}</span>
-                  <Show when={!isEmbedded() && opp.account_name}>
-                    <span class="text-base-300 text-[12px]">{opp.account_name}</span>
-                  </Show>
-                  <span class={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 border ${stageChipClass(opp.stage)}`}>
-                    {stageShort(opp.stage)}
-                  </span>
-                  <Show when={typeof opp.product_count === 'number'}>
-                    <span class="text-surf-300 text-[11px] uppercase tracking-wider">{opp.product_count} prod{opp.product_count === 1 ? '' : 's'}</span>
-                  </Show>
-                  <span class="text-base-400 text-[11px]">{formatShortDate(opp.created_at)}</span>
-                </A>
-                <button
-                  class="btn-x mr-2 md:mr-3 shrink-0"
-                  onClick={() => deleteOpportunity(opp.id)}
-                  title="Delete opportunity"
-                >
-                  ×
-                </button>
-              </div>
-            )}
-          </For>
-        </Show>
-      </div>
+      <ListRows
+        items={filtered}
+        loading={() => data.loading}
+        getId={(o: any) => o.id}
+        getHref={(o: any) => `/opportunities/${o.id}`}
+        renderRow={(opp: any) => (
+          <>
+            <span class="flex-1 min-w-full md:min-w-[280px] font-semibold text-sm text-base-50">{opp.name}</span>
+            <Show when={!isEmbedded() && opp.account_name}>
+              <span class="text-base-300 text-[12px]">{opp.account_name}</span>
+            </Show>
+            <span class={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 border ${stageChipClass(opp.stage)}`}>
+              {stageShort(opp.stage)}
+            </span>
+            <Show when={typeof opp.product_count === 'number'}>
+              <span class="text-surf-300 text-[11px] uppercase tracking-wider">{opp.product_count} prod{opp.product_count === 1 ? '' : 's'}</span>
+            </Show>
+            <span class="text-base-400 text-[11px]">{formatShortDate(opp.created_at)}</span>
+          </>
+        )}
+        selection={sel}
+        onDelete={deleteOpportunity}
+        deleteTitle="Delete opportunity"
+        emptyState={
+          <div class="text-base-300 text-center p-10 text-sm">
+            No opportunities yet. <button class="text-surf-300 underline" onClick={() => setModalOpen(true)}>Create the first one</button>.
+          </div>
+        }
+      />
 
       <OpportunityFormModal
         open={modalOpen()}
