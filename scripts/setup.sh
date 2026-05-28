@@ -173,4 +173,7 @@ $(bold "Next steps:")
      If your CRAM host is headless, run this on your laptop and copy
      outreach/cookies.json over to the same path on the host.
 
+  4. To update later (pull latest code and restart with a fresh build):
+       ./scripts/restart-prod.sh
+
 EOF

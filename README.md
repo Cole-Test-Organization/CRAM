@@ -39,14 +39,20 @@ Find the mini-PC's IP with `ip addr` or in your router's admin page. Consider gi
 
 **Don't expose the box to the public internet as-is** — there's no auth layer yet. Use a VPN (Tailscale, WireGuard) if you need to reach it from outside your LAN.
 
-To update later:
+To update later, run the bundled restart script from the repo root:
+
+```bash
+./scripts/restart-prod.sh
+```
+
+It tears down the running containers, runs `git pull`, and brings the stack back up with `--build`. The `db` container and `postgres_data` volume are untouched on rebuild; pending schema migrations run automatically on startup.
+
+If you'd rather do it by hand:
 
 ```bash
 git pull
 docker compose --profile prod up -d --build
 ```
-
-The `db` container and `postgres_data` volume are untouched on rebuild; pending schema migrations run automatically on startup.
 
 ### Option B — macOS laptop
 
