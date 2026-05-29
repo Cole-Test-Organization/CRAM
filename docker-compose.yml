@@ -9,7 +9,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
       POSTGRES_DB: ${POSTGRES_DB:-crm}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Bound to localhost only — the app reaches Postgres over the compose
+      # network (db:5432), so this published port is just for host-side tools
+      # (dump-schema, psql). It never needs to be on the LAN.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -39,14 +42,20 @@ services:
       # Identity (set by setup.sh)
       - VENDOR_NAME=${VENDOR_NAME:-Acme Corp}
       - USER_ROLE=${USER_ROLE:-Sales Engineer}
-      # Agent loop
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - AGENT_PROVIDER=${AGENT_PROVIDER:-anthropic}
-      - AGENT_MODEL=${AGENT_MODEL:-claude-sonnet-4-6}
-      # Local LLM (Ollama / LM Studio / llama.cpp / vLLM on host or LAN).
-      # Use host.docker.internal:<port> to hit an inference server on the
-      # Docker host itself (see extra_hosts below).
-      - LOCAL_BASE_URL=${LOCAL_BASE_URL:-}
+      # Internal email domains bootstrap (comma-separated). Either var works;
+      # SELF_DOMAINS wins if both are set. Ignored once a user curates their
+      # own list in-app. See api/src/services/internal-domains.js.
+      - SELF_DOMAINS=${SELF_DOMAINS:-}
+      - INTERNAL_DOMAINS=${INTERNAL_DOMAINS:-}
+      # Agent LLM — local by default (Ollama running on the device itself).
+      # `local` is the only provider: an OpenAI-compatible inference server
+      # (Ollama / LM Studio / llama.cpp / vLLM). Override any of these in .env.
+      - AGENT_PROVIDER=${AGENT_PROVIDER:-local}
+      - "AGENT_MODEL=${AGENT_MODEL:-gemma4:e4b}"
+      # Where the inference server lives. Default = Ollama on the Docker host
+      # (this device). Point at a LAN address (e.g. http://192.168.1.50:11434)
+      # to use another machine. host.docker.internal needs extra_hosts below.
+      - "LOCAL_BASE_URL=${LOCAL_BASE_URL:-http://host.docker.internal:11434}"
       - LOCAL_API_KEY=${LOCAL_API_KEY:-}
       # Todoist (optional). TODOIST_ENABLED defaults to true; set to "false" in
       # .env to skip route/tool/instructions registration entirely. The token
@@ -76,8 +85,10 @@ services:
       # Defaults to ./backups so a fresh clone "just works" without .env edits.
       - ${BACKUP_HOST_DIR:-./backups}:/backups
     ports:
-      - "3200:3200"
-      - "3100:3100"
+      # BIND_ADDRESS = host interface to bind to. 127.0.0.1 (default) keeps the
+      # app on this machine only; 0.0.0.0 exposes it on the LAN. Set in .env.
+      - "${BIND_ADDRESS:-127.0.0.1}:3200:3200"
+      - "${BIND_ADDRESS:-127.0.0.1}:3100:3100"
     profiles: ["prod"]
 
   # ---- Development (hot-reload) ----
@@ -93,12 +104,13 @@ services:
       - DATABASE_URL=postgres://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-devpassword}@db:5432/${POSTGRES_DB:-crm}
       - VENDOR_NAME=${VENDOR_NAME:-Acme Corp}
       - USER_ROLE=${USER_ROLE:-Sales Engineer}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - AGENT_PROVIDER=${AGENT_PROVIDER:-anthropic}
-      - AGENT_MODEL=${AGENT_MODEL:-claude-sonnet-4-6}
-      # Local LLM (Ollama / LM Studio / llama.cpp / vLLM). For an inference
-      # server running on the Docker host, use host.docker.internal:<port>.
-      - LOCAL_BASE_URL=${LOCAL_BASE_URL:-}
+      # Internal email domains bootstrap (see app service above for semantics).
+      - SELF_DOMAINS=${SELF_DOMAINS:-}
+      - INTERNAL_DOMAINS=${INTERNAL_DOMAINS:-}
+      # Agent LLM — local by default (Ollama on the device). See app service above.
+      - AGENT_PROVIDER=${AGENT_PROVIDER:-local}
+      - "AGENT_MODEL=${AGENT_MODEL:-gemma4:e4b}"
+      - "LOCAL_BASE_URL=${LOCAL_BASE_URL:-http://host.docker.internal:11434}"
       - LOCAL_API_KEY=${LOCAL_API_KEY:-}
       # Todoist (optional). See app service above for semantics.
       - TODOIST_ENABLED=${TODOIST_ENABLED:-true}
@@ -129,9 +141,10 @@ services:
       - ./events/src:/app/events/src
       - ${BACKUP_HOST_DIR:-./backups}:/backups
     ports:
-      - "3200:3200"
-      - "3100:3100"
-      - "80:80"
+      # BIND_ADDRESS = host interface to bind to (see app service / .env).
+      - "${BIND_ADDRESS:-127.0.0.1}:3200:3200"
+      - "${BIND_ADDRESS:-127.0.0.1}:3100:3100"
+      - "${BIND_ADDRESS:-127.0.0.1}:80:80"
     profiles: ["dev"]
 
   # ---- Dev seed (opt-in) ----

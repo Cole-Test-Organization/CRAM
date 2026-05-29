@@ -170,7 +170,7 @@ export default async function agentRoutes(fastify, { agentSettingsService, memor
   // same provider the user has configured for the in-app agent.
   fastify.get('/agent/settings', {
     schema: {
-      description: 'Get the calling user\'s agent provider config (provider, model, local_base_url). Empty fields fall through to env vars (AGENT_PROVIDER / AGENT_MODEL / LOCAL_BASE_URL) for unmigrated installs.',
+      description: 'Get the calling user\'s agent LLM config (provider, model, local_base_url). Empty fields fall through to env-backed defaults (AGENT_PROVIDER / AGENT_MODEL / LOCAL_BASE_URL), which ship pointed at a local LLM — Ollama running on the device itself.',
       tags: ['agent'],
       response: {
         200: {
@@ -190,12 +190,12 @@ export default async function agentRoutes(fastify, { agentSettingsService, memor
 
   fastify.patch('/agent/settings', {
     schema: {
-      description: 'Update the agent provider config. Pass any subset of `provider`, `model`, `local_base_url`. Pass null on a field to clear it. Provider must be one of: anthropic, local. local_base_url has its trailing slash stripped before storage.',
+      description: 'Update the agent LLM config. Pass any subset of `provider`, `model`, `local_base_url`. Pass null on a field to clear it (the server default then applies). Provider must be: local (an OpenAI-compatible inference server, by default Ollama on the device). local_base_url has its trailing slash stripped before storage.',
       tags: ['agent'],
       body: {
         type: 'object',
         properties: {
-          provider:       { type: ['string', 'null'], enum: ['anthropic', 'local', null] },
+          provider:       { type: ['string', 'null'], enum: ['local', null] },
           model:          { type: ['string', 'null'] },
           local_base_url: { type: ['string', 'null'] },
         },

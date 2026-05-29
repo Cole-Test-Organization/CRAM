@@ -40,13 +40,13 @@ export default function Agent() {
     // (including []) is forwarded as `allowedTools` on every submit until the
     // session is reset.
     const [allowedTools, setAllowedTools] = createSignal<string[] | null>(null);
-    // Latest token usage from the provider (currently local llama.cpp/vLLM
-    // only — Anthropic turns don't emit it). Reset on New Conversation.
+    // Latest token usage from the local provider, when it reports counts.
+    // Reset on New Conversation.
     const [usage, setUsage] = createSignal<UsageSnapshot | null>(null);
-    // Backend selection — persisted server-side per user (was localStorage).
-    // Empty strings = "use server default" (AGENT_PROVIDER / AGENT_MODEL env).
-    // The inline panel below has a Save button; the same fields are also
-    // editable in Settings → Agent LLM.
+    // Local LLM selection — persisted server-side per user (was localStorage).
+    // Provider is always "local"; blank model/URL = server default (Ollama on
+    // this device). The inline panel below has a Save button; the same fields
+    // are also editable in Settings → Agent LLM.
     const [agentSettings, setAgentSettings] = createStore<{
         provider: string;
         model: string;
@@ -54,7 +54,7 @@ export default function Agent() {
         saving: boolean;
         msg: { kind: "ok" | "err"; text: string } | null;
     }>({
-        provider: "",
+        provider: "local",
         model: "",
         localBaseUrl: "",
         saving: false,
@@ -68,7 +68,7 @@ export default function Agent() {
         const s = savedAgentSettings();
         if (!s || agentSettingsSeeded) return;
         setAgentSettings({
-            provider: s.provider || "",
+            provider: "local",
             model: s.model || "",
             localBaseUrl: s.local_base_url || "",
         });
@@ -401,30 +401,14 @@ export default function Agent() {
             <Show when={settingsOpen()}>
                 <div class="panel panel-accent p-4 flex flex-col gap-3">
                     <div class="text-[10px] uppercase tracking-widest text-base-400">
-                        Agent Backend
+                        Agent LLM · Local
                     </div>
-
-                    <label class="flex flex-col gap-1">
-                        <span class="text-[11px] uppercase tracking-widest text-base-300">
-                            Provider
-                        </span>
-                        <select
-                            value={agentSettings.provider}
-                            onChange={(e) =>
-                                setAgentSettings(
-                                    "provider",
-                                    e.currentTarget.value,
-                                )
-                            }
-                            class="bg-base-950 border-2 border-base-500 px-3 py-2 outline-none text-base-50 text-sm focus:border-surf-300"
-                        >
-                            <option value="">(server default)</option>
-                            <option value="anthropic">Anthropic</option>
-                            <option value="local">
-                                Local (OpenAI-compatible)
-                            </option>
-                        </select>
-                    </label>
+                    <div class="text-[10px] text-base-500">
+                        Runs on a local LLM — Ollama on this device by default.
+                        Leave the fields blank to use the server default
+                        (gemma4:e4b on this device), or set a model / machine
+                        below.
+                    </div>
 
                     <label class="flex flex-col gap-1">
                         <span class="text-[11px] uppercase tracking-widest text-base-300">
@@ -436,13 +420,7 @@ export default function Agent() {
                             onInput={(e) =>
                                 setAgentSettings("model", e.currentTarget.value)
                             }
-                            placeholder={
-                                agentSettings.provider === "local"
-                                    ? "e.g. llama-3.3-70b-instruct (whatever your server reports)"
-                                    : agentSettings.provider === "anthropic"
-                                      ? "claude-sonnet-4-6"
-                                      : "(server default)"
-                            }
+                            placeholder="gemma4:e4b (or any model you've pulled)"
                             class="bg-base-950 border-2 border-base-500 px-3 py-2 outline-none text-base-50 text-sm placeholder:text-base-400 focus:border-surf-300 font-mono"
                         />
                     </label>
@@ -461,7 +439,7 @@ export default function Agent() {
                                         e.currentTarget.value,
                                     )
                                 }
-                                placeholder="http://192.168.1.50:8080"
+                                placeholder="http://192.168.1.50:11434"
                                 class="bg-base-950 border-2 border-base-500 px-3 py-2 outline-none text-base-50 text-sm placeholder:text-base-400 focus:border-surf-300 font-mono"
                             />
                             <div class="flex flex-wrap gap-2">
@@ -505,17 +483,16 @@ export default function Agent() {
                                 POSTed to{" "}
                                 <span class="font-mono">{`{url}/v1/chat/completions`}</span>
                                 . Saved server-side (per user) — also editable
-                                in <A href="/settings" class="underline hover:text-surf-300">Settings → Agent LLM</A>.
-                                <strong class="text-base-300">
-                                    {" "}
-                                    Docker host
-                                </strong>{" "}
-                                presets target an inference server running on
-                                the Docker host machine (works in Docker
-                                Desktop on Mac/Windows; on Linux requires the{" "}
+                                in <A href="/settings" class="underline hover:text-surf-300">Settings → Agent LLM</A>.{" "}
+                                <strong class="text-base-300">Docker host</strong>{" "}
+                                presets hit Ollama / LM Studio on this device
+                                (works on Docker Desktop; on Linux needs the{" "}
                                 <span class="font-mono">extra_hosts</span>{" "}
-                                directive in compose). If empty, the server
-                                falls back to the LOCAL_BASE_URL env var.
+                                directive in compose). For an LLM on another
+                                machine, type its LAN address (e.g.{" "}
+                                <span class="font-mono">http://192.168.1.50:11434</span>).
+                                If empty, the server uses the default — Ollama on
+                                this device.
                             </span>
                         </label>
                     </Show>
@@ -540,11 +517,9 @@ export default function Agent() {
                     </div>
 
                     <div class="text-[10px] text-base-500 border-t border-base-700 pt-2">
-                        Anthropic uses ANTHROPIC_API_KEY on the server. Local
-                        uses the URL above (no auth by default — set
-                        LOCAL_API_KEY on the server if your endpoint requires
-                        it). New sessions remember their provider+model; resume
-                        to keep using the same backend.
+                        No auth by default — set LOCAL_API_KEY on the server if
+                        your endpoint requires a bearer token. New sessions
+                        remember their model; resume to keep using it.
                     </div>
                 </div>
                 <MemoryManager />

@@ -3,19 +3,26 @@
 // body still wins for per-call overrides) and by background workers like
 // the contact-enrichment formatter that have no request context.
 //
-// Env vars (AGENT_PROVIDER, AGENT_MODEL, LOCAL_BASE_URL) act as a bootstrap
-// fallback for fresh installs that haven't curated the row yet.
+// The only provider is `local` (an OpenAI-compatible inference server such as
+// Ollama). Env vars (AGENT_PROVIDER, AGENT_MODEL, LOCAL_BASE_URL), surfaced
+// via ../agent/defaults.js, act as a bootstrap fallback for fresh installs
+// that haven't curated the row yet.
 
 import { withUser } from '../db/connection.js';
+import {
+  DEFAULT_PROVIDER,
+  DEFAULT_MODEL,
+  DEFAULT_LOCAL_BASE_URL,
+} from '../agent/defaults.js';
 
-const VALID_PROVIDERS = new Set(['anthropic', 'local']);
+const VALID_PROVIDERS = new Set(['local']);
 
 function normalize(patch) {
   const out = {};
   if (patch.provider !== undefined) {
     const v = patch.provider == null ? null : String(patch.provider).trim().toLowerCase();
     if (v && !VALID_PROVIDERS.has(v)) {
-      throw Object.assign(new Error(`Invalid provider: "${v}". Must be "anthropic" (hosted Claude via API key) or "local" (a self-hosted OpenAI-compatible inference server reachable at local_base_url). Pass null to clear.`), { statusCode: 400 });
+      throw Object.assign(new Error(`Invalid provider: "${v}". Must be "local" — a self-hosted OpenAI-compatible inference server (Ollama, LM Studio, llama.cpp, vLLM) reachable at local_base_url. Pass null to clear.`), { statusCode: 400 });
     }
     out.provider = v || null;
   }
@@ -56,10 +63,13 @@ export class AgentSettingsService {
   // call this so they don't have to re-implement the fallback chain.
   async getEffective(userId) {
     const stored = await this.get(userId);
+    // Coerce any legacy/unknown stored provider (e.g. a value from before the
+    // local-only switch) to the default so the provider registry never throws.
+    const provider = VALID_PROVIDERS.has(stored.provider) ? stored.provider : DEFAULT_PROVIDER;
     return {
-      provider: stored.provider || process.env.AGENT_PROVIDER || 'anthropic',
-      model:    stored.model    || process.env.AGENT_MODEL    || 'claude-sonnet-4-6',
-      local_base_url: stored.local_base_url || process.env.LOCAL_BASE_URL || null,
+      provider,
+      model:    stored.model    || DEFAULT_MODEL,
+      local_base_url: stored.local_base_url || DEFAULT_LOCAL_BASE_URL,
     };
   }
 

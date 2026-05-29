@@ -15,7 +15,6 @@
     "test": "node --test test/endpoints.test.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.40.0",
     "@fastify/cors": "^10.0.0",
     "@fastify/static": "^9.0.0",
     "@fastify/swagger": "^9.0.0",

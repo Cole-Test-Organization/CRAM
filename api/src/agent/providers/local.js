@@ -1,6 +1,7 @@
-// OpenAI-compatible local LLM adapter (llama-cpp, vLLM, LM Studio, etc.).
-// Converts the canonical Anthropic-shape messages/tools at the boundary so
-// the loop and persisted sessions stay vendor-agnostic.
+// OpenAI-compatible local LLM adapter (Ollama, llama-cpp, vLLM, LM Studio, etc.).
+// Converts the loop's canonical message/tool shape to the OpenAI Chat
+// Completions shape at the boundary so the loop and persisted sessions stay
+// backend-agnostic.
 //
 // Streaming UX: OpenAI's streaming format lacks an explicit block-boundary
 // event, so blocks are emitted via onBlock at end-of-stream. The GUI sees no
@@ -205,8 +206,8 @@ function toOpenAITools(mcpTools) {
   }));
 }
 
-// Translate OpenAI finish_reason → Anthropic-ish stop_reason for symmetry
-// with the anthropic adapter. Unknown values pass through unchanged.
+// Translate OpenAI finish_reason → the loop's canonical stop_reason.
+// Unknown values pass through unchanged.
 const FINISH_REASON_MAP = {
   stop: 'end_turn',
   tool_calls: 'tool_use',
@@ -449,7 +450,7 @@ async function streamTurnOnce({ model, system, messages, mcpTools, onBlock, prov
   const content = [];
 
   // Order matters: thinking before text so the GUI renders the reasoning
-  // bubble above the answer, matching the Anthropic adapter.
+  // bubble above the answer.
   if (thinkingBuf) {
     const block = { type: 'thinking', thinking: thinkingBuf };
     content.push(block);

@@ -1,11 +1,12 @@
 // Provider registry. Each provider exports streamTurn({ model, system, messages, mcpTools, onBlock }).
 // Adding a new provider = drop a sibling file and add a case here.
 
-import * as anthropic from "./anthropic.js";
 import * as local from "./local.js";
 
+// `local` is the only provider: an OpenAI-compatible inference server
+// (Ollama, LM Studio, llama.cpp, vLLM). Add a sibling file + entry to support
+// another backend.
 const PROVIDERS = {
-    anthropic,
     local,
 };
 

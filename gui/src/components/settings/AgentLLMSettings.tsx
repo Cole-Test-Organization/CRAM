@@ -2,14 +2,17 @@ import { createEffect, createResource, createSignal, Show } from "solid-js";
 import { api } from "../../lib/api";
 import Button from "../Button";
 
+// Ollama on the machine hosting the app, reached from inside the container.
+const DEVICE_URL = "http://host.docker.internal:11434";
+
 export default function AgentLLMSettings() {
     const [agentSettings, { refetch: refetchAgentSettings }] = createResource(
         () => api.getAgentSettings(),
     );
 
-    const [agentProvider, setAgentProvider] = createSignal<
-        "anthropic" | "local" | ""
-    >("");
+    // "local" is the only provider (an OpenAI-compatible server). What varies
+    // is *where* it runs: on this device, or on another machine on the LAN.
+    const [location, setLocation] = createSignal<"device" | "lan">("device");
     const [agentModel, setAgentModel] = createSignal("");
     const [agentLocalUrl, setAgentLocalUrl] = createSignal("");
     const [agentSaving, setAgentSaving] = createSignal(false);
@@ -21,20 +24,27 @@ export default function AgentLLMSettings() {
     createEffect(() => {
         const s = agentSettings();
         if (!s) return;
-        setAgentProvider((s.provider as any) || "");
+        const url = s.local_base_url || "";
         setAgentModel(s.model || "");
-        setAgentLocalUrl(s.local_base_url || "");
+        setAgentLocalUrl(url);
+        // No URL, or the on-device URL → "this device"; anything else is LAN/remote.
+        setLocation(!url || url === DEVICE_URL ? "device" : "lan");
     });
 
     const saveAgentSettings = async () => {
         setAgentSaving(true);
         setAgentMsg(null);
         try {
+            // Device mode always persists the on-device Ollama URL; LAN mode
+            // persists whatever address the user typed.
+            const url =
+                location() === "device" ? DEVICE_URL : agentLocalUrl().trim();
             await api.patchAgentSettings({
-                provider: agentProvider() || null,
+                provider: "local",
                 model: agentModel().trim() || null,
-                local_base_url: agentLocalUrl().trim() || null,
+                local_base_url: url || null,
             });
+            setAgentLocalUrl(url);
             await refetchAgentSettings();
             setAgentMsg({ kind: "ok", text: "Agent settings saved" });
             setTimeout(() => setAgentMsg(null), 4000);
@@ -52,10 +62,14 @@ export default function AgentLLMSettings() {
             </h2>
 
             <p class="text-base-300 text-[12px] mb-4">
-                Provider + model used by the in-app agent and by background
-                workers (contact enrichment formatter, etc.). Stored
-                server-side per user — replaces the old browser-localStorage
-                state on the Agent page.
+                The in-app agent and background workers (contact enrichment
+                formatter, etc.) run on a <strong>local LLM</strong>. By default
+                that's <strong>Ollama running on this device</strong> — the
+                machine hosting the app — with the{" "}
+                <code class="text-surf-300">gemma4:e4b</code> model. No API keys,
+                and nothing leaves your network. Point it at another machine on
+                your LAN instead, or change the model, below. Stored server-side
+                per user.
             </p>
 
             <Show
@@ -65,19 +79,29 @@ export default function AgentLLMSettings() {
                 <div class="flex flex-col gap-4">
                     <label class="flex flex-col gap-1">
                         <span class="text-[11px] uppercase tracking-wider text-base-300">
-                            Provider
+                            Where the model runs
                         </span>
                         <select
                             class="input-vintage cursor-pointer"
-                            value={agentProvider()}
-                            onChange={(e) =>
-                                setAgentProvider(e.currentTarget.value as any)
-                            }
+                            value={location()}
+                            onChange={(e) => {
+                                const v = e.currentTarget.value as
+                                    | "device"
+                                    | "lan";
+                                setLocation(v);
+                                if (v === "device") {
+                                    setAgentLocalUrl(DEVICE_URL);
+                                } else if (agentLocalUrl() === DEVICE_URL) {
+                                    // Clear the device URL so the LAN field starts empty.
+                                    setAgentLocalUrl("");
+                                }
+                            }}
                         >
-                            <option value="">(server default)</option>
-                            <option value="anthropic">Anthropic</option>
-                            <option value="local">
-                                Local (OpenAI-compatible)
+                            <option value="device">
+                                This device (Ollama)
+                            </option>
+                            <option value="lan">
+                                Another machine on my LAN
                             </option>
                         </select>
                     </label>
@@ -90,23 +114,39 @@ export default function AgentLLMSettings() {
                             type="text"
                             class="input-vintage font-mono"
                             value={agentModel()}
-                            onInput={(e) =>
-                                setAgentModel(e.currentTarget.value)
-                            }
-                            placeholder={
-                                agentProvider() === "local"
-                                    ? "e.g. qwen2.5-coder:32b"
-                                    : agentProvider() === "anthropic"
-                                      ? "claude-sonnet-4-6"
-                                      : "(server default)"
-                            }
+                            onInput={(e) => setAgentModel(e.currentTarget.value)}
+                            placeholder="gemma4:e4b"
                         />
+                        <span class="text-[10px] text-base-500 mt-1">
+                            Any model you've pulled (e.g.{" "}
+                            <code class="text-surf-300">gemma4:e4b</code>,{" "}
+                            <code class="text-surf-300">gemma4:e2b</code>,{" "}
+                            <code class="text-surf-300">qwen2.5:14b</code>).
+                            Leave blank to use the server default (
+                            <code class="text-surf-300">gemma4:e4b</code>).
+                        </span>
                     </label>
 
-                    <Show when={agentProvider() === "local"}>
+                    <Show when={location() === "device"}>
+                        <div class="text-[10px] text-base-500 border-2 border-base-700 bg-base-950 px-3 py-2">
+                            Using Ollama on this device →{" "}
+                            <code class="text-surf-300">{DEVICE_URL}</code>. Make
+                            sure Ollama is running on the host and the model is
+                            pulled (
+                            <code class="text-surf-300">
+                                ollama pull gemma4:e4b
+                            </code>
+                            ). Works out of the box on Docker Desktop
+                            (Mac/Windows); on Linux the compose file needs the{" "}
+                            <code class="text-surf-300">extra_hosts</code>{" "}
+                            directive.
+                        </div>
+                    </Show>
+
+                    <Show when={location() === "lan"}>
                         <label class="flex flex-col gap-1">
                             <span class="text-[11px] uppercase tracking-wider text-base-300">
-                                Local server URL
+                                Server URL (LAN / remote)
                             </span>
                             <input
                                 type="text"
@@ -115,55 +155,19 @@ export default function AgentLLMSettings() {
                                 onInput={(e) =>
                                     setAgentLocalUrl(e.currentTarget.value)
                                 }
-                                placeholder="http://host.docker.internal:11434"
+                                placeholder="http://192.168.1.50:11434"
                             />
-                            <div class="flex flex-wrap gap-2 mt-1">
-                                <button
-                                    type="button"
-                                    class="border-2 border-base-500 bg-base-950 hover:border-surf-300 hover:text-surf-200 text-base-300 text-[10px] uppercase tracking-widest px-2 py-1 transition-colors"
-                                    onClick={() =>
-                                        setAgentLocalUrl(
-                                            "http://host.docker.internal:11434",
-                                        )
-                                    }
-                                >
-                                    Docker host · Ollama
-                                </button>
-                                <button
-                                    type="button"
-                                    class="border-2 border-base-500 bg-base-950 hover:border-surf-300 hover:text-surf-200 text-base-300 text-[10px] uppercase tracking-widest px-2 py-1 transition-colors"
-                                    onClick={() =>
-                                        setAgentLocalUrl(
-                                            "http://host.docker.internal:1234",
-                                        )
-                                    }
-                                >
-                                    Docker host · LM Studio
-                                </button>
-                                <Show when={agentLocalUrl()}>
-                                    <button
-                                        type="button"
-                                        class="border-2 border-base-700 bg-base-950 hover:border-base-400 text-base-500 hover:text-base-300 text-[10px] uppercase tracking-widest px-2 py-1 transition-colors"
-                                        onClick={() => setAgentLocalUrl("")}
-                                    >
-                                        Clear
-                                    </button>
-                                </Show>
-                            </div>
                             <span class="text-[10px] text-base-500 mt-1">
+                                Address of the OpenAI-compatible server (Ollama,
+                                LM Studio, llama.cpp, vLLM) on your network.
                                 POSTed to{" "}
                                 <code class="text-surf-300">
                                     {"{url}/v1/chat/completions"}
                                 </code>
-                                .{" "}
-                                <strong class="text-base-300">
-                                    Docker host
-                                </strong>{" "}
-                                presets target an inference server running on
-                                the Docker host machine (works on Docker
-                                Desktop; on Linux requires the{" "}
-                                <code class="text-surf-300">extra_hosts</code>{" "}
-                                directive in compose).
+                                . Set{" "}
+                                <code class="text-surf-300">LOCAL_API_KEY</code>{" "}
+                                on the server if your endpoint requires a bearer
+                                token.
                             </span>
                         </label>
                     </Show>

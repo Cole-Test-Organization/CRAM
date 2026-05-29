@@ -6,7 +6,7 @@ What's included:
 
 - **Accounts, contacts, meetings, opportunities, events** — the standard CRM shape, with per-user row-level security in Postgres.
 - **Two ways to call it** — REST under `/api` (with OpenAPI/Swagger docs at `/docs`) and the same operations exposed as MCP tools at `/mcp`. The same business logic backs both.
-- **In-process agent loop** — a streaming `POST /api/agent/query` endpoint that runs against your configured LLM provider (Anthropic by default, or any local LLM via Ollama / LM Studio / llama.cpp / vLLM).
+- **In-process agent loop** — a streaming `POST /api/agent/query` endpoint that runs entirely on a local LLM (Ollama by default, or any OpenAI-compatible server: LM Studio / llama.cpp / vLLM) — no cloud API keys, running on this device or a machine on your LAN.
 - **Outreach enrichment** — a queued LinkedIn + web research pipeline for filling in contact details.
 - **Events scraper** — pluggable per-source. The included `paloaltonetworks` source pulls the public PAN event calendar and joins it against your contacts.
 
@@ -17,7 +17,7 @@ CRAM runs in Docker. The recommended deployment is on a mini-PC or always-on mac
 ### Prerequisites
 
 - **Docker** (with Docker Compose). Install Docker for your OS first — instructions are at [docker.com](https://www.docker.com/get-started/).
-- **(Optional) Anthropic API key** — needed if you want the agent loop to use Claude. You can skip this and configure a local LLM from the GUI instead.
+- **A local LLM** — the agent runs on [Ollama](https://ollama.com) (or any OpenAI-compatible server: LM Studio / llama.cpp / vLLM), by default on the device hosting the app. Pull a model (e.g. `ollama pull gemma4:e4b`) and you're set — no cloud API keys. You can also point it at an LLM on another machine on your LAN from the GUI.
 
 ### Option A — Ubuntu mini-PC (recommended)
 
@@ -30,7 +30,7 @@ cd cram
 docker compose --profile prod up -d --build
 ```
 
-CRAM is now reachable at:
+CRAM listens on **this machine only** by default. Since this is the LAN-hosted setup, answer **Y** to "Expose CRAM to your LAN?" when `scripts/setup.sh` asks (or set `BIND_ADDRESS=0.0.0.0` in `.env` and restart). It's then reachable at:
 
 - **GUI/API**: `http://<mini-pc-ip>:3200` from any device on the LAN, or `http://localhost:3200` from the mini-PC itself.
 - **MCP server**: `http://<mini-pc-ip>:3100/mcp` from the LAN, or `http://localhost:3100/mcp` from the mini-PC itself.
@@ -90,19 +90,21 @@ docker compose --profile prod up -d --build
 | Variable | What it does |
 |---|---|
 | `VENDOR_NAME`, `USER_ROLE` | Shape the agent's system prompt — e.g. "CRM assistant for a $VENDOR $ROLE" |
-| `ANTHROPIC_API_KEY` | Required for the agent loop unless you use a local LLM |
+| `SELF_DOMAINS` | Comma-separated company email domains; contacts/attendees from them are flagged "internal" (skipped for account creation + outreach). `setup.sh` seeds it from your email — a bootstrap default until you curate the list in Settings. |
+| `AGENT_MODEL`, `LOCAL_BASE_URL` | The agent runs on a **local LLM** — by default Ollama (`gemma4:e4b`) on the device hosting the app. Override the model, or point `LOCAL_BASE_URL` at a LAN machine. No API keys required. |
 | `POSTGRES_*` | DB credentials for the bundled compose stack |
+| `BIND_ADDRESS` | Host interface the app's ports (3200, 3100) bind to. `127.0.0.1` = this machine only (**default**); set `0.0.0.0` to expose CRAM on your LAN. Postgres always stays local. |
 | `TODOIST_ENABLED` | Set `false` to skip the Todoist integration entirely |
 
-Provider and model are picked per-request in the GUI's Agent page (persisted in localStorage) — no env vars needed for those.
+The agent runs entirely on a local LLM (Ollama on the device by default). Choose the model and where it runs — this device or another machine on your LAN — per-user in the GUI (**Settings → Agent LLM**); the env vars above are the server-wide default.
 
 ## Optional module setup
 
 The core CRM works out of the box after `docker compose up`. These modules need a one-time setup step if you want to use them.
 
-### LinkedIn enrichment (outreach)
+### LinkedIn enrichment & persona research (outreach)
 
-The outreach module enriches contact records using your authenticated LinkedIn session. You need to log in once to capture session cookies.
+The outreach module powers **persona research** — building a background picture (role, career history, public activity) of the people you sell to, alongside company and industry enrichment. It works by driving *your own* authenticated LinkedIn session, so you log in once on a machine with a desktop browser to capture session cookies. Persona research stays disabled until those cookies exist.
 
 **On a machine with a desktop browser** (your laptop):
 
@@ -120,7 +122,7 @@ This opens a browser window — log in to LinkedIn manually. A `outreach/cookies
 scp outreach/cookies.json user@mini-pc:/path/to/cram/outreach/cookies.json
 ```
 
-The container picks it up automatically (it's bind-mounted). Re-run the login when the session expires (typically a few weeks).
+The container picks it up automatically (it's bind-mounted). Re-run the login when the session expires (typically a few weeks). Once the cookies are in place, persona research runs from the app's outreach feature (the GUI Agent page or the `outreach` MCP tool) — no further setup.
 
 ### Todoist
 

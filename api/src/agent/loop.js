@@ -14,19 +14,18 @@ import {
     deriveTitle,
 } from "../services/agentSessions.js";
 import { buildMcpSession } from "./mcp-client.js";
-import { getProvider } from "./providers/index.js";
+import { getProvider, listProviders } from "./providers/index.js";
+import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import { logger } from "../lib/logger.js";
+import { getConfig } from "../config.js";
 
 const MAX_ITERATIONS = 25;
-const DEFAULT_MODEL = process.env.AGENT_MODEL || "claude-sonnet-4-6";
-const DEFAULT_PROVIDER = process.env.AGENT_PROVIDER || "anthropic";
 
 function defaultSystemPrompt() {
     const today = new Date().toISOString().slice(0, 10);
-    // const vendor = process.env.VENDOR_NAME || 'Acme Corp';
-    // const role = process.env.USER_ROLE || 'Sales Engineer';
+    const { vendorName, userRole } = getConfig();
     return [
-        `You are a CRM assistant for a sales engineer at Palo Alto Netowrks.`,
+        `You are a CRM assistant for a ${userRole} at ${vendorName}.`,
         "",
         "Use the available tools for all data access and updates — never instruct the user to do something a tool can do directly. Workflow guidance for each tool family is delivered by the MCP server itself.",
         "",
@@ -110,7 +109,13 @@ export async function runAgent({
         ? allMcpTools.filter((t) => allowedTools.includes(t.name))
         : allMcpTools;
 
-    const providerImpl = getProvider(session.provider);
+    // Resume safety: an older session may carry a provider that's no longer
+    // registered (e.g. a legacy value from before the local-only switch).
+    // Fall back to the default rather than throwing from getProvider().
+    const providerName = listProviders().includes(session.provider)
+        ? session.provider
+        : DEFAULT_PROVIDER;
+    const providerImpl = getProvider(providerName);
 
     const providerConfig = { baseUrl: localBaseUrl };
 

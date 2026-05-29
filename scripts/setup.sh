@@ -44,6 +44,25 @@ random_password() {
   openssl rand -hex 16
 }
 
+detect_lan_ip() {
+  # Best-effort primary LAN IPv4 of this host; prints an empty string if it
+  # can't tell. Always call as `$(detect_lan_ip || true)` so a failure here
+  # never aborts the script under `set -e`.
+  local lan="" iface=""
+  if [[ "$(uname -s 2>/dev/null)" == "Darwin" ]]; then
+    iface=$(route -n get default 2>/dev/null | awk '/interface:/{print $2; exit}') || true
+    [[ -n "$iface" ]] && lan=$(ipconfig getifaddr "$iface" 2>/dev/null) || true
+    [[ -n "$lan" ]] || lan=$(ipconfig getifaddr en0 2>/dev/null) || true
+    [[ -n "$lan" ]] || lan=$(ipconfig getifaddr en1 2>/dev/null) || true
+  else
+    if command -v ip >/dev/null 2>&1; then
+      lan=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}') || true
+    fi
+    [[ -n "$lan" ]] || lan=$(hostname -I 2>/dev/null | awk '{print $1}') || true
+  fi
+  printf '%s' "$lan"
+}
+
 if [[ -f "$ENV_FILE" ]]; then
   warn ".env already exists at $ENV_FILE"
   reply=$(prompt "Overwrite? (y/N)" "N")
@@ -71,6 +90,17 @@ bold "Identity"; echo
 echo "These shape the agent's system prompt and the workflow guidance the MCP server delivers to LLMs."
 VENDOR_NAME=$(prompt "Your company / vendor name" "Acme Corp")
 USER_ROLE=$(prompt "Your role" "Sales Engineer")
+# Work email → internal domain. Contacts/attendees whose email matches this
+# domain get flagged "internal" (skip account creation + outreach enrichment).
+# Only the derived domain is persisted, never the full address.
+USER_EMAIL=$(prompt "Your work email (its domain flags internal contacts)" "")
+SELF_DOMAINS=""
+if [[ -n "$USER_EMAIL" ]]; then
+  # Strip the local part (everything up to the last @). A bare domain with no
+  # @ is left untouched. Lowercased for a tidy .env; the API re-normalizes on
+  # read regardless, so casing/whitespace here is not load-bearing.
+  SELF_DOMAINS=$(printf '%s' "${USER_EMAIL##*@}" | tr '[:upper:]' '[:lower:]')
+fi
 echo
 
 bold "Postgres"; echo
@@ -79,6 +109,19 @@ POSTGRES_USER=$(prompt "Postgres user" "crm")
 POSTGRES_DB=$(prompt "Postgres database name" "crm")
 default_pw=$(random_password)
 POSTGRES_PASSWORD=$(prompt "Postgres password" "$default_pw")
+echo
+
+bold "Network access"; echo
+echo "By default CRAM listens on this machine only (http://localhost:3200). Answer Y to expose it on your LAN so other devices — your phone, laptop, MCP clients — can reach it. There's no auth layer yet, so only do this on a network you trust."
+LAN_IP=$(detect_lan_ip || true)
+if [[ -n "$LAN_IP" ]]; then
+  echo "This machine's LAN address looks like $LAN_IP — once exposed, CRAM would be at http://$LAN_IP:3200."
+fi
+expose_lan=$(prompt "Expose CRAM to your LAN? (y/N)" "N")
+case "$expose_lan" in
+  y|Y|yes|YES) BIND_ADDRESS="0.0.0.0" ;;
+  *)           BIND_ADDRESS="127.0.0.1" ;;
+esac
 echo
 
 bold "Todoist (optional)"; echo
@@ -100,6 +143,24 @@ case "$use_todoist" in
 esac
 echo
 
+bold "Agent LLM"; echo
+echo "The agent runs on a local LLM via Ollama. Picking the build that matches this machine — Apple Silicon Macs use the MLX build, everything else the GGUF build."
+# shellcheck source=scripts/detect-llm.sh
+source "$ROOT/scripts/detect-llm.sh"
+AGENT_MODEL="$(cram_detect_model)"
+echo "  $(uname -s)/$(uname -m) -> $(bold "$AGENT_MODEL")"
+cram_check_ollama "$AGENT_MODEL"
+# Offer to pull it now if Ollama is up but the model isn't pulled.
+if command -v ollama >/dev/null 2>&1 \
+   && curl -fsS "${CRAM_OLLAMA_HOST:-http://localhost:11434}/api/version" >/dev/null 2>&1 \
+   && ! ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$AGENT_MODEL"; then
+  pull=$(prompt "Pull $AGENT_MODEL now? (y/N)" "N")
+  case "$pull" in
+    y|Y|yes|YES) ollama pull "$AGENT_MODEL" && ok "Pulled $AGENT_MODEL" || warn "Pull failed — run 'ollama pull $AGENT_MODEL' later." ;;
+  esac
+fi
+echo
+
 # Write .env at repo root
 {
   cat <<EOF
@@ -110,16 +171,29 @@ echo
 VENDOR_NAME="$VENDOR_NAME"
 USER_ROLE="$USER_ROLE"
 
+# Internal email domains (comma-separated). Attendees/contacts from these
+# domains are flagged "internal" — skipped for account creation and outreach.
+# Seeded from your email above; acts as a bootstrap default until you curate
+# the list in Settings -> Internal Domains. (INTERNAL_DOMAINS is an alias.)
+SELF_DOMAINS="$SELF_DOMAINS"
+
 # Postgres
 POSTGRES_USER=$POSTGRES_USER
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD
 POSTGRES_DB=$POSTGRES_DB
 DATABASE_SSL=false
 
-# Anthropic API key — fill in to use Claude as the agent provider. Leave blank
-# to use a local LLM (Ollama / LM Studio / llama.cpp / vLLM) configured from
-# the GUI Agent page. Provider and model are picked per-request in the GUI.
-ANTHROPIC_API_KEY=
+# Network access — host interface the app's published ports (3200 GUI/API,
+# 3100 MCP) bind to. 127.0.0.1 = this machine only; 0.0.0.0 = exposed on the
+# LAN. (Postgres always stays bound to 127.0.0.1.) Re-run setup.sh to change.
+BIND_ADDRESS=$BIND_ADDRESS
+
+# Agent LLM — local LLM via Ollama on this device. Model auto-picked for this
+# host by scripts/detect-llm.sh: Apple Silicon -> *-mlx (MLX build), else GGUF.
+# Re-run setup.sh (or ./scripts/detect-llm.sh) if you move to a different OS.
+AGENT_MODEL=$AGENT_MODEL
+# Point LOCAL_BASE_URL at a LAN box to use an LLM on another machine instead:
+# LOCAL_BASE_URL=http://192.168.1.50:11434
 
 # Todoist
 EOF
@@ -157,6 +231,17 @@ EOF
   ok "Wrote $TODOIST_ENV_FILE"
 fi
 
+# Build the GUI-access line for the summary based on the chosen bind address.
+if [[ "$BIND_ADDRESS" == "0.0.0.0" ]]; then
+  if [[ -n "$LAN_IP" ]]; then
+    access_line="Open the GUI at http://localhost:3200 (this machine) or http://$LAN_IP:3200 (other devices on your LAN)"
+  else
+    access_line="Open the GUI at http://localhost:3200, or http://<this-machine-ip>:3200 from your LAN"
+  fi
+else
+  access_line="Open the GUI at http://localhost:3200 — this machine only (set BIND_ADDRESS=0.0.0.0 in .env to expose on your LAN)"
+fi
+
 cat <<EOF
 
 $(bold "Next steps:")
@@ -164,14 +249,16 @@ $(bold "Next steps:")
   1. Start the stack:
        docker compose --profile prod up -d --build
 
-  2. Open the GUI:
-       http://localhost:3200
+  2. $access_line
 
-  3. (Optional) Authenticate LinkedIn for outreach enrichment. Needs Node.js 20+
-     on the host, run from a machine with a desktop browser:
+  3. (Optional) Capture LinkedIn cookies to enable persona research — background
+     enrichment of the people you sell to, plus company/industry lookups. Needs
+     Node.js 20+; run from a machine with a desktop browser and log in when the
+     window opens:
        cd outreach && npm install && node src/index.js login
-     If your CRAM host is headless, run this on your laptop and copy
-     outreach/cookies.json over to the same path on the host.
+     This writes outreach/cookies.json. If your CRAM host is headless, run it on
+     your laptop and copy that file to the same path on the host. Persona research
+     stays off until these cookies exist; re-run when the session expires.
 
   4. To update later (pull latest code and restart with a fresh build):
        ./scripts/restart-prod.sh

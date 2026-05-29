@@ -940,11 +940,11 @@ export function registerTools(server, services, resolveUserId) {
 
   server.tool(
     'agent_settings',
-    "Get or update the caller's saved agent provider config — `provider` (anthropic | local), default `model`, and `local_base_url` for the local inference server. Replaces what used to be browser-localStorage state on the Agent page; persisted server-side so background workers (contact enrichment formatter, etc.) can call the same LLM the user has configured. Actions: get (returns the stored row plus what env-fallback effective values would resolve to), update (PATCH — pass any subset of provider/model/local_base_url; null clears a field).",
+    "Get or update the caller's saved agent LLM config — `provider` (always `local`: an OpenAI-compatible inference server, by default Ollama running on the device itself), default `model` (e.g. gemma4:e4b), and `local_base_url` for that server. Persisted server-side so background workers (contact enrichment formatter, etc.) call the same local LLM the user has configured. Actions: get (returns the stored row plus what env-fallback effective values would resolve to), update (PATCH — pass any subset of provider/model/local_base_url; null clears a field, after which the server default applies).",
     {
       action: z.enum(['get', 'update']),
       data: z.object({
-        provider:       z.enum(['anthropic', 'local']).nullable().optional(),
+        provider:       z.enum(['local']).nullable().optional(),
         model:          z.string().nullable().optional(),
         local_base_url: z.string().nullable().optional(),
       }).optional(),
@@ -955,7 +955,7 @@ export function registerTools(server, services, resolveUserId) {
         case 'get':
           return callService(() => agentSettingsService.get(userId));
         case 'update':
-          if (!data) return errorResponse('update requires data (a partial settings object). Fields: provider ("anthropic" | "local" | null to clear), model (string | null), local_base_url (string | null).');
+          if (!data) return errorResponse('update requires data (a partial settings object). Fields: provider ("local" | null to clear), model (string | null, e.g. "gemma4:e4b"), local_base_url (string | null, e.g. "http://host.docker.internal:11434" for on-device Ollama).');
           return callService(() => agentSettingsService.update(userId, data));
         default:
           return errorResponse(`Unknown action: ${action}`);
