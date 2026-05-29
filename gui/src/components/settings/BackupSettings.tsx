@@ -43,29 +43,10 @@ export default function BackupSettings(props: Props) {
         setTargetDir(s.target_dir);
     });
 
-    const [saving, setSaving] = createSignal(false);
     const [running, setRunning] = createSignal(false);
     const [restoring, setRestoring] = createSignal<string | null>(null);
     const [importing, setImporting] = createSignal(false);
     let fileInput: HTMLInputElement | undefined;
-
-    const save = async () => {
-        setSaving(true);
-        try {
-            await api.updateBackupSettings({
-                enabled: enabled(),
-                cron: cronExpr(),
-                retention_count: retention(),
-                target_dir: targetDir(),
-            });
-            await refetchSettings();
-            props.flash("ok", "Settings saved");
-        } catch (err: any) {
-            props.flash("err", `Save failed: ${err.message || err}`);
-        } finally {
-            setSaving(false);
-        }
-    };
 
     const runNow = async () => {
         setRunning(true);
@@ -142,7 +123,6 @@ export default function BackupSettings(props: Props) {
 
     return (
         <>
-            {/* === BACKUP CONFIG === */}
             <div class="panel panel-accent p-5">
                 <h2 class="text-[15px] font-bold uppercase tracking-widest text-surf-300 mb-4 font-[family-name:var(--font-display)]">
                     Database Backups
@@ -217,13 +197,6 @@ export default function BackupSettings(props: Props) {
                         </div>
 
                         <div class="flex flex-wrap gap-3">
-                            <Button
-                                variant="primary"
-                                disabled={saving()}
-                                onClick={save}
-                            >
-                                {saving() ? "Saving…" : "Save settings"}
-                            </Button>
                             <Button
                                 variant="secondary"
                                 disabled={running()}
