@@ -53,7 +53,7 @@ export default async function importExportRoutes(fastify, { importExportService 
 
   fastify.post('/import-export/import', {
     schema: {
-      description: 'Import a portable account bundle. Idempotent merge: existing rows are updated by slug/filename/email/name; missing rows are created. Returns a per-account summary.',
+      description: 'Import a portable account bundle. Idempotent merge: existing rows are updated by slug/filename/email/name; missing rows are created. Meeting attendees are re-linked only when they are contacts on the imported account — unlinked attendees in the bundle are dropped, not created as standalone contacts. Returns a per-account summary.',
       tags: ['import-export'],
       // Body is the bundle itself — too dynamic to fully spec here; the service validates.
     },

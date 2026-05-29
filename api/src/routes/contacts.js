@@ -82,6 +82,46 @@ export default async function contactRoutes(fastify, { contactsService, accounts
     return contact;
   });
 
+  // Idempotent upsert. find-existing + create combined, but with fuzzy name
+  // matching: returns the matched contact (exact email → exact full_name+kind →
+  // fuzzy full_name via pg_trgm) without creating, else creates. Prefer this
+  // over POST /contacts when ingesting people so near-duplicates don't pile up.
+  fastify.post('/contacts/find-or-create', {
+    schema: {
+      description: 'Idempotent contact upsert. Matches an existing contact by exact email (case-insensitive), then exact full_name+kind, then fuzzy full_name within the same kind (pg_trgm) — returning it with matched_by (email|full_name|fuzzy) and match_score (for fuzzy); otherwise creates. Optional account_id (re)links the result to an account. Never throws 409 (unlike POST /contacts). Use this to avoid creating duplicate/unnecessary contacts.',
+      tags: ['contacts'],
+      body: {
+        type: 'object',
+        required: ['full_name'],
+        properties: {
+          full_name: { type: 'string' },
+          company: { type: 'string' },
+          title: { type: 'string' },
+          email: { type: 'string' },
+          phone: { type: 'string' },
+          linkedin: { type: 'string' },
+          notes: { type: 'string' },
+          kind: { type: 'string', enum: ['account', 'partner', 'internal'], default: 'account', description: 'account = works at a non-partner account; partner = channel/reseller rep; internal = teammate at your own company' },
+          location_raw: { type: 'string' },
+          city: { type: 'string' },
+          state: { type: 'string' },
+          country: { type: 'string' },
+          account_id: { type: 'integer', description: 'Optional — link the matched/created contact to this account' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    try {
+      const { account_id, ...data } = request.body || {};
+      const result = await contactsService.findOrCreate(request.userId, data, account_id);
+      reply.code(result.created ? 201 : 200);
+      return result;
+    } catch (err) {
+      if (err.statusCode) { reply.code(err.statusCode); return { error: err.message }; }
+      throw err;
+    }
+  });
+
   // Lookup a contact by email (case-insensitive). 404 if not found — used by
   // the from-emails meeting flow to decide whether to create a new contact.
   fastify.get('/contacts/by-email/:email', {

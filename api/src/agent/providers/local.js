@@ -202,7 +202,7 @@ const FINISH_REASON_MAP = {
   content_filter: 'stop_sequence',
 };
 
-export async function streamTurn({ model, system, messages, mcpTools, onBlock, providerConfig }) {
+export async function streamTurn({ model, system, messages, mcpTools, onBlock, providerConfig, timeoutMs }) {
   // Per-request override (set from the GUI Settings panel) takes precedence
   // over the env var so users can point at their own LAN box without restart.
   const baseUrl = providerConfig?.baseUrl || process.env.LOCAL_BASE_URL;
@@ -239,6 +239,12 @@ export async function streamTurn({ model, system, messages, mcpTools, onBlock, p
     headers,
     body: JSON.stringify(body),
     dispatcher: getInsecureDispatcher(),
+    // Opt-in overall timeout. When set, an unresponsive server (no headers, or
+    // a stalled stream mid-response) aborts so the caller can retry instead of
+    // hanging forever. Aborting the fetch also cancels the body stream below,
+    // so reader.read() rejects. Left unset by the interactive agent loop, whose
+    // turns can legitimately run long while the user watches.
+    signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');

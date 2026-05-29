@@ -162,18 +162,21 @@ export class ImportExportService {
       [accountId]
     )).rows;
     for (const m of meetings) {
-      // Carry the full portable contact shape per attendee so the importer can
-      // recreate a missing contact (e.g. a teammate who attended a meeting but
-      // isn't linked to the customer via account_contacts, and isn't reachable
-      // via a partner shell). Pre-fix, attendee_refs only had {email, full_name}
-      // and the importer silently dropped any attendee whose name/email didn't
-      // already exist in the destination tenant.
+      // Only carry attendees who are actually contacts ON THIS account
+      // (account_contacts). Attendees who merely sat in a meeting but were never
+      // linked to the account — teammates, partner reps — are deliberately left
+      // out so importing the bundle into another tenant doesn't spawn a pile of
+      // unrelated "filler" contacts. The importer mirrors this and also drops
+      // any unlinked ref. The human-readable `attendees` text column still
+      // records who was in the room, so nothing is lost from the notes.
       const attendees = (await client.query(
         `SELECT c.full_name, c.company, c.title, c.email, c.phone, c.linkedin,
                 c.notes, c.kind, c.location_raw, c.city, c.state, c.country
-         FROM meeting_attendees ma JOIN contacts c ON c.id = ma.contact_id
+         FROM meeting_attendees ma
+         JOIN contacts c ON c.id = ma.contact_id
+         JOIN account_contacts ac ON ac.contact_id = c.id AND ac.account_id = $2
          WHERE ma.meeting_id = $1`,
-        [m.id]
+        [m.id, accountId]
       )).rows;
       m.attendee_refs = attendees;
       delete m.id;
@@ -282,14 +285,17 @@ export class ImportExportService {
 
         const partnerInfos = await this._upsertPartners(client, accountId, acctJson.partners || [], tally);
 
-        const accountContactIdByKey = await this._upsertContacts(
+        await this._upsertContacts(
           client, accountId, acctJson.contacts || [], tally, updated
         );
 
-        const contactLookup = await this._buildContactLookup(client);
+        // Resolve meeting attendees ONLY against this account's own contacts, so
+        // an attendee who isn't a profile contact is dropped rather than
+        // recreated as an unrelated standalone contact in the destination.
+        const accountContactLookup = await this._buildAccountContactLookup(client, accountId);
 
         await this._upsertMeetings(
-          client, accountId, acctJson.meetings || [], contactLookup, tally, updated
+          client, accountId, acctJson.meetings || [], accountContactLookup, tally, updated
         );
 
         await this._upsertOpportunities(
@@ -562,11 +568,17 @@ export class ImportExportService {
     return `email:${email.toLowerCase()}`;
   }
 
-  // Build a map of email→id and full_name→id from all of the user's contacts.
-  // Used to resolve meeting attendee refs across partner / internal / account contacts.
-  async _buildContactLookup(client) {
+  // Build email→id and full_name→id maps from the contacts linked to ONE
+  // account. Meeting attendee refs are resolved against this (not the whole
+  // tenant) so only an account's own profile contacts get re-linked to its
+  // meetings; unlinked attendees in the bundle are dropped, never created.
+  async _buildAccountContactLookup(client, accountId) {
     const rows = (await client.query(
-      'SELECT id, full_name, email FROM contacts'
+      `SELECT c.id, c.full_name, c.email
+       FROM contacts c
+       JOIN account_contacts ac ON ac.contact_id = c.id
+       WHERE ac.account_id = $1`,
+      [accountId]
     )).rows;
     const byEmail = new Map();
     const byName = new Map();
@@ -609,22 +621,17 @@ export class ImportExportService {
         updated.meetings++;
       }
 
-      // Resolve and refresh attendee links. If the attendee isn't in the
-      // destination yet, recreate them as a standalone contact (no account
-      // link) so the meeting attendance survives. Pre-enrichment bundles only
-      // carried {email, full_name} — for those we default kind='internal' since
-      // orphan attendees are typically teammates. Post-enrichment bundles carry
-      // the full portable contact shape, so kind is preserved.
+      // Re-establish attendee links ONLY for people who are contacts on THIS
+      // account (the profile contacts upserted above — `lookup` is scoped to
+      // them). Attendees who were never linked to the account are intentionally
+      // dropped rather than recreated as standalone "filler" contacts in the
+      // destination tenant; those are the ones that don't matter. The meeting's
+      // free-text `attendees` column still names everyone who was present.
       const attendeeIds = [];
       for (const ref of m.attendee_refs || []) {
         let id = null;
         if (ref.email) id = lookup.byEmail.get(ref.email.toLowerCase());
         if (!id && ref.full_name) id = lookup.byName.get(ref.full_name.toLowerCase());
-        if (!id && (ref.email || ref.full_name)) {
-          id = await this._upsertContactRow(client, ref, ref.kind || 'internal');
-          if (ref.email) lookup.byEmail.set(ref.email.toLowerCase(), id);
-          if (ref.full_name) lookup.byName.set(ref.full_name.toLowerCase(), id);
-        }
         if (id) attendeeIds.push(id);
       }
       if (attendeeIds.length > 0) {

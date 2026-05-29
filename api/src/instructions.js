@@ -35,6 +35,7 @@ const REFS = {
   'contacts.by_account':           { http: 'GET /api/accounts/:accountId/contacts',             mcp: { tool: 'contacts', action: 'list', note: 'with company filter' } },
   'contacts.create_for_account':   { http: 'POST /api/accounts/:accountId/contacts',            mcp: { tool: 'contacts', action: 'create', note: 'with account_id' } },
   'contacts.create_standalone':    { http: 'POST /api/contacts',                                mcp: { tool: 'contacts', action: 'create' } },
+  'contacts.find_or_create':       { http: 'POST /api/contacts/find-or-create',                 mcp: { tool: 'contacts', action: 'find_or_create' } },
   'contacts.link':                 { http: 'POST /api/contacts/:id/accounts/:accountId',        mcp: { tool: 'contacts', action: 'link_account' } },
   'contacts.unlink':               { http: 'DELETE /api/contacts/:id/accounts/:accountId',      mcp: { tool: 'contacts', action: 'unlink_account' } },
   'contacts.patch':                { http: 'PATCH /api/contacts/:id',                           mcp: { tool: 'contacts', action: 'update' } },
@@ -247,11 +248,9 @@ Per-tool argument schemas, action enums, and field-level semantics live in ${isM
 Account slugs are lowercase-hyphenated company names (\`bank-of-america\`, not \`Bank Of America\` or \`BoA\`). Slug lookups are exact — if you only have a display name, search first.
 
 ### Search Before Create
-Before creating an account or contact, search (or call the resource's \`find_existing\`) to avoid duplicates. \`create\` refuses with 409 + an \`existing\` payload on a match. Match rules:
-- **Accounts:** slug → any domain → case-insensitive name
-- **Contacts:** email (case-insensitive) → \`full_name\` + \`kind\`
-
-Use \`find_existing\` when you want the dup case to return null instead of throwing (e.g. to link an existing contact to a new account).
+Avoid duplicate people and companies before creating.
+- **Contacts — prefer ${ref('contacts.find_or_create')}** over plain create. It's idempotent: matches by exact email (case-insensitive) → exact \`full_name\`+\`kind\` → fuzzy \`full_name\` within the same kind (pg_trgm), returns the match (\`matched_by\`, plus \`match_score\` when fuzzy), and (re)links it to \`account_id\` when given — instead of throwing. This is how you keep from piling up near-duplicate contacts, especially \`kind=internal\` teammates: send what you have and let the server decide whether it's truly new. ${ref('contacts.find_existing')} is the read-only probe (returns null, no write); ${ref('contacts.create_standalone')} still refuses with 409 + an \`existing\` payload on a match.
+- **Accounts:** search (or ${ref('accounts.find_existing')}) first — match order slug → any domain → case-insensitive name. \`create\` refuses with 409 + an \`existing\` payload.
 
 ### From-Emails Meeting Flow
 When the user pastes calendar-invite emails, use the two-step flow:

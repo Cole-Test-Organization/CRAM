@@ -5,10 +5,15 @@ import {
     onCleanup,
     type ParentProps,
 } from "solid-js";
+import { useNavHistory } from "../lib/navigation";
 
 export default function Layout(props: ParentProps) {
     const location = useLocation();
     const [drawerOpen, setDrawerOpen] = createSignal(false);
+
+    // Track in-app navigation so the per-page "← Back" links can return the
+    // user to where they actually came from instead of a fixed list page.
+    useNavHistory();
 
     const isActive = (path: string) => {
         if (path === "/") return location.pathname === "/";

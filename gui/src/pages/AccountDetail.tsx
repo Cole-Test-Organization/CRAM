@@ -8,6 +8,7 @@ import AccountPicker from '../components/AccountPicker';
 import Button from '../components/Button';
 import TechnicalProfilePanel from '../components/accounts/TechnicalProfilePanel';
 import NotesPanel from '../components/NotesPanel';
+import BackLink from '../components/BackLink';
 import MeetingsList from './MeetingsList';
 import ContactList from './ContactList';
 import OpportunitiesList from './OpportunitiesList';
@@ -107,7 +108,7 @@ export default function AccountDetail() {
 
   return (
     <div>
-      <A href="/" class="text-base-300 text-[12px] mb-4 inline-block hover:text-surf-300 uppercase tracking-wider font-semibold">&larr; Dashboard</A>
+      <BackLink fallbackHref="/" fallbackLabel="Dashboard" />
 
       <Show when={data()} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
         {(account) => {

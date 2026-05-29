@@ -11,19 +11,26 @@ function isHighlighted(slug: string): boolean {
   return HIGHLIGHTED_VENDOR_SLUGS.has(slug);
 }
 
+// Chip colors are driven entirely by theme ramps so they restyle with the
+// active theme. Each background is paired with text from the SAME ramp: the
+// accent ramps always run light(50)→dark(950) and the `base` ramp always runs
+// text-end(50)→bg-end(950), so a `*-900` fill with `*-50` text stays
+// high-contrast and readable in every theme — light or dark. Highlighted
+// vendors (e.g. PANW) use the primary `surf` ramp so they pop; everything else
+// uses the neutral `base` ramp to stay calm and easy on the eyes.
 function ProductChip(props: { product: VendorHeatmapCellProduct }) {
   const highlighted = () => isHighlighted(props.product.vendor_slug);
   return (
     <div
       class={`px-2 py-1.5 border-2 leading-tight ${
         highlighted()
-          ? 'bg-surf-500/30 border-surf-400 text-surf-50'
-          : 'bg-amber-500/15 border-amber-500/40 text-amber-100'
+          ? 'bg-surf-900 border-surf-500 text-surf-50'
+          : 'bg-base-950 border-base-600 text-base-50'
       }`}
       title={`${props.product.vendor_name} — ${props.product.name}`}
     >
       <div class={`text-[9px] uppercase tracking-wider font-bold ${
-        highlighted() ? 'text-surf-200' : 'text-amber-300'
+        highlighted() ? 'text-surf-200' : 'text-base-300'
       }`}>
         {props.product.vendor_name}
       </div>
@@ -114,11 +121,11 @@ export default function VendorHeatmap(props: { accountId: number }) {
             </p>
             <div class="flex items-center gap-3 text-[10px] uppercase tracking-widest text-base-400">
               <span class="flex items-center gap-1">
-                <span class="inline-block w-3 h-3 bg-surf-500/40 border border-surf-400" />
+                <span class="inline-block w-3 h-3 bg-surf-900 border border-surf-500" />
                 PANW
               </span>
               <span class="flex items-center gap-1">
-                <span class="inline-block w-3 h-3 bg-amber-500/20 border border-amber-500/40" />
+                <span class="inline-block w-3 h-3 bg-base-950 border border-base-600" />
                 Other vendor
               </span>
             </div>

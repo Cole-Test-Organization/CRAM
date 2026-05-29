@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { ContactFormModal } from '../components/FormModals';
 import Button from '../components/Button';
 import NotesPanel from '../components/NotesPanel';
+import BackLink from '../components/BackLink';
 
 type EnrichmentJob = {
   jobId: string;
@@ -95,7 +96,7 @@ export default function ContactDetail() {
 
   return (
     <div>
-      <A href="/contacts" class="text-base-300 text-[12px] mb-4 inline-block hover:text-surf-300 uppercase tracking-wider font-semibold">&larr; Contacts</A>
+      <BackLink fallbackHref="/contacts" fallbackLabel="Contacts" />
 
       <Show when={contact()} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
         {(c) => (

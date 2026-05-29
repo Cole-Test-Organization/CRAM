@@ -31,6 +31,15 @@ const MAX_OUTREACH_WAIT_MS = 10 * 60 * 1000;
 const OUTREACH_POLL_MS = 2000;
 const MAX_JOBS_IN_MEMORY = 200;
 
+// Local LLM call resilience. The formatter hits a single local model that can
+// be slow, or briefly unresponsive while it loads/swaps weights. Rather than
+// fail the whole enrichment on the first hiccup, bound each call with a timeout
+// and retry a few times with exponential backoff. All tunable via env.
+const LLM_TIMEOUT_MS = Number(process.env.CONTACT_ENRICHMENT_LLM_TIMEOUT_MS) || 120000;
+const LLM_MAX_ATTEMPTS = Number(process.env.CONTACT_ENRICHMENT_LLM_RETRIES) || 3;
+const LLM_RETRY_BASE_MS = Number(process.env.CONTACT_ENRICHMENT_LLM_RETRY_BASE_MS) || 5000;
+const LLM_RETRY_MAX_MS = 30000;
+
 const STRING_FIELDS = ['title', 'linkedin', 'location_raw', 'city', 'state', 'country', 'notes'];
 
 const FORMAT_SYSTEM_PROMPT = `You are a data extractor for a CRM. You receive a raw research blob about a single person (JSON from a LinkedIn + web lookup) and must return a structured JSON object with whatever you can confidently extract.
@@ -62,6 +71,10 @@ export class ContactEnrichmentService {
     this.agentSettingsService = agentSettingsService || null;
     this.getDefaultUserId = getDefaultUserId; // optional fallback
     this.jobs = new Map();
+    // Serial worker state. Enrichment pipelines run strictly one at a time so
+    // we never fire two local-LLM formatter calls concurrently (limited VRAM).
+    this.queue = [];
+    this.running = false;
   }
 
   // Returns the enrichment job id immediately. Background work is detached —
@@ -88,14 +101,13 @@ export class ContactEnrichmentService {
     };
     this.jobs.set(jobId, job);
     this._evictOldJobs();
-    this._run(jobId).catch((err) => {
-      logger.error({ event: 'enrichment.worker_crashed', err: err.message, stack: err.stack, jobId }, 'enrichment worker crashed');
-      const j = this.jobs.get(jobId);
-      if (j) {
-        j.status = 'failed';
-        j.error = err.message || String(err);
-        j.completedAt = new Date().toISOString();
-      }
+    // Serialize: enqueue and let the single worker drain it. Two enrichment
+    // pipelines in flight would mean two concurrent LLM formatter calls, which
+    // the local box can't afford — so they must run one at a time.
+    this.queue.push(jobId);
+    this._drain().catch((err) => {
+      logger.error({ event: 'enrichment.worker_crashed', err: err.message, stack: err.stack }, 'enrichment worker crashed');
+      this.running = false;
     });
     return jobId;
   }
@@ -119,6 +131,33 @@ export class ContactEnrichmentService {
     return [...this.jobs.values()]
       .filter((j) => set.has(Number(j.contactId)))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  // Single-worker queue drain. Guarantees enrichment jobs — and therefore the
+  // local LLM formatter calls inside them — run strictly one at a time, even
+  // when a meeting flow enqueues several attendees back-to-back.
+  async _drain() {
+    if (this.running) return;
+    this.running = true;
+    try {
+      while (this.queue.length > 0) {
+        const jobId = this.queue.shift();
+        if (!this.jobs.has(jobId)) continue;
+        try {
+          await this._run(jobId);
+        } catch (err) {
+          logger.error({ event: 'enrichment.run_crashed', err: err.message, stack: err.stack, jobId }, 'enrichment run crashed');
+          const j = this.jobs.get(jobId);
+          if (j && j.status !== 'completed' && j.status !== 'failed') {
+            j.status = 'failed';
+            j.error = err.message || String(err);
+            j.completedAt = new Date().toISOString();
+          }
+        }
+      }
+    } finally {
+      this.running = false;
+    }
   }
 
   async _run(jobId) {
@@ -265,6 +304,45 @@ function validateAndClean(obj) {
   return out;
 }
 
+// Call the local LLM with a timeout + retry-with-backoff. A timeout, a thrown
+// error (server unreachable, mid-load, OOM), or an empty completion all count
+// as "didn't respond" → wait and try again. Returns the trimmed text, or throws
+// once every attempt is exhausted. Malformed-but-present JSON is NOT retried
+// here — that's the caller's reprompt loop, since the server clearly answered.
+async function callLLMWithRetry({ system, messages, model, baseUrl }) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= LLM_MAX_ATTEMPTS; attempt++) {
+    try {
+      const { content } = await localProvider.streamTurn({
+        model,
+        system,
+        messages,
+        mcpTools: [],
+        providerConfig: { baseUrl },
+        timeoutMs: LLM_TIMEOUT_MS,
+      });
+      const text = (content || [])
+        .filter(b => b?.type === 'text')
+        .map(b => b.text)
+        .join('')
+        .trim();
+      if (!text) throw new Error('local LLM returned an empty response');
+      return text;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < LLM_MAX_ATTEMPTS) {
+        const waitMs = Math.min(LLM_RETRY_BASE_MS * 2 ** (attempt - 1), LLM_RETRY_MAX_MS);
+        logger.warn(
+          { event: 'enrichment.llm_retry', attempt, maxAttempts: LLM_MAX_ATTEMPTS, waitMs, err: err.message || String(err) },
+          `local LLM call failed (attempt ${attempt}/${LLM_MAX_ATTEMPTS}) — waiting ${waitMs}ms before retry`,
+        );
+        await sleep(waitMs);
+      }
+    }
+  }
+  throw new Error(`local LLM call failed after ${LLM_MAX_ATTEMPTS} attempts: ${lastErr?.message || String(lastErr)}`);
+}
+
 async function formatWithLocalLLM({ name, accountName, research, baseUrl, model }) {
   // Truncate the research blob — local models often have 8-32K context and
   // we don't want a runaway profile crashing the call. 10K of JSON is plenty
@@ -292,27 +370,18 @@ Return ONLY the JSON object specified in the system prompt.`;
   }
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    let text = '';
-    try {
-      const { content } = await localProvider.streamTurn({
-        model: effectiveModel,
-        system: FORMAT_SYSTEM_PROMPT,
-        messages,
-        mcpTools: [],
-        providerConfig: { baseUrl: effectiveBaseUrl },
-      });
-      text = (content || [])
-        .filter(b => b?.type === 'text')
-        .map(b => b.text)
-        .join('')
-        .trim();
-    } catch (err) {
-      throw new Error(`local LLM call failed: ${err.message || String(err)}`);
-    }
+    const text = await callLLMWithRetry({
+      system: FORMAT_SYSTEM_PROMPT,
+      messages,
+      model: effectiveModel,
+      baseUrl: effectiveBaseUrl,
+    });
     const parsed = parseLooseJson(text);
     const cleaned = validateAndClean(parsed);
     if (cleaned && Object.keys(cleaned).length > 0) return cleaned;
-    // retry: tell the model exactly what went wrong
+    // Content (not transport) failure: the model answered but the JSON was
+    // unusable. Reprompt with corrective guidance — no backoff needed, the
+    // server is clearly healthy.
     messages.push({ role: 'assistant', content: [{ type: 'text', text }] });
     messages.push({
       role: 'user',

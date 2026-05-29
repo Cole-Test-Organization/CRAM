@@ -3,6 +3,14 @@ import { withUser } from '../db/connection.js';
 const CONTACT_COLS = 'id, full_name, company, title, email, phone, linkedin, notes, kind, location_raw, city, state, country, created_at, updated_at';
 const VALID_KINDS = new Set(['account', 'partner', 'internal']);
 
+// findOrCreate fuzzy-name threshold. Higher than the vendor catalog's 0.4
+// because person names are short and a false merge (treating two different
+// people as one) is costly — we only want to absorb typos / spacing /
+// punctuation variants. Tunable via env. Keep it >= pg_trgm's default
+// similarity_threshold (0.3) so the index-backed `%` prefilter never hides a
+// row that would otherwise clear this threshold.
+const CONTACT_FUZZY_THRESHOLD = Number(process.env.CONTACT_FUZZY_THRESHOLD) || 0.55;
+
 function normalizeKind(kind) {
   if (kind == null) return undefined;
   // Back-compat alias: callers passing the legacy 'customer' value get the
@@ -243,35 +251,114 @@ export class ContactsService {
           { statusCode: 409, existing: enriched }
         );
       }
-      const result = await client.query(
-        `INSERT INTO contacts (user_id, full_name, company, title, email, phone, linkedin, notes, kind,
-                               location_raw, city, state, country)
-         VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-         RETURNING id`,
-        [
-          data.full_name,
-          data.company || null,
-          data.title || null,
-          data.email || null,
-          data.phone || null,
-          data.linkedin || null,
-          data.notes || null,
-          kind,
-          data.location_raw || null,
-          data.city || null,
-          data.state || null,
-          data.country || null,
-        ]
-      );
-      const contactId = result.rows[0].id;
+      return this._insert(client, data, kind, accountId);
+    });
+  }
 
-      if (accountId) {
-        await client.query(
-          'INSERT INTO account_contacts (account_id, contact_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-          [accountId, contactId]
-        );
+  // Shared INSERT used by create() and findOrCreate(). Assumes the caller has
+  // already validated/normalized `kind` and decided no dedupe match applies.
+  async _insert(client, data, kind, accountId) {
+    const result = await client.query(
+      `INSERT INTO contacts (user_id, full_name, company, title, email, phone, linkedin, notes, kind,
+                             location_raw, city, state, country)
+       VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING id`,
+      [
+        data.full_name,
+        data.company || null,
+        data.title || null,
+        data.email || null,
+        data.phone || null,
+        data.linkedin || null,
+        data.notes || null,
+        kind,
+        data.location_raw || null,
+        data.city || null,
+        data.state || null,
+        data.country || null,
+      ]
+    );
+    const contactId = result.rows[0].id;
+    return this._linkAndFetch(client, contactId, accountId);
+  }
+
+  // Link an (existing or just-created) contact to an account when one is given,
+  // then return the contact with its linked accounts.
+  async _linkAndFetch(client, contactId, accountId) {
+    if (accountId) {
+      await client.query(
+        'INSERT INTO account_contacts (account_id, contact_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [accountId, contactId]
+      );
+    }
+    return this._fetchWithAccounts(client, contactId);
+  }
+
+  // Idempotent create — the contacts analogue of vendor_products.findOrCreate.
+  // Lets the agent send what it has and let the server decide whether the person
+  // already exists, so near-duplicate contacts (especially kind=internal
+  // teammates) stop piling up. Match precedence:
+  //   1. exact email (case-insensitive) — strongest signal
+  //   2. exact full_name + kind
+  //   3. fuzzy full_name within the same kind (pg_trgm >= CONTACT_FUZZY_THRESHOLD)
+  //      — absorbs typos / spacing / punctuation variants. A *different* email on
+  //      the candidate vetoes the fuzzy merge (a distinct address ⇒ distinct human).
+  // A match is (re)linked to accountId when provided. Never throws 409 (that's
+  // the difference from create). Returns { contact, created, matched_by?, match_score? }.
+  async findOrCreate(userId, data, accountId) {
+    return withUser(userId, async (client) => {
+      const kind = normalizeKind(data.kind) || 'account';
+      const fullName = (data.full_name || '').trim();
+      if (!fullName) {
+        throw Object.assign(new Error('findOrCreate requires a non-empty full_name.'), { statusCode: 400 });
       }
-      return this._fetchWithAccounts(client, contactId);
+      const email = typeof data.email === 'string' ? data.email.trim().toLowerCase() : '';
+
+      // 1) exact email match
+      if (email) {
+        const row = (await client.query(
+          'SELECT id FROM contacts WHERE LOWER(email) = $1 ORDER BY id LIMIT 1',
+          [email]
+        )).rows[0];
+        if (row) {
+          const contact = await this._linkAndFetch(client, row.id, accountId);
+          return { contact, created: false, matched_by: 'email' };
+        }
+      }
+
+      // 2) exact full_name + kind match
+      const exact = (await client.query(
+        'SELECT id FROM contacts WHERE full_name = $1 AND kind = $2 ORDER BY id LIMIT 1',
+        [fullName, kind]
+      )).rows[0];
+      if (exact) {
+        const contact = await this._linkAndFetch(client, exact.id, accountId);
+        return { contact, created: false, matched_by: 'full_name' };
+      }
+
+      // 3) fuzzy full_name within the same kind. The `%` prefilter is served by
+      //    idx_contacts_full_name_trgm; we then enforce the stricter app-level
+      //    threshold (and the email-conflict veto) in JS.
+      const cand = (await client.query(
+        `SELECT id, email, similarity(lower(full_name), lower($1)) AS sim
+           FROM contacts
+          WHERE kind = $2 AND lower(full_name) % lower($1)
+          ORDER BY sim DESC NULLS LAST
+          LIMIT 1`,
+        [fullName, kind]
+      )).rows[0];
+      if (cand && Number(cand.sim) >= CONTACT_FUZZY_THRESHOLD) {
+        const candEmail = (cand.email || '').trim().toLowerCase();
+        const emailsConflict = email && candEmail && email !== candEmail;
+        if (!emailsConflict) {
+          const contact = await this._linkAndFetch(client, cand.id, accountId);
+          return { contact, created: false, matched_by: 'fuzzy', match_score: Number(cand.sim) };
+        }
+      }
+
+      // 4) no match → create
+      const contact = await this._insert(client, { ...data, full_name: fullName }, kind, accountId);
+      return { contact, created: true };
     });
   }
 

@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import { MeetingFormModal } from '../components/FormModals';
 import Button from '../components/Button';
+import BackLink from '../components/BackLink';
 import ExportActions from '../components/ExportActions';
 import { buildMeetingsExport } from '../lib/meetingExport';
 
@@ -79,15 +80,10 @@ export default function MeetingView() {
       <Show when={meeting()} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
         {(m) => (
           <>
-            <Show when={!m().internal && m().account_slug} fallback={
-              <A href="/meetings" class="text-base-300 text-[12px] mb-4 inline-block hover:text-surf-300 uppercase tracking-wider font-semibold">
-                &larr; Meetings
-              </A>
-            }>
-              <A href={`/accounts/${m().account_slug}`} class="text-base-300 text-[12px] mb-4 inline-block hover:text-surf-300 uppercase tracking-wider font-semibold">
-                &larr; {m().account_name}
-              </A>
-            </Show>
+            <BackLink
+              fallbackHref={!m().internal && m().account_slug ? `/accounts/${m().account_slug}` : '/meetings'}
+              fallbackLabel={!m().internal && m().account_slug ? m().account_name : 'Meetings'}
+            />
 
             <div class="flex flex-col gap-4 mb-6 md:flex-row md:justify-between md:items-start">
               <div class="flex-1 min-w-0">

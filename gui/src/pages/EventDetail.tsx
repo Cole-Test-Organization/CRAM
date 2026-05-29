@@ -1,6 +1,7 @@
 import { createResource, For, Show } from 'solid-js';
-import { A, useParams } from '@solidjs/router';
+import { useParams } from '@solidjs/router';
 import { api } from '../lib/api';
+import BackLink from '../components/BackLink';
 
 const MODE_LABEL: Record<string, string> = {
   in_person: 'In Person',
@@ -44,12 +45,7 @@ export default function EventDetail() {
 
   return (
     <div>
-      <A
-        href="/events"
-        class="text-base-300 text-[12px] mb-4 inline-block hover:text-surf-300 uppercase tracking-wider font-semibold"
-      >
-        &larr; Events
-      </A>
+      <BackLink fallbackHref="/events" fallbackLabel="Events" />
 
       <Show when={event()} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
         {(e) => (

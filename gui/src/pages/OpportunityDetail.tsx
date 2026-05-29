@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { OpportunityFormModal } from '../components/FormModals';
 import Button from '../components/Button';
 import NotesPanel from '../components/NotesPanel';
+import BackLink from '../components/BackLink';
 import { stageLabel, stageChipClass } from '../lib/stages';
 
 // Vendor categories mirrored from TechnicalProfilePanel — used to flatten the
@@ -238,9 +239,7 @@ export default function OpportunityDetail() {
   return (
     <div>
       <div class="mb-4">
-        <A href="/opportunities" class="text-base-400 text-[12px] uppercase tracking-wider hover:text-surf-300 transition-colors">
-          ← Opportunities
-        </A>
+        <BackLink fallbackHref="/opportunities" fallbackLabel="Opportunities" class="text-base-400 text-[12px] uppercase tracking-wider hover:text-surf-300 transition-colors" />
       </div>
 
       <Show when={!opp.loading} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
