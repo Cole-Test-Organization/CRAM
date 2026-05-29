@@ -12,6 +12,12 @@
 
 import { createSignal } from 'solid-js';
 import { api } from './api';
+// Recolorable twin of public/favicon.svg (the pre-JS, baked-default icon). It's
+// a single-fill monochrome mark — one fill="" on the root, inherited by every
+// path — so applyFavicon() recolors the whole thing by swapping that one
+// attribute. Keep the two SVGs visually identical; public/ is just the default
+// shown before this module runs.
+import faviconSvg from '../assets/favicon.svg?raw';
 
 export type ThemeColors = {
   surf:     string[];
@@ -83,6 +89,29 @@ export function themeDataToCss(data: ThemeData): string {
   return `:root {\n  ${lines.join('\n  ')}\n}`;
 }
 
+// Build a data-URI copy of the favicon tinted with `color`. encodeURIComponent
+// (not base64) keeps it human-readable and correctly escapes the '#' in hex.
+function themedFaviconHref(color: string): string {
+  const svg = faviconSvg.replace(/fill="[^"]*"/, `fill="${color}"`);
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+// Point <link rel="icon"> at the favicon recolored to the theme's primary
+// accent (surf-500 — the same token the ThemeCard swatch and Active badge use).
+// Falls back through surf-400 to the original amber for malformed data.
+function applyFavicon(data: ThemeData) {
+  if (typeof document === 'undefined') return;
+  const color = data.colors?.surf?.[5] ?? data.colors?.surf?.[4] ?? '#d49322';
+  let link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+  if (!link) {
+    link = document.createElement('link');
+    link.rel = 'icon';
+    document.head.appendChild(link);
+  }
+  link.type = 'image/svg+xml';
+  link.href = themedFaviconHref(color);
+}
+
 export function applyThemeData(data: ThemeData, { cache = true }: { cache?: boolean } = {}) {
   if (typeof document === 'undefined') return;
   let el = document.getElementById(STYLE_ID) as HTMLStyleElement | null;
@@ -92,6 +121,7 @@ export function applyThemeData(data: ThemeData, { cache = true }: { cache?: bool
     document.head.appendChild(el);
   }
   el.textContent = themeDataToCss(data);
+  applyFavicon(data);
   if (cache) {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch { /* private mode etc. */ }
   }

@@ -65,11 +65,9 @@ export default function AgentLLMSettings() {
                 The in-app agent and background workers (contact enrichment
                 formatter, etc.) run on a <strong>local LLM</strong>. By default
                 that's <strong>Ollama running on this device</strong> — the
-                machine hosting the app — with the{" "}
-                <code class="text-surf-300">gemma4:e4b</code> model. No API keys,
-                and nothing leaves your network. Point it at another machine on
-                your LAN instead, or change the model, below. Stored server-side
-                per user.
+                machine hosting the app. No API keys, and nothing leaves your
+                network. Point it at another machine on your LAN instead, or set
+                a specific model, below. Stored server-side per user.
             </p>
 
             <Show
@@ -120,10 +118,10 @@ export default function AgentLLMSettings() {
                         <span class="text-[10px] text-base-500 mt-1">
                             Any model you've pulled (e.g.{" "}
                             <code class="text-surf-300">gemma4:e4b</code>,{" "}
-                            <code class="text-surf-300">gemma4:e2b</code>,{" "}
+                            <code class="text-surf-300">gemma4:e4b-mlx</code>,{" "}
                             <code class="text-surf-300">qwen2.5:14b</code>).
-                            Leave blank to use the server default (
-                            <code class="text-surf-300">gemma4:e4b</code>).
+                            Leave blank and the app auto-selects one of the
+                            models your server has installed.
                         </span>
                     </label>
 

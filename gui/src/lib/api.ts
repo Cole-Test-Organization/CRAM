@@ -475,9 +475,9 @@ export const api = {
   // browser-localStorage state. Background workers read the same row so
   // they hit the same LLM the user has configured for the in-app agent.
   getAgentSettings: () =>
-    get<{ provider: string | null; model: string | null; local_base_url: string | null; updated_at: string | null }>('/agent/settings'),
-  patchAgentSettings: (data: { provider?: string | null; model?: string | null; local_base_url?: string | null }) =>
-    patch<{ provider: string | null; model: string | null; local_base_url: string | null; updated_at: string | null }>('/agent/settings', data),
+    get<{ provider: string | null; model: string | null; local_base_url: string | null; system_prompt: string | null; default_system_prompt: string; updated_at: string | null }>('/agent/settings'),
+  patchAgentSettings: (data: { provider?: string | null; model?: string | null; local_base_url?: string | null; system_prompt?: string | null }) =>
+    patch<{ provider: string | null; model: string | null; local_base_url: string | null; system_prompt: string | null; default_system_prompt: string; updated_at: string | null }>('/agent/settings', data),
 
   // Internal domains (per-user) — domains belonging to the user's own
   // company. Used by the from-emails meeting flow to tag attendees from

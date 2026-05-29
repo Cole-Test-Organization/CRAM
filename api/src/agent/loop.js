@@ -15,25 +15,17 @@ import {
 } from "../services/agentSessions.js";
 import { buildMcpSession } from "./mcp-client.js";
 import { getProvider, listProviders } from "./providers/index.js";
-import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
+import { FALLBACK_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
+import { AgentSettingsService } from "../services/agent-settings.js";
 import { logger } from "../lib/logger.js";
-import { getConfig } from "../config.js";
 
 const MAX_ITERATIONS = 25;
 
-function defaultSystemPrompt() {
-    const today = new Date().toISOString().slice(0, 10);
-    const { vendorName, userRole } = getConfig();
-    return [
-        `You are a CRM assistant for a ${userRole} at ${vendorName}.`,
-        "",
-        "Use the available tools for all data access and updates — never instruct the user to do something a tool can do directly. Workflow guidance for each tool family is delivered by the MCP server itself.",
-        "",
-        `Today is ${today}. Respond concisely — no process narration.`,
-    ].join("\n");
-}
-
-const SYSTEM_PROMPT = process.env.AGENT_SYSTEM_PROMPT || defaultSystemPrompt();
+// The agent's base system prompt is per-user and configurable (Settings →
+// Agent, or PATCH /api/agent/settings). A null stored value falls back to the
+// built-in default — see defaultSystemPrompt() in ./defaults.js. Resolved per
+// turn (below) so saved edits take effect on the next run without a restart.
+const agentSettings = new AgentSettingsService();
 
 function buildUserContent(prompt, notes) {
     if (notes && notes.trim()) {
@@ -87,7 +79,7 @@ export async function runAgent({
         ? await loadSessionRaw(userId, sessionId)
         : await createSession(userId, {
               provider: provider || DEFAULT_PROVIDER,
-              model: model || DEFAULT_MODEL,
+              model: model || FALLBACK_MODEL,
           });
 
     send({ type: "session", sessionId: session.id });
@@ -101,9 +93,21 @@ export async function runAgent({
     const { client: mcp, instructions: mcpInstructions } =
         await buildMcpSession({ userId });
     const { tools: allMcpTools } = await mcp.listTools();
-    const composedSystem = mcpInstructions
-        ? `${SYSTEM_PROMPT}\n\n${mcpInstructions}`
-        : SYSTEM_PROMPT;
+
+    // Compose the system prompt: the user's base prompt (their customization or
+    // the built-in default), then today's date injected fresh at runtime — never
+    // stored, so it can't go stale even if the user rewrites everything else —
+    // then the MCP server's tool/workflow instructions.
+    const { system_prompt: baseSystemPrompt } =
+        await agentSettings.getEffective(userId);
+    const today = new Date().toISOString().slice(0, 10);
+    const composedSystem = [
+        baseSystemPrompt,
+        `Today is ${today}.`,
+        mcpInstructions,
+    ]
+        .filter(Boolean)
+        .join("\n\n");
 
     const mcpTools = Array.isArray(allowedTools)
         ? allMcpTools.filter((t) => allowedTools.includes(t.name))

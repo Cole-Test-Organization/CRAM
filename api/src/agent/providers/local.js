@@ -52,6 +52,40 @@ function cacheKey(baseUrl, model) {
   return `${baseUrl}|${model || ''}`;
 }
 
+// List the model ids the configured server has available, via the
+// OpenAI-standard GET /v1/models (Ollama, LM Studio, vLLM, llama.cpp all
+// expose it). Lets us resolve a default from what's actually installed instead
+// of guessing by OS. Cached briefly per baseUrl; returns [] on any failure so
+// the caller can fall back to a static tag.
+const MODELS_TTL_MS = 60_000;
+const modelsCache = new Map();
+
+export async function listModels(baseUrl) {
+  if (!baseUrl) return [];
+  const root = baseUrl.replace(/\/+$/, '');
+  const hit = modelsCache.get(root);
+  if (hit && Date.now() - hit.at < MODELS_TTL_MS) return hit.models;
+  const headers = {};
+  if (process.env.LOCAL_API_KEY) headers['Authorization'] = `Bearer ${process.env.LOCAL_API_KEY}`;
+  let models = [];
+  try {
+    const res = await fetch(`${root}/v1/models`, {
+      headers,
+      dispatcher: getInsecureDispatcher(),
+    });
+    if (res.ok) {
+      const json = await res.json();
+      models = Array.isArray(json?.data)
+        ? json.data.map((m) => m?.id).filter((id) => typeof id === 'string' && id)
+        : [];
+    }
+  } catch {
+    models = [];
+  }
+  modelsCache.set(root, { at: Date.now(), models });
+  return models;
+}
+
 async function probeLlamaCpp(baseUrl, headers) {
   try {
     const res = await fetch(`${baseUrl.replace(/\/$/, '')}/props`, {

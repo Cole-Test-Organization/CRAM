@@ -11,6 +11,7 @@ import { A, useLocation } from "@solidjs/router";
 import MarkdownRenderer from "../components/MarkdownRenderer";
 import Button from "../components/Button";
 import MemoryManager from "../components/settings/MemoryManager";
+import SystemPromptSettings from "../components/settings/SystemPromptSettings";
 import { api } from "../lib/api";
 import type {
     AgentEvent,
@@ -522,6 +523,7 @@ export default function Agent() {
                         remember their model; resume to keep using it.
                     </div>
                 </div>
+                <SystemPromptSettings />
                 <MemoryManager />
             </Show>
 

@@ -4,7 +4,7 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-05-27T01:22:04.802Z
+- **Generated:** 2026-05-29T15:36:33.620Z
 - **Tables:** 23
 - **Enums:** 0
 - **Views:** 0
@@ -237,8 +237,8 @@
 | `id` | `text` | NO | — | **PK** |
 | `user_id` | `bigint` | NO | — |  |
 | `title` | `text` | YES | — |  |
-| `provider` | `text` | NO | `'anthropic'::text` |  |
-| `model` | `text` | NO | `'claude-sonnet-4-6'::text` |  |
+| `provider` | `text` | NO | `'local'::text` |  |
+| `model` | `text` | NO | `'gemma4:e4b'::text` |  |
 | `messages` | `jsonb` | NO | `'[]'::jsonb` |  |
 | `created_at` | `timestamp with time zone` | NO | `now()` |  |
 | `updated_at` | `timestamp with time zone` | NO | `now()` |  |
@@ -310,6 +310,7 @@
 - `idx_contacts_city` — `CREATE INDEX idx_contacts_city ON public.contacts USING btree (lower(city))`
 - `idx_contacts_country` — `CREATE INDEX idx_contacts_country ON public.contacts USING btree (lower(country))`
 - `idx_contacts_email` — `CREATE INDEX idx_contacts_email ON public.contacts USING btree (email)`
+- `idx_contacts_full_name_trgm` — `CREATE INDEX idx_contacts_full_name_trgm ON public.contacts USING gin (lower(full_name) gin_trgm_ops)`
 - `idx_contacts_kind` — `CREATE INDEX idx_contacts_kind ON public.contacts USING btree (kind)`
 - `idx_contacts_name` — `CREATE INDEX idx_contacts_name ON public.contacts USING btree (full_name)`
 - `idx_contacts_search` — `CREATE INDEX idx_contacts_search ON public.contacts USING gin (search_vector)`
@@ -666,6 +667,7 @@
 | `model` | `text` | YES | — |  |
 | `local_base_url` | `text` | YES | — |  |
 | `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+| `system_prompt` | `text` | YES | — |  |
 
 **Primary key:** `user_id`
 

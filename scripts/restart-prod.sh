@@ -25,13 +25,6 @@ docker compose --profile prod down
 echo "$(bold "==> Pulling latest from git")"
 git pull --ff-only
 
-echo "$(bold "==> Detecting local LLM model for this host")"
-# shellcheck source=scripts/detect-llm.sh
-source "$ROOT/scripts/detect-llm.sh"
-AGENT_MODEL="$(cram_detect_model)"; export AGENT_MODEL
-echo "  $(uname -s)/$(uname -m) -> AGENT_MODEL=$AGENT_MODEL"
-cram_check_ollama "$AGENT_MODEL"
-
 echo "$(bold "==> Rebuilding and starting prod stack")"
 docker compose --profile prod up -d --build
 

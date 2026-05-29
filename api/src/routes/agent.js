@@ -170,16 +170,18 @@ export default async function agentRoutes(fastify, { agentSettingsService, memor
   // same provider the user has configured for the in-app agent.
   fastify.get('/agent/settings', {
     schema: {
-      description: 'Get the calling user\'s agent LLM config (provider, model, local_base_url). Empty fields fall through to env-backed defaults (AGENT_PROVIDER / AGENT_MODEL / LOCAL_BASE_URL), which ship pointed at a local LLM — Ollama running on the device itself.',
+      description: 'Get the calling user\'s agent config: LLM fields (provider, model, local_base_url) and the agent\'s base `system_prompt`. Empty provider/URL fall through to env-backed defaults (AGENT_PROVIDER / LOCAL_BASE_URL), which ship pointed at a local LLM — Ollama on the device itself. An empty model is resolved from the models the configured server actually has installed (not an env var). `system_prompt` is null until the user customizes it; `default_system_prompt` is always the built-in default rendered live (what a null system_prompt resolves to), so the UI can show it and offer a reset.',
       tags: ['agent'],
       response: {
         200: {
           type: 'object',
           properties: {
-            provider:       { type: ['string', 'null'] },
-            model:          { type: ['string', 'null'] },
-            local_base_url: { type: ['string', 'null'] },
-            updated_at:     { type: ['string', 'null'] },
+            provider:              { type: ['string', 'null'] },
+            model:                 { type: ['string', 'null'] },
+            local_base_url:        { type: ['string', 'null'] },
+            system_prompt:         { type: ['string', 'null'] },
+            default_system_prompt: { type: 'string' },
+            updated_at:            { type: ['string', 'null'] },
           },
         },
       },
@@ -190,7 +192,7 @@ export default async function agentRoutes(fastify, { agentSettingsService, memor
 
   fastify.patch('/agent/settings', {
     schema: {
-      description: 'Update the agent LLM config. Pass any subset of `provider`, `model`, `local_base_url`. Pass null on a field to clear it (the server default then applies). Provider must be: local (an OpenAI-compatible inference server, by default Ollama on the device). local_base_url has its trailing slash stripped before storage.',
+      description: 'Update the agent config. Pass any subset of `provider`, `model`, `local_base_url`, `system_prompt`. Pass null on a field to clear it (the server default then applies). Provider must be: local (an OpenAI-compatible inference server, by default Ollama on the device). local_base_url has its trailing slash stripped before storage. `system_prompt` is the agent\'s base instructions/persona — set it to customize, or null/empty to revert to the built-in default (do not bake the current date into it; the agent loop injects today\'s date automatically).',
       tags: ['agent'],
       body: {
         type: 'object',
@@ -198,6 +200,7 @@ export default async function agentRoutes(fastify, { agentSettingsService, memor
           provider:       { type: ['string', 'null'], enum: ['local', null] },
           model:          { type: ['string', 'null'] },
           local_base_url: { type: ['string', 'null'] },
+          system_prompt:  { type: ['string', 'null'] },
         },
         additionalProperties: false,
       },

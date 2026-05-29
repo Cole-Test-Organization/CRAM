@@ -91,7 +91,7 @@ docker compose --profile prod up -d --build
 |---|---|
 | `VENDOR_NAME`, `USER_ROLE` | Shape the agent's system prompt — e.g. "CRM assistant for a $VENDOR $ROLE" |
 | `SELF_DOMAINS` | Comma-separated company email domains; contacts/attendees from them are flagged "internal" (skipped for account creation + outreach). `setup.sh` seeds it from your email — a bootstrap default until you curate the list in Settings. |
-| `AGENT_MODEL`, `LOCAL_BASE_URL` | The agent runs on a **local LLM** — by default Ollama (`gemma4:e4b`) on the device hosting the app. Override the model, or point `LOCAL_BASE_URL` at a LAN machine. No API keys required. |
+| `LOCAL_BASE_URL` | The agent runs on a **local LLM** — by default Ollama on the device hosting the app. Point this at a LAN machine to use a server elsewhere. No API keys required. The *model* is chosen per-user in the GUI (**Settings → Agent LLM**) or auto-selected from what your Ollama has installed — there is no model env var. |
 | `POSTGRES_*` | DB credentials for the bundled compose stack |
 | `BIND_ADDRESS` | Host interface the app's ports (3200, 3100) bind to. `127.0.0.1` = this machine only (**default**); set `0.0.0.0` to expose CRAM on your LAN. Postgres always stays local. |
 | `TODOIST_ENABLED` | Set `false` to skip the Todoist integration entirely |

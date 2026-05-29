@@ -286,6 +286,9 @@ Each surface (HTTP, MCP) has its **own in-memory queue** — they don't share st
 ### Memories
 Long-lived user preferences/rules/facts injected into the agent's system prompt at session start (see the **User Memories** section above when populated). **Only ${isMcp ? 'call \`memories\` action \`create\`' : 'POST `/api/memories`'} when the user explicitly asks** ("remember that…", "save a memory about…", "from now on…"). Do not save on your own judgment — that's how the store fills with noise. The user curates; you're the saver.
 
+### System Prompt
+Distinct from memories: the **system prompt** is your single base block of instructions/persona, not a list of discrete facts. It's user-configured and applied to you automatically each turn — you never fetch it to use it. If the user explicitly asks to change it ("change your system prompt to…", "reset your instructions"), use ${ref('agent_settings.update')} with \`system_prompt\` (null or empty reverts to the built-in default). ${ref('agent_settings.get')} returns \`default_system_prompt\` — the built-in default rendered live — if you need to show or restore it. **Never rewrite your own base instructions on your own initiative**, and don't write the current date into it — that's injected for you every turn.
+
 ### Events
 The events table is the public event calendar (currently scraped from \`paloaltonetworks.com/resources/event-calendar\`) — **global**, no per-user scoping. When the user asks about an event ("when is X", "where is the Cortex Partner Day"), query this table — don't ask them for a link. For travel planning, prefer ${ref('events.upcoming_with_contacts')} which filters to events with at least one of the caller's contacts in that city.
 ${todoistEnabled ? `

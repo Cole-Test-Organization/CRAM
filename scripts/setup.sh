@@ -144,21 +144,7 @@ esac
 echo
 
 bold "Agent LLM"; echo
-echo "The agent runs on a local LLM via Ollama. Picking the build that matches this machine — Apple Silicon Macs use the MLX build, everything else the GGUF build."
-# shellcheck source=scripts/detect-llm.sh
-source "$ROOT/scripts/detect-llm.sh"
-AGENT_MODEL="$(cram_detect_model)"
-echo "  $(uname -s)/$(uname -m) -> $(bold "$AGENT_MODEL")"
-cram_check_ollama "$AGENT_MODEL"
-# Offer to pull it now if Ollama is up but the model isn't pulled.
-if command -v ollama >/dev/null 2>&1 \
-   && curl -fsS "${CRAM_OLLAMA_HOST:-http://localhost:11434}/api/version" >/dev/null 2>&1 \
-   && ! ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$AGENT_MODEL"; then
-  pull=$(prompt "Pull $AGENT_MODEL now? (y/N)" "N")
-  case "$pull" in
-    y|Y|yes|YES) ollama pull "$AGENT_MODEL" && ok "Pulled $AGENT_MODEL" || warn "Pull failed — run 'ollama pull $AGENT_MODEL' later." ;;
-  esac
-fi
+echo "The agent runs on a local LLM via Ollama. You don't set a model here — once running, the app uses your pick from Settings → Agent LLM, or auto-selects one from whatever models your Ollama has installed. Just make sure Ollama is running and you've pulled a model (e.g. 'ollama pull gemma4:e4b')."
 echo
 
 # Write .env at repo root
@@ -188,11 +174,10 @@ DATABASE_SSL=false
 # LAN. (Postgres always stays bound to 127.0.0.1.) Re-run setup.sh to change.
 BIND_ADDRESS=$BIND_ADDRESS
 
-# Agent LLM — local LLM via Ollama on this device. Model auto-picked for this
-# host by scripts/detect-llm.sh: Apple Silicon -> *-mlx (MLX build), else GGUF.
-# Re-run setup.sh (or ./scripts/detect-llm.sh) if you move to a different OS.
-AGENT_MODEL=$AGENT_MODEL
-# Point LOCAL_BASE_URL at a LAN box to use an LLM on another machine instead:
+# Agent LLM — runs on a local LLM (Ollama by default). The model is chosen in
+# the GUI (Settings -> Agent LLM) per user; if unset, the app auto-selects one
+# from the models your Ollama has installed. No AGENT_MODEL needed here.
+# Point LOCAL_BASE_URL at a LAN box to use an LLM on another machine:
 # LOCAL_BASE_URL=http://192.168.1.50:11434
 
 # Todoist

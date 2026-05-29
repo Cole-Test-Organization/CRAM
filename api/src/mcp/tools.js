@@ -940,13 +940,14 @@ export function registerTools(server, services, resolveUserId) {
 
   server.tool(
     'agent_settings',
-    "Get or update the caller's saved agent LLM config — `provider` (always `local`: an OpenAI-compatible inference server, by default Ollama running on the device itself), default `model` (e.g. gemma4:e4b), and `local_base_url` for that server. Persisted server-side so background workers (contact enrichment formatter, etc.) call the same local LLM the user has configured. Actions: get (returns the stored row plus what env-fallback effective values would resolve to), update (PATCH — pass any subset of provider/model/local_base_url; null clears a field, after which the server default applies).",
+    "Get or update the caller's saved agent config — the LLM fields `provider` (always `local`: an OpenAI-compatible inference server, by default Ollama running on the device itself), default `model` (e.g. gemma4:e4b), `local_base_url` for that server, and the agent's base `system_prompt` (its core instructions/persona). Persisted server-side so background workers (contact enrichment formatter, etc.) call the same local LLM the user configured, and so the in-app agent runs with the user's prompt. Actions: get (returns the stored row — including `system_prompt` (null until customized) and `default_system_prompt` (the built-in default rendered live) — plus env-fallback effective values), update (PATCH — pass any subset of provider/model/local_base_url/system_prompt; null clears a field, after which the default applies). The system prompt is user-owned config: **only change it when the user explicitly asks** (\"change your system prompt to…\", \"reset your instructions\"); never rewrite your own base instructions on your own initiative. Don't bake the current date into system_prompt — the agent loop injects today's date automatically.",
     {
       action: z.enum(['get', 'update']),
       data: z.object({
         provider:       z.enum(['local']).nullable().optional(),
         model:          z.string().nullable().optional(),
         local_base_url: z.string().nullable().optional(),
+        system_prompt:  z.string().nullable().optional().describe("Agent base instructions/persona. Null or empty reverts to the built-in default (see default_system_prompt from a get)."),
       }).optional(),
     },
     async ({ action, data }) => {
@@ -955,7 +956,7 @@ export function registerTools(server, services, resolveUserId) {
         case 'get':
           return callService(() => agentSettingsService.get(userId));
         case 'update':
-          if (!data) return errorResponse('update requires data (a partial settings object). Fields: provider ("local" | null to clear), model (string | null, e.g. "gemma4:e4b"), local_base_url (string | null, e.g. "http://host.docker.internal:11434" for on-device Ollama).');
+          if (!data) return errorResponse('update requires data (a partial settings object). Fields: provider ("local" | null to clear), model (string | null, e.g. "gemma4:e4b"), local_base_url (string | null, e.g. "http://host.docker.internal:11434" for on-device Ollama), system_prompt (string | null — the agent\'s base instructions; null/empty reverts to the built-in default). Only change system_prompt on explicit user request.');
           return callService(() => agentSettingsService.update(userId, data));
         default:
           return errorResponse(`Unknown action: ${action}`);

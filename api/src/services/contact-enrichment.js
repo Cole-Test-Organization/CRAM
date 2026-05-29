@@ -362,7 +362,6 @@ Return ONLY the JSON object specified in the system prompt.`;
   const effectiveModel = model
     || process.env.CONTACT_ENRICHMENT_MODEL
     || process.env.LOCAL_MODEL
-    || process.env.AGENT_MODEL
     || 'local';
   const effectiveBaseUrl = baseUrl || process.env.LOCAL_BASE_URL || null;
   if (!effectiveBaseUrl) {

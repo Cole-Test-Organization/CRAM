@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { withUser } from '../db/connection.js';
-import { DEFAULT_PROVIDER, DEFAULT_MODEL } from '../agent/defaults.js';
+import { DEFAULT_PROVIDER, FALLBACK_MODEL } from '../agent/defaults.js';
 
 const TITLE_MAX = 100;
 const SNIPPET_RADIUS = 60;
@@ -64,7 +64,7 @@ export function messagesToEvents(messages) {
   return events;
 }
 
-export async function createSession(userId, { provider = DEFAULT_PROVIDER, model = DEFAULT_MODEL } = {}) {
+export async function createSession(userId, { provider = DEFAULT_PROVIDER, model = FALLBACK_MODEL } = {}) {
   const id = randomUUID();
   return withUser(userId, async (client) => {
     await client.query(
