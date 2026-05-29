@@ -12,6 +12,7 @@ import {
     loadSessionRaw,
     saveMessages,
     deriveTitle,
+    NUDGE_NOTICE,
 } from "../services/agentSessions.js";
 import { buildMcpSession } from "./mcp-client.js";
 import { getProvider, listProviders } from "./providers/index.js";
@@ -20,6 +21,25 @@ import { AgentSettingsService } from "../services/agent-settings.js";
 import { logger } from "../lib/logger.js";
 
 const MAX_ITERATIONS = 25;
+
+// A turn that produces neither a tool call nor any user-facing text — only
+// internal reasoning (or nothing at all) — is the model quitting mid-task: it
+// "thinks out loud" about what it would do and then stops without doing or
+// saying it (the gemma4:e4b failure that motivated this guard, where the model
+// reasoned through a create_from_emails call and ended the turn instead of
+// emitting it). Such a turn must NOT end the loop. Instead we inject a
+// corrective prompt and let the model try again, bounded so a model that simply
+// can't comply doesn't spin one slow turn after another. The counter resets
+// whenever the model makes real progress (a tool call), so a long legitimate
+// workflow with the occasional stall isn't penalized — only consecutive
+// reasoning-only turns count toward the cap.
+const MAX_THINKING_ONLY_NUDGES = 3;
+const THINKING_ONLY_NUDGE = [
+    "You replied with internal reasoning only — no tool call and no written answer.",
+    "Internal reasoning is never shown to the user and does not count as responding.",
+    "Now do exactly ONE of these: (a) call the appropriate tool to actually perform the action you described, or (b) write a direct, user-facing reply.",
+    "Do not produce another reasoning-only turn.",
+].join(" ");
 
 // The agent's base system prompt is per-user and configurable (Settings →
 // Agent, or PATCH /api/agent/settings). A null stored value falls back to the
@@ -125,6 +145,7 @@ export async function runAgent({
 
     let iter = 0;
     let stopReason = null;
+    let consecutiveThinkingOnly = 0;
 
     try {
         while (iter < MAX_ITERATIONS) {
@@ -196,7 +217,62 @@ export async function runAgent({
             stopReason = turnStop;
 
             const toolCalls = content.filter((b) => b.type === "tool_use");
-            if (toolCalls.length === 0) break;
+            if (toolCalls.length === 0) {
+                // No action this turn. Only accept it as "done" if the model
+                // actually produced a user-facing answer. A thinking-only (or
+                // empty) turn is the model quitting mid-task — refuse to end on
+                // it and nudge it to act or answer.
+                const hasVisibleText = content.some(
+                    (b) => b.type === "text" && b.text && b.text.trim(),
+                );
+                if (hasVisibleText) break;
+
+                if (consecutiveThinkingOnly >= MAX_THINKING_ONLY_NUDGES) {
+                    logger.warn(
+                        {
+                            event: "agent_nudge_exhausted",
+                            component: "agent_loop",
+                            sessionId: session.id,
+                            iter,
+                            nudges: consecutiveThinkingOnly,
+                        },
+                        `agent_nudge_exhausted after ${consecutiveThinkingOnly} nudges`,
+                    );
+                    send({
+                        type: "error",
+                        message: `The model kept responding with only internal reasoning — no answer or tool call — after ${MAX_THINKING_ONLY_NUDGES} prompts to act. Try a more capable model (Settings → Agent LLM).`,
+                    });
+                    break;
+                }
+
+                consecutiveThinkingOnly++;
+                logger.warn(
+                    {
+                        event: "agent_nudge",
+                        component: "agent_loop",
+                        sessionId: session.id,
+                        iter,
+                        nudge: consecutiveThinkingOnly,
+                    },
+                    `agent_nudge: thinking-only turn, nudging model (${consecutiveThinkingOnly}/${MAX_THINKING_ONLY_NUDGES})`,
+                );
+                send({ type: "notice", level: "nudge", message: NUDGE_NOTICE });
+                messages.push({
+                    role: "user",
+                    content: THINKING_ONLY_NUDGE,
+                    // Synthetic prompt the loop injected — not user-authored.
+                    // Persisted so a resumed session replays the same context to
+                    // the model, but messagesToEvents renders it as a `notice`,
+                    // never a "You" bubble. The provider sees it as a plain user
+                    // turn (it reads role+content only; `internal` is ignored).
+                    internal: true,
+                });
+                continue;
+            }
+
+            // Reached only when the model made a real tool call — that's
+            // progress, so clear the reasoning-only stall counter.
+            consecutiveThinkingOnly = 0;
 
             // Dispatch tool calls through the MCP client. Sequential for now — the
             // model rarely fans out and parallelizing would complicate per-call

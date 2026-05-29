@@ -23,6 +23,7 @@ export type AgentEvent =
           totalTokens: number | null;
           contextMax: number | null;
       }
+    | { type: "notice"; level?: string; message: string }
     | { type: "error"; message: string };
 
 export type UsageSnapshot = {

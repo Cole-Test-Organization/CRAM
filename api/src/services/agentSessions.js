@@ -5,6 +5,13 @@ import { DEFAULT_PROVIDER, FALLBACK_MODEL } from '../agent/defaults.js';
 const TITLE_MAX = 100;
 const SNIPPET_RADIUS = 60;
 
+// User-facing status line shown when the agent loop nudges a model that ended a
+// turn with only internal reasoning (see MAX_THINKING_ONLY_NUDGES in
+// agent/loop.js). Single source of truth so the live SSE `notice` event and the
+// replayed-from-history `notice` event (messagesToEvents below) stay identical.
+export const NUDGE_NOTICE =
+  'The model replied with only reasoning and no answer — asking it to take an action or give a direct response.';
+
 function deriveTitle(text) {
   if (!text) return null;
   const cleaned = text.replace(/\s+/g, ' ').trim();
@@ -34,7 +41,14 @@ export function messagesToEvents(messages) {
     const content = msg.content;
     if (msg.role === 'user') {
       if (typeof content === 'string') {
-        if (content.trim()) events.push({ type: 'user_prompt', text: content });
+        if (msg.internal) {
+          // Loop-injected nudge (thinking-only guard): replayed to the model as
+          // a user turn, but rendered as a notice in the transcript — matching
+          // what the live SSE stream emitted, never a "You" bubble.
+          events.push({ type: 'notice', level: 'nudge', message: NUDGE_NOTICE });
+        } else if (content.trim()) {
+          events.push({ type: 'user_prompt', text: content });
+        }
       } else if (Array.isArray(content)) {
         for (const c of content) {
           if (c?.type === 'tool_result') {

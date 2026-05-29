@@ -873,6 +873,19 @@ function EventBubble(props: { event: AgentEvent }) {
         );
     }
 
+    if (e.type === "notice") {
+        return (
+            <div class="panel p-3 border-l-4 border-amber-400">
+                <div class="text-[10px] uppercase tracking-widest text-amber-300 mb-1">
+                    Notice
+                </div>
+                <div class="text-sm text-base-200 whitespace-pre-wrap">
+                    {e.message}
+                </div>
+            </div>
+        );
+    }
+
     if (e.type === "error") {
         return (
             <div class="panel p-3 border-l-4 border-red-500">

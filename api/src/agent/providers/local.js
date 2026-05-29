@@ -220,7 +220,17 @@ function toOpenAIMessages(system, messages) {
       }
       const assistant = {
         role: 'assistant',
-        content: textParts.length ? textParts.join('\n') : null,
+        // OpenAI permits null content only when tool_calls is present. A bare
+        // assistant turn with neither text nor tool calls — e.g. a thinking-only
+        // turn whose reasoning was dropped just above — must carry a string, or
+        // stricter servers (vLLM) 400 the next request. These turns now get
+        // re-sent within a run: loop.js's thinking-only guard injects a nudge
+        // and continues instead of ending on them.
+        content: textParts.length
+          ? textParts.join('\n')
+          : toolCalls.length
+            ? null
+            : '',
       };
       if (toolCalls.length) assistant.tool_calls = toolCalls;
       out.push(assistant);
