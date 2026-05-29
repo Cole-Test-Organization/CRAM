@@ -99,18 +99,13 @@ export async function runAgent({
 
     const derivedTitle = session.title ? null : deriveTitle(userContent);
 
-    const { client: mcp, instructions: mcpInstructions } = await buildMcpSession({ userId });
+    const { client: mcp, instructions: mcpInstructions } =
+        await buildMcpSession({ userId });
     const { tools: allMcpTools } = await mcp.listTools();
-    // The MCP `instructions` payload — workflow doc plus the user's enabled
-    // memories — is what the protocol normally hands to external clients in
-    // the initialize handshake. The in-app loop drives the LLM directly, so
-    // splice it onto the system prompt here.
     const composedSystem = mcpInstructions
         ? `${SYSTEM_PROMPT}\n\n${mcpInstructions}`
         : SYSTEM_PROMPT;
-    // Optional per-call tool restriction. `undefined` means "expose everything"
-    // (the historical behavior); an explicit array filters by tool name —
-    // `[]` cuts the model off from tools entirely for a single-shot prompt.
+
     const mcpTools = Array.isArray(allowedTools)
         ? allMcpTools.filter((t) => allowedTools.includes(t.name))
         : allMcpTools;
@@ -154,9 +149,12 @@ export async function runAgent({
                             toolInputKeys: block.input
                                 ? Object.keys(block.input)
                                 : undefined,
-                            preview: (block.text || block.thinking || "").slice(0, 120),
+                            preview: (block.text || block.thinking || "").slice(
+                                0,
+                                120,
+                            ),
                         },
-                        `agent_block type=${block.type} hasText=${!!block.text} hasThinking=${!!block.thinking} toolName=${block.name || "n/a"}`
+                        `agent_block type=${block.type} hasText=${!!block.text} hasThinking=${!!block.thinking} toolName=${block.name || "n/a"}`,
                     );
                     if (block.type === "text" && block.text) {
                         send({ type: "assistant_text", text: block.text });
@@ -233,8 +231,6 @@ export async function runAgent({
             });
         }
     } finally {
-        // Persist whatever we have, even on partial failure — matches Claude Code's
-        // behavior where a crashed session still has its JSONL on disk.
         try {
             await saveMessages(userId, session.id, messages, derivedTitle);
         } catch (err) {
