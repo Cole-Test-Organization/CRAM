@@ -19,7 +19,19 @@ import { Agent } from 'undici';
 let insecureDispatcher = null;
 function getInsecureDispatcher() {
   if (!insecureDispatcher) {
-    insecureDispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+    insecureDispatcher = new Agent({
+      connect: { rejectUnauthorized: false },
+      // LAN inference servers advertise a short keep-alive (llama.cpp sends
+      // `Keep-Alive: timeout=5`). Keep our idle window well under that so *we*
+      // retire pooled sockets before the server does — otherwise undici can
+      // write the next turn onto a socket the server has already closed, which
+      // surfaces as `read ECONNRESET`. keepAliveMaxTimeout also clamps the
+      // server's hint down (undici would otherwise honor it up to 10min). This
+      // narrows the idle-reuse race; the retry in streamTurn() is what actually
+      // recovers the post-stream-close case, which no timeout tuning prevents.
+      keepAliveTimeout: 2500,
+      keepAliveMaxTimeout: 2500,
+    });
   }
   return insecureDispatcher;
 }
@@ -202,7 +214,62 @@ const FINISH_REASON_MAP = {
   content_filter: 'stop_sequence',
 };
 
-export async function streamTurn({ model, system, messages, mcpTools, onBlock, providerConfig, timeoutMs }) {
+// Socket-level failures that are safe to retry on a fresh connection. They come
+// from undici/Node *before* the model produces any tokens, so re-issuing the
+// identical request is idempotent. The case that bit session 44462ea7: the LAN
+// llama.cpp box closes a keep-alive socket right after a streamed response and
+// undici reuses it before noticing the close → `read ECONNRESET`.
+const RETRYABLE_NET_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'EPIPE',
+  'ETIMEDOUT',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+function isRetryableNetworkError(err) {
+  // fetch() reports `TypeError: fetch failed` and stashes the real socket error
+  // (which carries .code) on err.cause.
+  const code = err?.cause?.code || err?.code;
+  if (code && RETRYABLE_NET_CODES.has(code)) return true;
+  // Some resets only surface as a message with no code.
+  return /fetch failed|other side closed|socket hang up/i.test(err?.message || '');
+}
+
+const MAX_STREAM_ATTEMPTS = 3; // 1 try + 2 retries
+
+// Public entry point. Retries transient transport resets against the local
+// inference server, re-sending the *same* system + messages each attempt — the
+// full conversation up to this turn is replayed, not restarted (the caller's
+// `messages` array is only appended to after a turn succeeds, so a thrown turn
+// leaves it untouched). Only genuine socket failures are retried; HTTP 4xx/5xx
+// and aborts pass straight through. Retrying the whole turn is safe because
+// streamTurnOnce has no observable side effects until it succeeds — onBlock
+// fires only after the stream fully drains.
+export async function streamTurn(args) {
+  for (let attempt = 1; attempt <= MAX_STREAM_ATTEMPTS; attempt++) {
+    try {
+      return await streamTurnOnce(args);
+    } catch (err) {
+      const code = err?.cause?.code || err?.message;
+      if (!isRetryableNetworkError(err) || attempt === MAX_STREAM_ATTEMPTS) {
+        if (attempt > 1) {
+          console.error(`[local provider] stream failed after ${attempt} attempt(s): ${code}`);
+        }
+        throw err;
+      }
+      const backoffMs = 300 * attempt; // 300ms, then 600ms
+      console.warn(
+        `[local provider] stream reset (${code}); retry ${attempt}/${MAX_STREAM_ATTEMPTS - 1} ` +
+        `with full context after ${backoffMs}ms`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+  }
+}
+
+async function streamTurnOnce({ model, system, messages, mcpTools, onBlock, providerConfig, timeoutMs }) {
   // Per-request override (set from the GUI Settings panel) takes precedence
   // over the env var so users can point at their own LAN box without restart.
   const baseUrl = providerConfig?.baseUrl || process.env.LOCAL_BASE_URL;
