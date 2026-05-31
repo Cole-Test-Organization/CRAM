@@ -4,6 +4,7 @@ import { researchCompany } from '../../../outreach/src/commands/company.js';
 import { researchIndustry } from '../../../outreach/src/commands/industry.js';
 import { getRateLimitStats } from '../../../outreach/src/utils/ratelimit.js';
 import { logger as rootLogger } from '../lib/logger.js';
+import { badRequest } from '../lib/http-error.js';
 
 const logger = rootLogger.child({ component: 'outreach-worker' });
 
@@ -19,14 +20,10 @@ export class OutreachService {
 
   enqueue({ type, name, company, title, deep, limit, linkedin = true }) {
     if (!VALID_TYPES.has(type)) {
-      const err = new Error(`Unknown outreach type: ${type}. Must be one of: ${[...VALID_TYPES].join(', ')}.`);
-      err.statusCode = 400;
-      throw err;
+      throw badRequest(`Unknown outreach type: ${type}. Must be one of: ${[...VALID_TYPES].join(', ')}.`);
     }
     if (!name || typeof name !== 'string' || !name.trim()) {
-      const err = new Error('Enrichment requires a non-empty `name`.');
-      err.statusCode = 400;
-      throw err;
+      throw badRequest('Enrichment requires a non-empty `name`.');
     }
 
     const jobId = crypto.randomUUID();

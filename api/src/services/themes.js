@@ -15,6 +15,7 @@
 // "row not found" on UPDATE/DELETE.
 
 import { withUser } from '../db/connection.js';
+import { badRequest, notFound, forbidden, conflict } from '../lib/http-error.js';
 
 const RAMP_NAMES = ['surf', 'cerulean', 'amber', 'papaya', 'scarlet', 'base'];
 const RAMP_STEPS = 11;
@@ -22,22 +23,6 @@ const HEX_RE = /^#[0-9a-fA-F]{3,8}$/;
 const SLUG_RE = /^[a-z0-9-]+$/;
 const VALID_FONT_KEYS = new Set(['sans', 'mono', 'display']);
 const VALID_EFFECT_KEYS = new Set(['scanline_color', 'scanline_spacing', 'highlight_mark_color']);
-
-function badRequest(msg) {
-  return Object.assign(new Error(msg), { statusCode: 400 });
-}
-
-function notFound(msg) {
-  return Object.assign(new Error(msg), { statusCode: 404 });
-}
-
-function forbidden(msg) {
-  return Object.assign(new Error(msg), { statusCode: 403 });
-}
-
-function conflict(msg) {
-  return Object.assign(new Error(msg), { statusCode: 409 });
-}
 
 function validateSlug(slug) {
   if (!slug || typeof slug !== 'string') throw badRequest('slug is required');

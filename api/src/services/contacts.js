@@ -1,4 +1,5 @@
 import { withUser } from '../db/connection.js';
+import { badRequest, conflict } from '../lib/http-error.js';
 
 const CONTACT_COLS = 'id, full_name, company, title, email, phone, linkedin, notes, kind, location_raw, city, state, country, created_at, updated_at';
 const VALID_KINDS = new Set(['account', 'partner', 'internal']);
@@ -17,7 +18,7 @@ function normalizeKind(kind) {
   // new canonical 'account' kind.
   if (kind === 'customer') return 'account';
   if (!VALID_KINDS.has(kind)) {
-    throw Object.assign(new Error(`Invalid kind: "${kind}". Must be one of: "account" (works at a non-partner account — link to that account), "partner" (channel/reseller rep — link to a partner account), "internal" (teammate at your own company — no account link). Default is "account" if omitted.`), { statusCode: 400 });
+    throw badRequest(`Invalid kind: "${kind}". Must be one of: "account" (works at a non-partner account — link to that account), "partner" (channel/reseller rep — link to a partner account), "internal" (teammate at your own company — no account link). Default is "account" if omitted.`);
   }
   return kind;
 }
@@ -126,7 +127,7 @@ export class ContactsService {
 
       if (mode === 'external') {
         if (!accountId) {
-          throw Object.assign(new Error('accountId is required for mode="external" (returns attendee buckets scoped to one account meeting). Resolve the account via the accounts tool first. For mode="internal" (an internal-only note), accountId is not needed.'), { statusCode: 400 });
+          throw badRequest('accountId is required for mode="external" (returns attendee buckets scoped to one account meeting). Resolve the account via the accounts tool first. For mode="internal" (an internal-only note), accountId is not needed.');
         }
         const account = (await client.query(`
           SELECT ${colList}
@@ -247,8 +248,8 @@ export class ContactsService {
           ? 'email'
           : 'full_name+kind';
         throw Object.assign(
-          new Error(`Contact already exists (matched on ${matchedBy}): id=${dup.id}, name="${enriched?.full_name}"${enriched?.email ? `, email="${enriched.email}"` : ''}. Update the existing contact via PATCH /api/contacts/${dup.id} (or the contacts MCP tool with action="update"), or link it to a new account via POST /api/contacts/${dup.id}/accounts/:accountId (action="link_account").`),
-          { statusCode: 409, existing: enriched }
+          conflict(`Contact already exists (matched on ${matchedBy}): id=${dup.id}, name="${enriched?.full_name}"${enriched?.email ? `, email="${enriched.email}"` : ''}. Update the existing contact via PATCH /api/contacts/${dup.id} (or the contacts MCP tool with action="update"), or link it to a new account via POST /api/contacts/${dup.id}/accounts/:accountId (action="link_account").`),
+          { existing: enriched }
         );
       }
       return this._insert(client, data, kind, accountId);
@@ -310,7 +311,7 @@ export class ContactsService {
       const kind = normalizeKind(data.kind) || 'account';
       const fullName = (data.full_name || '').trim();
       if (!fullName) {
-        throw Object.assign(new Error('findOrCreate requires a non-empty full_name.'), { statusCode: 400 });
+        throw badRequest('findOrCreate requires a non-empty full_name.');
       }
       const email = typeof data.email === 'string' ? data.email.trim().toLowerCase() : '';
 

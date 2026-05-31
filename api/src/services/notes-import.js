@@ -37,6 +37,9 @@ import AdmZip from 'adm-zip';
 import * as localProvider from '../agent/providers/local.js';
 import { deriveFilename } from './_slug.js';
 import { logger as rootLogger } from '../lib/logger.js';
+import { sleep, parseLooseJson } from './_llm.js';
+import { normalizeDomain } from './_domain.js';
+import { badRequest } from '../lib/http-error.js';
 
 const logger = rootLogger.child({ component: 'notes-import' });
 
@@ -79,34 +82,11 @@ Rules:
 - Do NOT invent emails or domains; include them only if they appear verbatim in the text.
 - Output exactly one JSON object — no surrounding text, no code fences.`;
 
-function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
-
-function normalizeDomain(d) {
-  if (!d || typeof d !== 'string') return null;
-  return d.trim().toLowerCase()
-    .replace(/^https?:\/\//, '')
-    .replace(/^www\./, '')
-    .replace(/\/.*$/, '') || null;
-}
-
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-// Strip ```json fences / leading prose, parse the first {...} block. Mirrors the
-// contact-enrichment formatter's tolerance for chatty small models.
-export function parseLooseJson(text) {
-  if (typeof text !== 'string') return null;
-  let t = text.trim();
-  const fence = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  if (fence) t = fence[1].trim();
-  const first = t.indexOf('{');
-  const last = t.lastIndexOf('}');
-  if (first === -1 || last === -1 || last <= first) return null;
-  try { return JSON.parse(t.slice(first, last + 1)); } catch { return null; }
-}
 
 // Coerce a raw parsed object into the normalized extraction record we act on.
 // Defensive: a small model returns all sorts of shapes. Never throws.
@@ -184,7 +164,7 @@ export class NotesImportService {
   // work is detached; the caller polls getJob.
   enqueue(userId, { files } = {}) {
     if (!Array.isArray(files) || files.length === 0) {
-      throw Object.assign(new Error('files must be a non-empty array of { path, content }. Read the notes directory client-side (or upload a .zip to the upload endpoint).'), { statusCode: 400 });
+      throw badRequest('files must be a non-empty array of { path, content }. Read the notes directory client-side (or upload a .zip to the upload endpoint).');
     }
     const cleaned = [];
     for (const f of files) {
@@ -195,7 +175,7 @@ export class NotesImportService {
       if (cleaned.length >= MAX_FILES_PER_JOB) break;
     }
     if (cleaned.length === 0) {
-      throw Object.assign(new Error('No non-empty text files found in the input.'), { statusCode: 400 });
+      throw badRequest('No non-empty text files found in the input.');
     }
 
     const jobId = crypto.randomUUID();

@@ -9,19 +9,11 @@
 // even one row, the env var is ignored (the user's curated list wins).
 
 import { withUser } from '../db/connection.js';
-
-function normalizeDomain(d) {
-  if (!d || typeof d !== 'string') return null;
-  const cleaned = d.trim().toLowerCase()
-    .replace(/^https?:\/\//, '')
-    .replace(/^www\./, '')
-    .replace(/\/.*$/, '');
-  return cleaned || null;
-}
+import { normalizeDomain, parseDomainList } from './_domain.js';
+import { badRequest } from '../lib/http-error.js';
 
 function envFallback() {
-  const raw = process.env.SELF_DOMAINS || process.env.INTERNAL_DOMAINS || '';
-  return raw.split(',').map(normalizeDomain).filter(Boolean);
+  return parseDomainList(process.env.SELF_DOMAINS || process.env.INTERNAL_DOMAINS || '');
 }
 
 export class InternalDomainsService {
@@ -48,10 +40,10 @@ export class InternalDomainsService {
   async add(userId, domain) {
     const normalized = normalizeDomain(domain);
     if (!normalized) {
-      throw Object.assign(new Error('domain is required — a bare domain like "paloaltonetworks.com". URLs and www. prefixes are normalized; must contain at least one "." after normalization.'), { statusCode: 400 });
+      throw badRequest('domain is required — a bare domain like "paloaltonetworks.com". URLs and www. prefixes are normalized; must contain at least one "." after normalization.');
     }
     if (!normalized.includes('.')) {
-      throw Object.assign(new Error(`Domain "${normalized}" does not contain a "." after normalization. Pass a real domain (e.g. "paloaltonetworks.com"), not a bare word.`), { statusCode: 400 });
+      throw badRequest(`Domain "${normalized}" does not contain a "." after normalization. Pass a real domain (e.g. "paloaltonetworks.com"), not a bare word.`);
     }
     return withUser(userId, async (client) => {
       // ON CONFLICT keeps add() idempotent — repeated calls return the
@@ -70,7 +62,7 @@ export class InternalDomainsService {
   async remove(userId, domain) {
     const normalized = normalizeDomain(domain);
     if (!normalized) {
-      throw Object.assign(new Error('domain is required (the bare domain to drop from the internal list). Use action="list" to see currently flagged domains.'), { statusCode: 400 });
+      throw badRequest('domain is required (the bare domain to drop from the internal list). Use action="list" to see currently flagged domains.');
     }
     return withUser(userId, async (client) => {
       const result = await client.query(

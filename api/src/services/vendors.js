@@ -1,6 +1,7 @@
 import { getPool } from '../db/connection.js';
 import { slugify } from './_slug.js';
 import { FUZZY_THRESHOLD, normalizeVendorName } from './_fuzzy-match.js';
+import { badRequest } from '../lib/http-error.js';
 
 const COLS = 'id, name, slug, website, notes, needs_review, deleted_at, created_at, updated_at';
 
@@ -63,12 +64,12 @@ export class VendorsService {
   // returned as-is; the caller is responsible for restoring if needed.
   async findOrCreate({ name, slug, website, notes }) {
     if (!name || !name.trim()) {
-      throw Object.assign(new Error('name is required (the vendor company name, e.g. "Palo Alto Networks"). This is the global catalog of vendors whose products your accounts run.'), { statusCode: 400 });
+      throw badRequest('name is required (the vendor company name, e.g. "Palo Alto Networks"). This is the global catalog of vendors whose products your accounts run.');
     }
     const trimmedName = name.trim();
     const finalSlug = (slug && slug.trim()) || slugify(trimmedName);
     if (!finalSlug) {
-      throw Object.assign(new Error(`Could not derive a slug from name "${name}". Slug is normally auto-derived from name (lowercase, hyphens) — if your name is entirely punctuation/whitespace it cannot produce a slug. Supply slug explicitly to override.`), { statusCode: 400 });
+      throw badRequest(`Could not derive a slug from name "${name}". Slug is normally auto-derived from name (lowercase, hyphens) — if your name is entirely punctuation/whitespace it cannot produce a slug. Supply slug explicitly to override.`);
     }
     const client = await getPool().connect();
     try {
@@ -122,8 +123,8 @@ export class VendorsService {
         notes: data.notes !== undefined ? data.notes : existing.notes,
         needs_review: data.needs_review !== undefined ? !!data.needs_review : existing.needs_review,
       };
-      if (!next.name) throw Object.assign(new Error('name cannot be empty (whitespace-only). Omit the field to leave existing name unchanged.'), { statusCode: 400 });
-      if (!next.slug) throw Object.assign(new Error('slug cannot be empty (whitespace-only). Omit the field to leave existing slug unchanged.'), { statusCode: 400 });
+      if (!next.name) throw badRequest('name cannot be empty (whitespace-only). Omit the field to leave existing name unchanged.');
+      if (!next.slug) throw badRequest('slug cannot be empty (whitespace-only). Omit the field to leave existing slug unchanged.');
       const updated = await client.query(
         `UPDATE vendors SET name = $2, slug = $3, website = $4, notes = $5, needs_review = $6
          WHERE id = $1

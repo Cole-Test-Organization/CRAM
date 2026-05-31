@@ -1,5 +1,7 @@
 import { withUser } from '../db/connection.js';
 import { deriveFilename, slugify } from './_slug.js';
+import { jsonb } from './_json.js';
+import { badRequest } from '../lib/http-error.js';
 
 export const BUNDLE_FORMAT = 'se-os/account-bundle';
 export const BUNDLE_VERSION = 1;
@@ -26,10 +28,6 @@ const CONTACT_PORTABLE_COLS = [
   'kind', 'location_raw', 'city', 'state', 'country',
 ];
 
-function jsonb(value) {
-  return value == null ? null : JSON.stringify(value);
-}
-
 export class ImportExportService {
   constructor({ contactsService, accountsService } = {}) {
     // Optional. When wired in (server.js / agent/mcp-client.js), the importer
@@ -44,7 +42,7 @@ export class ImportExportService {
 
   async exportAccounts(userId, slugs) {
     if (!Array.isArray(slugs) || slugs.length === 0) {
-      throw Object.assign(new Error('slugs must be a non-empty array of account slugs. Discover slugs via the accounts tool (action="list"). Each slug must already exist as an account in this tenant.'), { statusCode: 400 });
+      throw badRequest('slugs must be a non-empty array of account slugs. Discover slugs via the accounts tool (action="list"). Each slug must already exist as an account in this tenant.');
     }
     return withUser(userId, async (client) => {
       const accounts = [];
@@ -234,22 +232,16 @@ export class ImportExportService {
 
   async importBundle(userId, bundle) {
     if (!bundle || typeof bundle !== 'object') {
-      throw Object.assign(new Error('bundle must be an object — the JSON produced by action="export" on the source tenant. Shape: { format: "se-os/account-bundle", version: 1, accounts: [...] }.'), { statusCode: 400 });
+      throw badRequest('bundle must be an object — the JSON produced by action="export" on the source tenant. Shape: { format: "se-os/account-bundle", version: 1, accounts: [...] }.');
     }
     if (bundle.format !== BUNDLE_FORMAT) {
-      throw Object.assign(
-        new Error(`Unsupported bundle format: ${bundle.format}. Expected: ${BUNDLE_FORMAT}`),
-        { statusCode: 400 }
-      );
+      throw badRequest(`Unsupported bundle format: ${bundle.format}. Expected: ${BUNDLE_FORMAT}`);
     }
     if (bundle.version !== BUNDLE_VERSION) {
-      throw Object.assign(
-        new Error(`Unsupported bundle version: ${bundle.version}. Expected: ${BUNDLE_VERSION}`),
-        { statusCode: 400 }
-      );
+      throw badRequest(`Unsupported bundle version: ${bundle.version}. Expected: ${BUNDLE_VERSION}`);
     }
     if (!Array.isArray(bundle.accounts)) {
-      throw Object.assign(new Error('bundle.accounts must be an array. A valid bundle from action="export" always carries an accounts[] (possibly empty). If you are constructing this by hand, that is the array of account objects to import.'), { statusCode: 400 });
+      throw badRequest('bundle.accounts must be an array. A valid bundle from action="export" always carries an accounts[] (possibly empty). If you are constructing this by hand, that is the array of account objects to import.');
     }
 
     const results = [];

@@ -17,6 +17,7 @@ import { URL } from 'node:url';
 import { getPool } from '../db/connection.js';
 import { logger as rootLogger } from '../lib/logger.js';
 import * as cron from '../lib/cron.js';
+import { httpError, badRequest, notFound } from '../lib/http-error.js';
 
 const logger = rootLogger.child({ component: 'backup' });
 
@@ -103,23 +104,23 @@ export class BackupService {
 
   async updateSettings(patch) {
     if (patch == null || typeof patch !== 'object') {
-      throw Object.assign(new Error('settings patch must be an object'), { statusCode: 400 });
+      throw badRequest('settings patch must be an object');
     }
     if (patch.cron !== undefined && !cron.validate(patch.cron)) {
-      throw Object.assign(new Error(`invalid cron expression: ${patch.cron}`), { statusCode: 400 });
+      throw badRequest(`invalid cron expression: ${patch.cron}`);
     }
     if (patch.retention_count !== undefined) {
       if (!Number.isInteger(patch.retention_count) || patch.retention_count < 0) {
-        throw Object.assign(new Error('retention_count must be a non-negative integer (0 = keep all)'), { statusCode: 400 });
+        throw badRequest('retention_count must be a non-negative integer (0 = keep all)');
       }
     }
     if (patch.target_dir !== undefined) {
       if (typeof patch.target_dir !== 'string' || !path.isAbsolute(patch.target_dir)) {
-        throw Object.assign(new Error('target_dir must be an absolute path'), { statusCode: 400 });
+        throw badRequest('target_dir must be an absolute path');
       }
     }
     if (patch.enabled !== undefined && typeof patch.enabled !== 'boolean') {
-      throw Object.assign(new Error('enabled must be a boolean'), { statusCode: 400 });
+      throw badRequest('enabled must be a boolean');
     }
 
     const current = await this.getSettings();
@@ -220,12 +221,12 @@ export class BackupService {
 
   async restoreBackup(filename) {
     if (!FILENAME_RE.test(filename)) {
-      throw Object.assign(new Error('invalid backup filename'), { statusCode: 400 });
+      throw badRequest('invalid backup filename');
     }
     const target_dir = await this._ensureTargetDir();
     const fullPath = path.join(target_dir, filename);
     try { await fs.access(fullPath); }
-    catch { throw Object.assign(new Error(`backup not found: ${filename}`), { statusCode: 404 }); }
+    catch { throw notFound(`backup not found: ${filename}`); }
 
     const conn = parsePgConnection(this.databaseUrl);
     logger.warn({ event: 'restore.start', filename }, 'starting restore');
@@ -277,10 +278,7 @@ export class BackupService {
       logger.info({ event: 'restore.migrate', migrations }, 'post-restore migrations applied');
     } catch (err) {
       logger.error({ event: 'restore.migrate_failed', err: err.message }, 'post-restore migrations failed');
-      throw Object.assign(
-        new Error(`Restore succeeded but post-restore migrations failed: ${err.message}`),
-        { statusCode: 500 }
-      );
+      throw httpError(500, `Restore succeeded but post-restore migrations failed: ${err.message}`);
     }
 
     const result = {
@@ -302,11 +300,11 @@ export class BackupService {
   // and never collides with a scheduled dump.
   async importBackup({ stream, sourcePath, originalName } = {}) {
     if (!stream && !sourcePath) {
-      throw Object.assign(new Error('importBackup requires either stream or sourcePath'), { statusCode: 400 });
+      throw badRequest('importBackup requires either stream or sourcePath');
     }
     if (sourcePath !== undefined) {
       if (typeof sourcePath !== 'string' || !path.isAbsolute(sourcePath)) {
-        throw Object.assign(new Error('sourcePath must be an absolute path'), { statusCode: 400 });
+        throw badRequest('sourcePath must be an absolute path');
       }
     }
 
@@ -323,7 +321,7 @@ export class BackupService {
     try {
       if (sourcePath) {
         try { await fs.access(sourcePath); }
-        catch { throw Object.assign(new Error(`source file not found: ${sourcePath}`), { statusCode: 404 }); }
+        catch { throw notFound(`source file not found: ${sourcePath}`); }
         await pipeline(createReadStream(sourcePath), createWriteStream(tempPath));
       } else {
         await pipeline(stream, createWriteStream(tempPath));
@@ -335,10 +333,7 @@ export class BackupService {
         const buf = Buffer.alloc(PG_DUMP_MAGIC.length);
         const { bytesRead } = await fh.read(buf, 0, PG_DUMP_MAGIC.length, 0);
         if (bytesRead < PG_DUMP_MAGIC.length || !buf.equals(PG_DUMP_MAGIC)) {
-          throw Object.assign(
-            new Error('not a pg_dump custom-format backup (missing PGDMP magic header — produce with `pg_dump -Fc`)'),
-            { statusCode: 400 }
-          );
+          throw badRequest('not a pg_dump custom-format backup (missing PGDMP magic header — produce with `pg_dump -Fc`)');
         }
       } finally {
         await fh.close();
@@ -365,13 +360,13 @@ export class BackupService {
 
   async deleteBackup(filename) {
     if (!FILENAME_RE.test(filename)) {
-      throw Object.assign(new Error('invalid backup filename'), { statusCode: 400 });
+      throw badRequest('invalid backup filename');
     }
     const target_dir = await this._ensureTargetDir();
     const fullPath = path.join(target_dir, filename);
     try { await fs.unlink(fullPath); }
     catch (err) {
-      if (err.code === 'ENOENT') throw Object.assign(new Error(`backup not found: ${filename}`), { statusCode: 404 });
+      if (err.code === 'ENOENT') throw notFound(`backup not found: ${filename}`);
       throw err;
     }
     return { deleted: true, filename };
@@ -381,12 +376,12 @@ export class BackupService {
   // responsible for piping to the reply.
   async openBackupStream(filename) {
     if (!FILENAME_RE.test(filename)) {
-      throw Object.assign(new Error('invalid backup filename'), { statusCode: 400 });
+      throw badRequest('invalid backup filename');
     }
     const target_dir = await this._ensureTargetDir();
     const fullPath = path.join(target_dir, filename);
     try { await fs.access(fullPath); }
-    catch { throw Object.assign(new Error(`backup not found: ${filename}`), { statusCode: 404 }); }
+    catch { throw notFound(`backup not found: ${filename}`); }
     return { stream: createReadStream(fullPath), fullPath };
   }
 }

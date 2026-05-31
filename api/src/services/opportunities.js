@@ -1,4 +1,5 @@
 import { withUser } from '../db/connection.js';
+import { badRequest, notFound } from '../lib/http-error.js';
 
 const OPP_COLS = `
   id, account_id, name, opp_link, trr_link, tech_validation_link, stage, notes,
@@ -21,10 +22,7 @@ const VALID_STAGES = new Set([
 function normalizeStage(stage) {
   if (stage == null) return undefined;
   if (!VALID_STAGES.has(stage)) {
-    throw Object.assign(
-      new Error(`Invalid stage: ${stage}. Must be one of: ${[...VALID_STAGES].join(', ')}`),
-      { statusCode: 400 }
-    );
+    throw badRequest(`Invalid stage: ${stage}. Must be one of: ${[...VALID_STAGES].join(', ')}`);
   }
   return stage;
 }
@@ -33,7 +31,7 @@ function normalizeReasonList(value, field) {
   if (value === undefined) return undefined;
   if (value === null) return [];
   if (!Array.isArray(value)) {
-    throw Object.assign(new Error(`${field} must be an array of strings`), { statusCode: 400 });
+    throw badRequest(`${field} must be an array of strings`);
   }
   return value
     .map((v) => (typeof v === 'string' ? v.trim() : ''))
@@ -101,10 +99,10 @@ export class OpportunitiesService {
 
   async create(userId, data) {
     if (!data?.account_id) {
-      throw Object.assign(new Error('account_id is required (the numeric id of the account this deal is on). Resolve via the accounts tool — list/search/get. The account must NOT be status="partner" — opps live on customer accounts only.'), { statusCode: 400 });
+      throw badRequest('account_id is required (the numeric id of the account this deal is on). Resolve via the accounts tool — list/search/get. The account must NOT be status="partner" — opps live on customer accounts only.');
     }
     if (!data?.name?.trim()) {
-      throw Object.assign(new Error('name is required (the deal name, e.g. "Q3 EDR Refresh").'), { statusCode: 400 });
+      throw badRequest('name is required (the deal name, e.g. "Q3 EDR Refresh").');
     }
     return withUser(userId, async (client) => {
       await this._assertNotPartnerAccount(client, data.account_id);
@@ -174,7 +172,7 @@ export class OpportunitiesService {
         why_us:     nextWhyUs     !== undefined ? nextWhyUs     : existing.why_us,
       };
       if (!next.name) {
-        throw Object.assign(new Error('name cannot be empty'), { statusCode: 400 });
+        throw badRequest('name cannot be empty');
       }
 
       await client.query(
@@ -223,7 +221,7 @@ export class OpportunitiesService {
       if (!opp) return null;
       const product = (await client.query('SELECT id FROM products WHERE id = $1', [productId])).rows[0];
       if (!product) {
-        throw Object.assign(new Error(`Product not found: id=${productId}. Opportunity product_ids reference rows from the per-user \`products\` tool (what you sell). If you passed an id from \`vendor_products\` (the global catalog of what accounts run), that is a different namespace and will not link — use products.list with search instead.`), { statusCode: 404 });
+        throw notFound(`Product not found: id=${productId}. Opportunity product_ids reference rows from the per-user \`products\` tool (what you sell). If you passed an id from \`vendor_products\` (the global catalog of what accounts run), that is a different namespace and will not link — use products.list with search instead.`);
       }
       await client.query(
         'INSERT INTO opp_products (opportunity_id, product_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
@@ -251,13 +249,10 @@ export class OpportunitiesService {
       [accountId]
     )).rows[0];
     if (!row) {
-      throw Object.assign(new Error(`Account not found: id=${accountId}. Use the accounts tool — action="list" for slugs, action="get" with slug/domain, or the search tool (type="accounts") for fuzzy name match.`), { statusCode: 404 });
+      throw notFound(`Account not found: id=${accountId}. Use the accounts tool — action="list" for slugs, action="get" with slug/domain, or the search tool (type="accounts") for fuzzy name match.`);
     }
     if (row.status === 'partner') {
-      throw Object.assign(
-        new Error(`Account ${accountId} is a partner account (status="partner"). Opportunities live on customer accounts you sell TO, not partner accounts you sell WITH. Pick a different account, or change this account's status if it is misclassified.`),
-        { statusCode: 400 }
-      );
+      throw badRequest(`Account ${accountId} is a partner account (status="partner"). Opportunities live on customer accounts you sell TO, not partner accounts you sell WITH. Pick a different account, or change this account's status if it is misclassified.`);
     }
   }
 
@@ -270,10 +265,7 @@ export class OpportunitiesService {
       )).rows.map((r) => Number(r.id));
       const missing = ids.filter((id) => !valid.includes(id));
       if (missing.length) {
-        throw Object.assign(
-          new Error(`Product(s) not found: ${missing.join(', ')}. Opportunity product_ids reference rows from the per-user \`products\` tool. If you passed ids from \`vendor_products\` (the global tech-stack catalog), that is a different namespace — use products.list with search to find the right ids.`),
-          { statusCode: 400 }
-        );
+        throw badRequest(`Product(s) not found: ${missing.join(', ')}. Opportunity product_ids reference rows from the per-user \`products\` tool. If you passed ids from \`vendor_products\` (the global tech-stack catalog), that is a different namespace — use products.list with search to find the right ids.`);
       }
     }
     await client.query('DELETE FROM opp_products WHERE opportunity_id = $1', [opportunityId]);

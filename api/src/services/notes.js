@@ -1,4 +1,5 @@
 import { withUser } from '../db/connection.js';
+import { badRequest } from '../lib/http-error.js';
 
 // Timestamped markdown notes attached to exactly one of account / contact /
 // opportunity. The DB's CHECK constraint enforces the polymorphism; we just
@@ -15,10 +16,7 @@ function pickTarget({ account_id, contact_id, opportunity_id }) {
     .map((k) => [k, ({ account_id, contact_id, opportunity_id })[k]])
     .filter(([, v]) => v != null);
   if (present.length !== 1) {
-    throw Object.assign(
-      new Error('Notes belong to exactly one entity — pass one of account_id, contact_id, or opportunity_id (and not more than one). Resolve the id via the accounts/contacts/opportunities tool first.'),
-      { statusCode: 400 }
-    );
+    throw badRequest('Notes belong to exactly one entity — pass one of account_id, contact_id, or opportunity_id (and not more than one). Resolve the id via the accounts/contacts/opportunities tool first.');
   }
   const [key, value] = present[0];
   return { key, value: Number(value) };

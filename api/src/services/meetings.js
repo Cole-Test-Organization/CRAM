@@ -1,71 +1,10 @@
 import { withUser } from '../db/connection.js';
 import { deriveFilename } from './_slug.js';
+import { normalizeDomain, suggestAccountName } from './_domain.js';
+import { parseEmailList } from './_email.js';
+import { badRequest, notFound, conflict } from '../lib/http-error.js';
 
 const MEETING_COLS = 'id, account_id, date, title, filename, body, internal, needs_review, created_at, updated_at';
-
-function normalizeDomain(d) {
-  if (!d || typeof d !== 'string') return null;
-  return d.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '') || null;
-}
-
-// Parse a free-form list of email strings into deduped
-// { email, domain, name_guess } records. Designed to be forgiving — calendar
-// invites paste in lots of different shapes:
-//   - bare emails:                          "jane@acme.com"
-//   - RFC-5322 addr-spec:                   "Jane Doe <jane@acme.com>"
-//   - quoted display names (incl. commas):  '"Smith, John" <jsmith@acme.com>'
-//   - mixed comma / semicolon / newline separation
-//   - leading/trailing prose ("Attendees: a@x.com, B <b@x.com>. Thanks.")
-//
-// Strategy: don't pre-split (a comma inside a quoted display name would
-// shred it). Instead, scan the input directly for emails:
-//   pass 1 finds 'Name <email>' forms and captures the display name from
-//   whatever immediately precedes the angle bracket;
-//   pass 2 picks up any remaining bare emails the first pass didn't claim.
-export function parseEmailList(text) {
-  if (!text) return [];
-  const seen = new Map();
-  const EMAIL_BODY = '[A-Z0-9._%+\\-]+@[A-Z0-9.\\-]+\\.[A-Z]{2,}';
-
-  function add(email, displayName) {
-    const e = String(email || '').toLowerCase();
-    if (!e || seen.has(e)) return;
-    const cleaned = String(displayName || '')
-      .replace(/^[\s,;]+|[\s,;.]+$/g, '')
-      .replace(/^["']|["']$/g, '')
-      .trim();
-    const [local, domainRaw] = e.split('@');
-    const domain = normalizeDomain(domainRaw);
-    const nameGuess = cleaned || local
-      .replace(/[._\-]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .replace(/\b\w/g, c => c.toUpperCase());
-    seen.set(e, { email: e, domain, name_guess: nameGuess });
-  }
-
-  // Pass 1: "Display Name <email>" — quoted name preserved intact (including
-  // any commas inside the quotes), unquoted display bounded by `,;<\n` so it
-  // can't slurp text from the previous attendee.
-  const bracketRe = new RegExp(
-    `(?:"([^"]+)"|'([^']+)'|([^<,;\\n]*?))\\s*<\\s*(${EMAIL_BODY})\\s*>`,
-    'gi'
-  );
-  const remainder = String(text).replace(bracketRe, (_full, q1, q2, plain, email) => {
-    add(email, q1 || q2 || plain || '');
-    // Blank out the matched span so pass 2 doesn't re-grab the same email.
-    return ' '.repeat(_full.length);
-  });
-
-  // Pass 2: any bare emails left over (no angle brackets around them).
-  const bareRe = new RegExp(EMAIL_BODY, 'gi');
-  let m;
-  while ((m = bareRe.exec(remainder)) !== null) {
-    add(m[0], '');
-  }
-
-  return [...seen.values()];
-}
 
 export class MeetingsService {
   constructor({ contactsService = null, accountsService = null, contactEnrichmentService = null, internalDomainsService = null } = {}) {
@@ -175,10 +114,10 @@ export class MeetingsService {
   async create(userId, accountId, data) {
     const internal = !!data.internal;
     if (internal && accountId) {
-      throw Object.assign(new Error('Internal meetings cannot have an account_id.'), { statusCode: 400 });
+      throw badRequest('Internal meetings cannot have an account_id.');
     }
     if (!internal && !accountId) {
-      throw Object.assign(new Error('Non-internal meetings require an account_id.'), { statusCode: 400 });
+      throw badRequest('Non-internal meetings require an account_id.');
     }
 
     return withUser(userId, async (client) => {
@@ -193,7 +132,7 @@ export class MeetingsService {
         if (found.rows.length !== contactIds.length) {
           const foundIds = new Set(found.rows.map(r => Number(r.id)));
           const missing = contactIds.filter(cid => !foundIds.has(Number(cid)));
-          throw Object.assign(new Error(`Contacts not found: ids=${missing.join(', ')}. Contacts must exist before being attached to a meeting — create them first via the contacts tool, or use contacts.attendee_options (mode="external", account_id=this account) to pick from the valid set for this account.`), { statusCode: 400 });
+          throw badRequest(`Contacts not found: ids=${missing.join(', ')}. Contacts must exist before being attached to a meeting — create them first via the contacts tool, or use contacts.attendee_options (mode="external", account_id=this account) to pick from the valid set for this account.`);
         }
       }
 
@@ -236,7 +175,7 @@ export class MeetingsService {
         if (found.rows.length !== contactIds.length) {
           const foundIds = new Set(found.rows.map(r => Number(r.id)));
           const missing = contactIds.filter(cid => !foundIds.has(Number(cid)));
-          throw Object.assign(new Error(`Contacts not found: ids=${missing.join(', ')}. Contacts must exist before being attached to a meeting — create them first via the contacts tool, or use contacts.attendee_options (mode="external", account_id=this account) to pick from the valid set for this account.`), { statusCode: 400 });
+          throw badRequest(`Contacts not found: ids=${missing.join(', ')}. Contacts must exist before being attached to a meeting — create them first via the contacts tool, or use contacts.attendee_options (mode="external", account_id=this account) to pick from the valid set for this account.`);
         }
       }
 
@@ -348,11 +287,11 @@ export class MeetingsService {
       const m = (await client.query('SELECT id, account_id FROM meetings WHERE id = $1', [id])).rows[0];
       if (!m) return null;
       if (m.account_id) {
-        throw Object.assign(new Error(`Meeting ${id} is already linked to account ${m.account_id}. Account assignment only applies to unassigned notes.`), { statusCode: 409 });
+        throw conflict(`Meeting ${id} is already linked to account ${m.account_id}. Account assignment only applies to unassigned notes.`);
       }
       const acct = (await client.query('SELECT id FROM accounts WHERE id = $1', [accountId])).rows[0];
       if (!acct) {
-        throw Object.assign(new Error(`Account not found: id=${accountId}.`), { statusCode: 404 });
+        throw notFound(`Account not found: id=${accountId}.`);
       }
       await client.query(
         'UPDATE meetings SET account_id = $2, internal = false, needs_review = false WHERE id = $1',
@@ -374,7 +313,7 @@ export class MeetingsService {
       if (!att) return null;
       const contact = (await client.query('SELECT id FROM contacts WHERE id = $1', [contactId])).rows[0];
       if (!contact) {
-        throw Object.assign(new Error(`Contact not found: id=${contactId}.`), { statusCode: 404 });
+        throw notFound(`Contact not found: id=${contactId}.`);
       }
       const dup = (await client.query(
         'SELECT id FROM meeting_attendees WHERE meeting_id = $1 AND contact_id = $2',
@@ -470,18 +409,18 @@ export class MeetingsService {
     if (!this.contactsService || !this.accountsService) {
       throw new Error('MeetingsService.createFromEmails requires contactsService and accountsService deps');
     }
-    if (!payload?.date) throw Object.assign(new Error('payload.date is required (ISO date string, e.g. "2026-05-20").'), { statusCode: 400 });
-    if (!payload?.body) throw Object.assign(new Error('payload.body is required (the meeting notes as markdown text).'), { statusCode: 400 });
-    if (!payload?.account?.mode) throw Object.assign(new Error('payload.account.mode is required: "existing" (also pass account_id of a matched account) or "new" (also pass name and optional domain — a fresh account row will be created).'), { statusCode: 400 });
+    if (!payload?.date) throw badRequest('payload.date is required (ISO date string, e.g. "2026-05-20").');
+    if (!payload?.body) throw badRequest('payload.body is required (the meeting notes as markdown text).');
+    if (!payload?.account?.mode) throw badRequest('payload.account.mode is required: "existing" (also pass account_id of a matched account) or "new" (also pass name and optional domain — a fresh account row will be created).');
 
     // 1) Resolve/create the account.
     let accountId;
     if (payload.account.mode === 'existing') {
       if (!payload.account.account_id) {
-        throw Object.assign(new Error('payload.account.account_id is required when account.mode="existing". Use resolve_emails to get the matched account candidate id, or look up the account via the accounts tool.'), { statusCode: 400 });
+        throw badRequest('payload.account.account_id is required when account.mode="existing". Use resolve_emails to get the matched account candidate id, or look up the account via the accounts tool.');
       }
       const acct = await this.accountsService.getById(userId, payload.account.account_id);
-      if (!acct) throw Object.assign(new Error(`Account not found: id=${payload.account.account_id}. Use the accounts tool (list/search/get) to find the right id, or switch to account.mode="new" with a name.`), { statusCode: 404 });
+      if (!acct) throw notFound(`Account not found: id=${payload.account.account_id}. Use the accounts tool (list/search/get) to find the right id, or switch to account.mode="new" with a name.`);
       accountId = acct.id;
       // If the user typed a domain that isn't yet on the account, append it.
       if (payload.account.domain) {
@@ -495,7 +434,7 @@ export class MeetingsService {
       }
     } else if (payload.account.mode === 'new') {
       if (!payload.account.name) {
-        throw Object.assign(new Error('payload.account.name is required when account.mode="new" (the company display name — the slug is derived automatically). Optional: payload.account.domain to populate the domains array.'), { statusCode: 400 });
+        throw badRequest('payload.account.name is required when account.mode="new" (the company display name — the slug is derived automatically). Optional: payload.account.domain to populate the domains array.');
       }
       const slug = slugifyName(payload.account.name);
       const domain = normalizeDomain(payload.account.domain || '');
@@ -506,7 +445,7 @@ export class MeetingsService {
       });
       accountId = created.id;
     } else {
-      throw Object.assign(new Error(`Unknown account.mode: "${payload.account.mode}". Must be "existing" (also pass account_id) or "new" (also pass name).`), { statusCode: 400 });
+      throw badRequest(`Unknown account.mode: "${payload.account.mode}". Must be "existing" (also pass account_id) or "new" (also pass name).`);
     }
 
     // 2) Resolve/create contacts. Collect the list for the meeting attendees +
@@ -516,7 +455,7 @@ export class MeetingsService {
     for (const c of payload.contacts || []) {
       if (c.mode === 'existing') {
         if (!c.contact_id) {
-          throw Object.assign(new Error('contact.contact_id is required when contact.mode="existing". Use the contact ids returned by resolve_emails (or look them up via the contacts tool).'), { statusCode: 400 });
+          throw badRequest('contact.contact_id is required when contact.mode="existing". Use the contact ids returned by resolve_emails (or look them up via the contacts tool).');
         }
         contactIds.push(c.contact_id);
         if (c.link_to_account) {
@@ -525,7 +464,7 @@ export class MeetingsService {
         }
       } else if (c.mode === 'new') {
         if (!c.full_name) {
-          throw Object.assign(new Error('contact.full_name is required when contact.mode="new" (the person\'s display name). Optional: contact.email, contact.kind ("account" default | "partner" | "internal"), contact.research (true to enqueue background enrichment).'), { statusCode: 400 });
+          throw badRequest('contact.full_name is required when contact.mode="new" (the person\'s display name). Optional: contact.email, contact.kind ("account" default | "partner" | "internal"), contact.research (true to enqueue background enrichment).');
         }
         const kind = c.kind || 'account';
         const linkAccountId = kind === 'internal' ? null : accountId;
@@ -539,7 +478,7 @@ export class MeetingsService {
           enrichTargets.push({ contactId: created.id, name: created.full_name });
         }
       } else {
-        throw Object.assign(new Error(`Unknown contact.mode: "${c.mode}". Must be "existing" (also pass contact_id) or "new" (also pass full_name).`), { statusCode: 400 });
+        throw badRequest(`Unknown contact.mode: "${c.mode}". Must be "existing" (also pass contact_id) or "new" (also pass full_name).`);
       }
     }
 
@@ -572,17 +511,6 @@ export class MeetingsService {
 
     return { meeting, account_id: accountId, enrichment_jobs: enrichmentJobIds };
   }
-}
-
-function suggestAccountName(domain) {
-  if (!domain) return '';
-  // "acme-corp.com" → "Acme Corp"
-  const base = domain.split('.').slice(0, -1).join('.') || domain;
-  return base
-    .replace(/[-_]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/\b\w/g, c => c.toUpperCase());
 }
 
 function slugifyName(name) {

@@ -5,6 +5,7 @@
 // deleting). Standard per-user RLS pattern.
 
 import { withUser } from '../db/connection.js';
+import { badRequest } from '../lib/http-error.js';
 
 const COLS = `id, user_id, title, content, enabled, created_at, updated_at`;
 
@@ -16,10 +17,7 @@ function normalizeTitle(t) {
 
 function validateContent(c) {
   if (typeof c !== 'string' || !c.trim()) {
-    throw Object.assign(
-      new Error('content is required — a non-empty string describing the preference/rule/fact to remember.'),
-      { statusCode: 400 }
-    );
+    throw badRequest('content is required — a non-empty string describing the preference/rule/fact to remember.');
   }
   return c.trim();
 }

@@ -1,4 +1,5 @@
 import { withUser } from '../db/connection.js';
+import { badRequest } from '../lib/http-error.js';
 
 const CAT_COLS = 'id, name, created_at, updated_at';
 
@@ -32,7 +33,7 @@ export class ProductCategoriesService {
 
   async create(userId, { name }) {
     if (!name || !name.trim()) {
-      throw Object.assign(new Error('name is required (the category label, e.g. "Network", "Endpoint Security"). Categories are user-managed groupings for the per-user `products` catalog.'), { statusCode: 400 });
+      throw badRequest('name is required (the category label, e.g. "Network", "Endpoint Security"). Categories are user-managed groupings for the per-user `products` catalog.');
     }
     return withUser(userId, async (client) => {
       const inserted = await client.query(
@@ -55,7 +56,7 @@ export class ProductCategoriesService {
 
       const newName = name !== undefined ? name.trim() : existing.name;
       if (!newName) {
-        throw Object.assign(new Error('name cannot be empty (whitespace-only). Omit the field to leave existing name unchanged.'), { statusCode: 400 });
+        throw badRequest('name cannot be empty (whitespace-only). Omit the field to leave existing name unchanged.');
       }
       await client.query(
         `UPDATE product_categories SET name = $2 WHERE id = $1`,

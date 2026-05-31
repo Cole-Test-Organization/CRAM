@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { withUser } from '../db/connection.js';
 import { DEFAULT_PROVIDER, FALLBACK_MODEL } from '../agent/defaults.js';
+import { notFound } from '../lib/http-error.js';
 
 const TITLE_MAX = 100;
 const SNIPPET_RADIUS = 60;
@@ -99,9 +100,7 @@ export async function loadSessionRaw(userId, sessionId) {
       [sessionId]
     );
     if (rows.length === 0) {
-      const err = new Error('session not found');
-      err.statusCode = 404;
-      throw err;
+      throw notFound('session not found');
     }
     const row = rows[0];
     return {
@@ -228,9 +227,7 @@ export async function deleteSession(userId, sessionId) {
       [sessionId]
     );
     if (rowCount === 0) {
-      const err = new Error('session not found');
-      err.statusCode = 404;
-      throw err;
+      throw notFound('session not found');
     }
   });
 }

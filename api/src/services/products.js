@@ -1,4 +1,5 @@
 import { withUser } from '../db/connection.js';
+import { badRequest } from '../lib/http-error.js';
 
 const PRODUCT_COLS = 'id, name, category_id, created_at, updated_at';
 
@@ -52,7 +53,7 @@ export class ProductsService {
 
   async create(userId, { name, category_id }) {
     if (!name || !name.trim()) {
-      throw Object.assign(new Error('name is required (the product name as you sell it, e.g. "PA-Series Firewalls"). This is the per-user catalog of what YOU SELL — for products that accounts RUN (tech stack tracking), use the vendor_products tool instead.'), { statusCode: 400 });
+      throw badRequest('name is required (the product name as you sell it, e.g. "PA-Series Firewalls"). This is the per-user catalog of what YOU SELL — for products that accounts RUN (tech stack tracking), use the vendor_products tool instead.');
     }
     return withUser(userId, async (client) => {
       if (category_id != null) await this._assertCategory(client, category_id);
@@ -79,7 +80,7 @@ export class ProductsService {
         category_id: data.category_id !== undefined ? data.category_id : existing.category_id,
       };
       if (!next.name) {
-        throw Object.assign(new Error('name cannot be empty (whitespace-only). Omit the field to leave existing name unchanged, or supply a non-empty string.'), { statusCode: 400 });
+        throw badRequest('name cannot be empty (whitespace-only). Omit the field to leave existing name unchanged, or supply a non-empty string.');
       }
       if (next.category_id != null && next.category_id !== existing.category_id) {
         await this._assertCategory(client, next.category_id);
@@ -111,7 +112,7 @@ export class ProductsService {
   async _assertCategory(client, categoryId) {
     const row = (await client.query('SELECT id FROM product_categories WHERE id = $1', [categoryId])).rows[0];
     if (!row) {
-      throw Object.assign(new Error(`Product category not found: id=${categoryId}. Use the product_categories tool (action="list") to find valid ids, or "create" if you need a new one.`), { statusCode: 400 });
+      throw badRequest(`Product category not found: id=${categoryId}. Use the product_categories tool (action="list") to find valid ids, or "create" if you need a new one.`);
     }
   }
 }

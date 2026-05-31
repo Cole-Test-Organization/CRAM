@@ -16,6 +16,7 @@ import {
   defaultSystemPrompt,
 } from '../agent/defaults.js';
 import { listModels } from '../agent/providers/local.js';
+import { badRequest } from '../lib/http-error.js';
 
 const VALID_PROVIDERS = new Set(['local']);
 
@@ -24,7 +25,7 @@ function normalize(patch) {
   if (patch.provider !== undefined) {
     const v = patch.provider == null ? null : String(patch.provider).trim().toLowerCase();
     if (v && !VALID_PROVIDERS.has(v)) {
-      throw Object.assign(new Error(`Invalid provider: "${v}". Must be "local" — a self-hosted OpenAI-compatible inference server (Ollama, LM Studio, llama.cpp, vLLM) reachable at local_base_url. Pass null to clear.`), { statusCode: 400 });
+      throw badRequest(`Invalid provider: "${v}". Must be "local" — a self-hosted OpenAI-compatible inference server (Ollama, LM Studio, llama.cpp, vLLM) reachable at local_base_url. Pass null to clear.`);
     }
     out.provider = v || null;
   }

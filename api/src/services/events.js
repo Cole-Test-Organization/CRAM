@@ -1,4 +1,6 @@
 import { getPool, withUser } from '../db/connection.js';
+import { jsonb } from './_json.js';
+import { badRequest } from '../lib/http-error.js';
 
 const EVENT_COLS = `
   id, source, source_id, title, summary, start_date, end_date, mode,
@@ -8,17 +10,10 @@ const EVENT_COLS = `
 
 const VALID_MODES = new Set(['in_person', 'virtual', 'hybrid', 'on_demand']);
 
-function jsonb(value) {
-  return value == null ? null : JSON.stringify(value);
-}
-
 function normalizeMode(mode) {
   if (mode == null) return null;
   if (!VALID_MODES.has(mode)) {
-    throw Object.assign(
-      new Error(`Invalid mode: ${mode}. Must be one of: ${[...VALID_MODES].join(', ')}`),
-      { statusCode: 400 }
-    );
+    throw badRequest(`Invalid mode: ${mode}. Must be one of: ${[...VALID_MODES].join(', ')}`);
   }
   return mode;
 }
@@ -151,10 +146,7 @@ export class EventsService {
   // first_seen_at is preserved across updates; scraped_at is bumped every call.
   async upsert(data) {
     if (!data.source || !data.source_id || !data.title) {
-      throw Object.assign(
-        new Error('upsert requires source, source_id, and title'),
-        { statusCode: 400 }
-      );
+      throw badRequest('upsert requires source, source_id, and title');
     }
     const mode = normalizeMode(data.mode);
     const pool = getPool();

@@ -20,6 +20,7 @@
 import crypto from 'crypto';
 import * as localProvider from '../agent/providers/local.js';
 import { logger as rootLogger } from '../lib/logger.js';
+import { sleep, parseLooseJson } from './_llm.js';
 
 const logger = rootLogger.child({ component: 'contact-enrichment' });
 
@@ -268,24 +269,6 @@ export class ContactEnrichmentService {
       this.jobs.delete(sorted[i].jobId);
     }
   }
-}
-
-function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-
-// Strip ```json ... ``` fences if a stubborn model insists on them, then try
-// to parse. Returns the parsed object or null on failure.
-function parseLooseJson(text) {
-  if (typeof text !== 'string') return null;
-  let t = text.trim();
-  // common fence patterns
-  const fence = t.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  if (fence) t = fence[1].trim();
-  // some models prefix with "Here is the JSON:" — find the first { and parse from there
-  const firstBrace = t.indexOf('{');
-  const lastBrace = t.lastIndexOf('}');
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) return null;
-  const slice = t.slice(firstBrace, lastBrace + 1);
-  try { return JSON.parse(slice); } catch { return null; }
 }
 
 // Keep only the fields we expect, drop empties, sanity-check linkedin url.

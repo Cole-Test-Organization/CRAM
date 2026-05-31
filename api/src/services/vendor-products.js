@@ -1,6 +1,7 @@
 import { getPool } from '../db/connection.js';
 import { slugify } from './_slug.js';
 import { FUZZY_THRESHOLD, normalizeProductName } from './_fuzzy-match.js';
+import { badRequest, notFound } from '../lib/http-error.js';
 
 const COLS = `vp.id, vp.vendor_id, vp.name, vp.slug, vp.category, vp.notes,
               vp.needs_review, vp.deleted_at, vp.created_at, vp.updated_at,
@@ -97,13 +98,13 @@ export class VendorProductsService {
   // vendor_id (existing) or vendor_name (auto-creates via vendorsService).
   async findOrCreate({ vendor_id, vendor_name, name, slug, category, notes }) {
     if (!name || !name.trim()) {
-      throw Object.assign(new Error('name is required'), { statusCode: 400 });
+      throw badRequest('name is required');
     }
     if (!category || !category.trim()) {
-      throw Object.assign(new Error('category is required (firewall, edr, siem, idp, mfa, pam, email_security, mdr, msp, sase, sdwan, vpn, dlp, casb, vuln_mgmt, ticketing, email_collab, cloud_provider). If you meant to add a product you SELL to an opportunity, use the `products` tool instead — vendor_products is the global catalog of what accounts RUN.'), { statusCode: 400 });
+      throw badRequest('category is required (firewall, edr, siem, idp, mfa, pam, email_security, mdr, msp, sase, sdwan, vpn, dlp, casb, vuln_mgmt, ticketing, email_collab, cloud_provider). If you meant to add a product you SELL to an opportunity, use the `products` tool instead — vendor_products is the global catalog of what accounts RUN.');
     }
     if (!vendor_id && !vendor_name) {
-      throw Object.assign(new Error('vendor_id or vendor_name is required (the maker of this product, e.g. "Palo Alto Networks"). If you meant to add a product you SELL to an opportunity, use the `products` tool instead.'), { statusCode: 400 });
+      throw badRequest('vendor_id or vendor_name is required (the maker of this product, e.g. "Palo Alto Networks"). If you meant to add a product you SELL to an opportunity, use the `products` tool instead.');
     }
 
     let vendor;
@@ -111,7 +112,7 @@ export class VendorProductsService {
     if (vendor_id) {
       vendor = await this.vendorsService.getById(vendor_id);
       if (!vendor) {
-        throw Object.assign(new Error(`Vendor not found: ${vendor_id}`), { statusCode: 404 });
+        throw notFound(`Vendor not found: ${vendor_id}`);
       }
     } else {
       const result = await this.vendorsService.findOrCreate({ name: vendor_name });
@@ -122,7 +123,7 @@ export class VendorProductsService {
     const trimmedName = name.trim();
     const finalSlug = (slug && slug.trim()) || slugify(trimmedName);
     if (!finalSlug) {
-      throw Object.assign(new Error(`Could not derive a slug from name "${name}". Slug is normally auto-derived (lowercase, hyphens) — if your name is entirely punctuation/whitespace it cannot produce a slug. Supply slug explicitly to override.`), { statusCode: 400 });
+      throw badRequest(`Could not derive a slug from name "${name}". Slug is normally auto-derived (lowercase, hyphens) — if your name is entirely punctuation/whitespace it cannot produce a slug. Supply slug explicitly to override.`);
     }
 
     const client = await getPool().connect();
@@ -199,7 +200,7 @@ export class VendorProductsService {
       )).rows[0];
       if (!existing) return null;
       if (data.vendor_id !== undefined && Number(data.vendor_id) !== Number(existing.vendor_id)) {
-        throw Object.assign(new Error('Cannot reassign vendor_id on an existing vendor_product — account_details *_ids arrays implicitly assume "this id belongs to that vendor". To switch vendors, soft-delete this row and call find_or_create with the new vendor (or vendor_name).'), { statusCode: 400 });
+        throw badRequest('Cannot reassign vendor_id on an existing vendor_product — account_details *_ids arrays implicitly assume "this id belongs to that vendor". To switch vendors, soft-delete this row and call find_or_create with the new vendor (or vendor_name).');
       }
       const next = {
         name: data.name !== undefined ? (data.name?.trim() || existing.name) : existing.name,
@@ -208,9 +209,9 @@ export class VendorProductsService {
         notes: data.notes !== undefined ? data.notes : existing.notes,
         needs_review: data.needs_review !== undefined ? !!data.needs_review : existing.needs_review,
       };
-      if (!next.name) throw Object.assign(new Error('name cannot be empty (whitespace-only). Omit the field to leave existing name unchanged.'), { statusCode: 400 });
-      if (!next.slug) throw Object.assign(new Error('slug cannot be empty (whitespace-only). Omit the field to leave existing slug unchanged.'), { statusCode: 400 });
-      if (!next.category) throw Object.assign(new Error('category cannot be empty (whitespace-only). Valid categories: firewall, edr, siem, idp, mfa, pam, email_security, mdr, msp, sase, sdwan, vpn, dlp, casb, vuln_mgmt, ticketing, email_collab, cloud_provider. Omit to leave unchanged.'), { statusCode: 400 });
+      if (!next.name) throw badRequest('name cannot be empty (whitespace-only). Omit the field to leave existing name unchanged.');
+      if (!next.slug) throw badRequest('slug cannot be empty (whitespace-only). Omit the field to leave existing slug unchanged.');
+      if (!next.category) throw badRequest('category cannot be empty (whitespace-only). Valid categories: firewall, edr, siem, idp, mfa, pam, email_security, mdr, msp, sase, sdwan, vpn, dlp, casb, vuln_mgmt, ticketing, email_collab, cloud_provider. Omit to leave unchanged.');
       await client.query(
         `UPDATE vendor_products SET name = $2, slug = $3, category = $4, notes = $5, needs_review = $6
          WHERE id = $1`,

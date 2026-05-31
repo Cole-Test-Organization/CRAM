@@ -1,11 +1,8 @@
 import { withUser } from '../db/connection.js';
 import { slugify } from './_slug.js';
-
-// node-postgres serializes JS arrays as native PG array literals, which breaks
-// JSONB inserts. Stringify explicitly so Postgres casts text → jsonb.
-function jsonb(value) {
-  return value == null ? null : JSON.stringify(value);
-}
+import { jsonb } from './_json.js';
+import { normalizeDomain } from './_domain.js';
+import { badRequest, notFound, conflict } from '../lib/http-error.js';
 
 const ACCOUNT_COLS = `
   id, slug, name, status, last_contact,
@@ -15,13 +12,14 @@ const ACCOUNT_COLS = `
   created_at, updated_at
 `;
 
+// Normalize a user-supplied domains array: clean + dedupe each entry.
+// null → null (caller treats as "field omitted"); non-array → [] (clear it).
 function normalizeDomains(input) {
   if (input == null) return null;
   if (!Array.isArray(input)) return [];
   const seen = new Set();
   for (const raw of input) {
-    if (typeof raw !== 'string') continue;
-    const d = raw.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
+    const d = normalizeDomain(raw);
     if (d) seen.add(d);
   }
   return [...seen];
@@ -103,10 +101,7 @@ export class AccountsService {
 
   async getBySlug(userId, slug) {
     if (typeof slug !== 'string' || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) {
-      throw Object.assign(
-        new Error(`"${slug}" is not a slug shape. Slugs are lowercase-hyphenated alphanumeric (e.g. "acme-manufacturing", "fixturecorp-test"). If you only have a company name, call the search tool with type="accounts" to fuzzy-match it.`),
-        { statusCode: 400 }
-      );
+      throw badRequest(`"${slug}" is not a slug shape. Slugs are lowercase-hyphenated alphanumeric (e.g. "acme-manufacturing", "fixturecorp-test"). If you only have a company name, call the search tool with type="accounts" to fuzzy-match it.`);
     }
     return withUser(userId, (client) => this._fetchWithChildren(client, 'slug', slug));
   }
@@ -115,10 +110,7 @@ export class AccountsService {
     return withUser(userId, async (client) => {
       const [normalized] = normalizeDomains([domain]);
       if (!normalized || !normalized.includes('.')) {
-        throw Object.assign(
-          new Error(`"${domain}" is not a domain (must contain "."). Use a real domain like "acme.com", or look the account up by slug or with the search tool (type="accounts") if you only have the company name.`),
-          { statusCode: 400 }
-        );
+        throw badRequest(`"${domain}" is not a domain (must contain "."). Use a real domain like "acme.com", or look the account up by slug or with the search tool (type="accounts") if you only have the company name.`);
       }
       const row = (await client.query(
         `SELECT id FROM accounts WHERE domains @> jsonb_build_array($1::text) ORDER BY id LIMIT 1`,
@@ -241,10 +233,7 @@ export class AccountsService {
       // differently) so we return the match instead of tripping the unique key.
       const finalSlug = slug || slugify(name);
       if (!finalSlug) {
-        throw Object.assign(
-          new Error(`Could not derive a slug for the new account (name="${data.name}"). Supply slug explicitly.`),
-          { statusCode: 400 }
-        );
+        throw badRequest(`Could not derive a slug for the new account (name="${data.name}"). Supply slug explicitly.`);
       }
       const collision = (await client.query('SELECT id FROM accounts WHERE slug = $1 LIMIT 1', [finalSlug])).rows[0];
       if (collision) return { status: 'matched', matched_by: 'slug', account: await this._fetchWithChildren(client, 'id', collision.id) };
@@ -320,8 +309,8 @@ export class AccountsService {
             : (Array.isArray(data.domains) && data.domains.length > 0) ? 'domain'
             : 'name';
         throw Object.assign(
-          new Error(`Account already exists (matched on ${matchedBy}): id=${dup.id}, slug="${enriched?.slug}", name="${enriched?.name}". Update via PATCH /api/accounts/${dup.id} (or the accounts MCP tool with action="update") instead of creating a duplicate.`),
-          { statusCode: 409, existing: enriched }
+          conflict(`Account already exists (matched on ${matchedBy}): id=${dup.id}, slug="${enriched?.slug}", name="${enriched?.name}". Update via PATCH /api/accounts/${dup.id} (or the accounts MCP tool with action="update") instead of creating a duplicate.`),
+          { existing: enriched }
         );
       }
       // Default new rows to 'account'. The status taxonomy is a binary
@@ -490,14 +479,14 @@ export class AccountsService {
   async addPartner(userId, customerAccountId, partnerAccountId) {
     return withUser(userId, async (client) => {
       if (Number(customerAccountId) === Number(partnerAccountId)) {
-        throw Object.assign(new Error('An account cannot be its own partner'), { statusCode: 400 });
+        throw badRequest('An account cannot be its own partner');
       }
       const both = (await client.query(
         'SELECT id FROM accounts WHERE id = ANY($1::bigint[])',
         [[customerAccountId, partnerAccountId]]
       )).rows;
       if (both.length !== 2) {
-        throw Object.assign(new Error('One or both accounts not found'), { statusCode: 404 });
+        throw notFound('One or both accounts not found');
       }
       await client.query(
         'INSERT INTO account_partners (customer_account_id, partner_account_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',

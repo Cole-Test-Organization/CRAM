@@ -1,4 +1,5 @@
 import { withUser } from '../db/connection.js';
+import { badRequest, notFound } from '../lib/http-error.js';
 
 // Columns kept in lock-step with the migration. Scalar columns are upsertable
 // individually via PATCH; array columns are fully replaced on each PATCH (no
@@ -45,7 +46,7 @@ export class AccountDetailsService {
       // Confirm the account exists and the caller can see it (RLS applies).
       const account = (await client.query('SELECT id FROM accounts WHERE id = $1', [accountId])).rows[0];
       if (!account) {
-        throw Object.assign(new Error(`Account not found: ${accountId}`), { statusCode: 404 });
+        throw notFound(`Account not found: ${accountId}`);
       }
 
       const existing = (await client.query(
@@ -61,7 +62,7 @@ export class AccountDetailsService {
       for (const col of ARRAY_COLS) {
         if (data[col] !== undefined) {
           if (!Array.isArray(data[col])) {
-            throw Object.assign(new Error(`${col} must be an array of vendor_product ids (numeric). Pass [] to clear, or omit to leave alone. Find vendor_product ids via the vendor_products tool (action="list" filtered by category, or action="find_or_create" if you need to add one).`), { statusCode: 400 });
+            throw badRequest(`${col} must be an array of vendor_product ids (numeric). Pass [] to clear, or omit to leave alone. Find vendor_product ids via the vendor_products tool (action="list" filtered by category, or action="find_or_create" if you need to add one).`);
           }
           touched[col] = data[col];
         }
