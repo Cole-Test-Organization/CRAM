@@ -2,7 +2,7 @@ export default async function meetingRoutes(fastify, { meetingsService, accounts
   // List all meetings across all accounts (including internal meetings).
   fastify.get('/meetings', {
     schema: {
-      description: 'List all meetings across all accounts, sorted by date descending. Includes internal meetings (internal=true). Pass internal=true/false to filter.',
+      description: 'List all meetings across all accounts, sorted by date descending. Includes internal meetings (internal=true). Pass internal=true/false to filter. Pass needs_review=true to list only parked notes awaiting triage (account-less and/or imported notes flagged for review).',
       tags: ['meetings'],
       querystring: {
         type: 'object',
@@ -10,12 +10,13 @@ export default async function meetingRoutes(fastify, { meetingsService, accounts
           limit: { type: 'integer', default: 50 },
           offset: { type: 'integer', default: 0 },
           internal: { type: 'boolean', description: 'Filter by internal flag. Omit to include both.' },
+          needs_review: { type: 'boolean', description: 'Filter by the review flag. true = only notes parked for triage; false = only settled notes; omit for both.' },
         },
       },
     },
   }, async (request) => {
-    const { limit, offset, internal } = request.query;
-    return meetingsService.getAll(request.userId, { limit, offset, internal });
+    const { limit, offset, internal, needs_review } = request.query;
+    return meetingsService.getAll(request.userId, { limit, offset, internal, needs_review });
   });
 
   // List meetings for an account
@@ -47,7 +48,7 @@ export default async function meetingRoutes(fastify, { meetingsService, accounts
   // Create meeting (unified — external or internal).
   fastify.post('/meetings', {
     schema: {
-      description: 'Create a meeting note. Pass account_id for an account or partner meeting; pass internal=true (and omit account_id) for an internal-only note. contact_ids is required for non-internal meetings.',
+      description: 'Create a meeting note. Pass account_id for an account or partner meeting; pass internal=true (and omit account_id) for an internal-only note. contact_ids is required for non-internal meetings. Attendees come in two forms: contact_ids links existing contacts; attendees (free text) and/or unlinked_attendees record people who are NOT yet CRM contacts as unlinked attendee rows (visible on the meeting, linkable later via the link-attendee endpoint) — names already covered by a linked contact are skipped.',
       tags: ['meetings'],
       body: {
         type: 'object',
@@ -55,10 +56,12 @@ export default async function meetingRoutes(fastify, { meetingsService, accounts
         properties: {
           account_id: { type: 'integer', description: 'Account this meeting is tied to. Omit when internal=true.' },
           internal: { type: 'boolean', default: false, description: 'true for internal-only notes (no account). Default false.' },
+          needs_review: { type: 'boolean', default: false, description: 'Park this note for triage. Set true for imported/uncertain notes you could not confidently assign; surfaced by GET /api/meetings?needs_review=true and cleared by the assign-account endpoint.' },
           date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'Meeting date (YYYY-MM-DD)' },
           title: { type: 'string', description: 'Brief title slug (e.g., "prisma-access-demo")' },
-          attendees: { type: 'string', description: 'Optional plain-text attendees for display. contact_ids is the authoritative link.' },
-          contact_ids: { type: 'array', items: { type: 'integer' }, description: 'Array of contact IDs who attended. Required for non-internal meetings.' },
+          attendees: { type: 'string', description: 'Free-text attendees (comma/semicolon separated). Each name with no matching linked contact is stored as an unlinked attendee row — not just display text. contact_ids remains the authoritative link for known contacts.' },
+          unlinked_attendees: { type: 'array', items: { type: 'object', properties: { display_name: { type: 'string' }, email: { type: 'string' } } }, description: 'Structured attendees with no CRM contact yet: [{display_name, email?}]. Recorded for visibility and one-click linking later. Alternative to the free-text attendees string.' },
+          contact_ids: { type: 'array', items: { type: 'integer' }, description: 'Array of contact IDs who attended (linked attendees). Required for non-internal meetings.' },
           body: { type: 'string', description: 'Markdown content of the meeting notes' },
         },
       },
@@ -98,7 +101,7 @@ export default async function meetingRoutes(fastify, { meetingsService, accounts
   // Update meeting
   fastify.put('/meetings/:id', {
     schema: {
-      description: 'Update a meeting note. If contact_ids is provided, it fully replaces the attendee links. The internal flag and account_id cannot be changed after creation.',
+      description: 'Update a meeting note. Linked and unlinked attendees are managed independently: contact_ids (when provided) fully replaces the LINKED set; attendees text and/or unlinked_attendees (when provided) fully replaces the UNLINKED set. Passing one does not disturb the other. The internal flag and account_id cannot be changed after creation — use the assign-account endpoint to attach a parked note to an account.',
       tags: ['meetings'],
       params: { type: 'object', properties: { id: { type: 'integer' } } },
       body: {
@@ -106,8 +109,10 @@ export default async function meetingRoutes(fastify, { meetingsService, accounts
         properties: {
           date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
           title: { type: 'string' },
-          attendees: { type: 'string' },
-          contact_ids: { type: 'array', items: { type: 'integer' }, description: 'Replace attendee links with these contact IDs' },
+          needs_review: { type: 'boolean', description: 'Set/clear the triage flag.' },
+          attendees: { type: 'string', description: 'Free-text attendees (comma/semicolon separated). When present, replaces the unlinked attendee rows (names already covered by a linked contact are skipped).' },
+          unlinked_attendees: { type: 'array', items: { type: 'object', properties: { display_name: { type: 'string' }, email: { type: 'string' } } }, description: 'Structured unlinked attendees [{display_name, email?}]. When present, replaces the unlinked attendee set.' },
+          contact_ids: { type: 'array', items: { type: 'integer' }, description: 'Replace the LINKED attendee set with these contact IDs.' },
           body: { type: 'string' },
         },
       },
@@ -122,6 +127,70 @@ export default async function meetingRoutes(fastify, { meetingsService, accounts
         reply.code(400);
         return { error: err.message };
       }
+      throw err;
+    }
+  });
+
+  // Triage: attach a parked (account-less) note to an account. The one path
+  // allowed to set account_id after creation — flips internal→false and clears
+  // needs_review. 409 if the meeting is already assigned to an account.
+  fastify.post('/meetings/:id/assign-account', {
+    schema: {
+      description: 'Assign a parked, account-less note to an account (triage). Sets account_id, flips internal=false, and clears needs_review. Only applies to currently-unassigned meetings — returns 409 if the meeting is already linked to an account. Pair with GET /api/meetings?needs_review=true to find parked notes, and POST /api/accounts/find-or-create to pick the target account.',
+      tags: ['meetings'],
+      params: { type: 'object', properties: { id: { type: 'integer' } } },
+      body: {
+        type: 'object',
+        required: ['account_id'],
+        properties: {
+          account_id: { type: 'integer', description: 'The account to attach this note to.' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { account_id } = request.body || {};
+    if (!account_id) { reply.code(400); return { error: 'account_id is required' }; }
+    try {
+      const meeting = await meetingsService.assignAccount(request.userId, request.params.id, account_id);
+      if (!meeting) { reply.code(404); return { error: 'Meeting not found' }; }
+      return meeting;
+    } catch (err) {
+      if (err.statusCode) { reply.code(err.statusCode); return { error: err.message }; }
+      throw err;
+    }
+  });
+
+  // Triage: link an unlinked attendee row to an existing contact. If that
+  // contact is already an attendee on the meeting, the unlinked row is dropped
+  // (dedupe) rather than creating a duplicate link.
+  fastify.post('/meetings/:id/attendees/:attendeeId/link', {
+    schema: {
+      description: 'Link an unlinked attendee (a name with no CRM contact) to an existing contact (triage). Converts the unlinked attendee row into a linked one; if the contact is already an attendee on this meeting, the unlinked row is dropped instead (dedupe). attendeeId is the attendee_id from the meeting\'s unlinked_attendees[]. Resolve the contact first via the contacts tool (or contacts find-or-create).',
+      tags: ['meetings'],
+      params: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer' },
+          attendeeId: { type: 'integer' },
+        },
+      },
+      body: {
+        type: 'object',
+        required: ['contact_id'],
+        properties: {
+          contact_id: { type: 'integer', description: 'The existing contact to link this attendee to.' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { contact_id } = request.body || {};
+    if (!contact_id) { reply.code(400); return { error: 'contact_id is required' }; }
+    try {
+      const meeting = await meetingsService.linkAttendee(request.userId, request.params.id, request.params.attendeeId, contact_id);
+      if (!meeting) { reply.code(404); return { error: 'Attendee not found on this meeting' }; }
+      return meeting;
+    } catch (err) {
+      if (err.statusCode) { reply.code(err.statusCode); return { error: err.message }; }
       throw err;
     }
   });

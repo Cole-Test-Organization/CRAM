@@ -155,7 +155,7 @@ export class ImportExportService {
 
   async _exportMeetings(client, accountId) {
     const meetings = (await client.query(
-      `SELECT id, date, title, filename, attendees, body, internal
+      `SELECT id, date, title, filename, body, internal
        FROM meetings
        WHERE account_id = $1
        ORDER BY date DESC`,
@@ -167,8 +167,8 @@ export class ImportExportService {
       // linked to the account — teammates, partner reps — are deliberately left
       // out so importing the bundle into another tenant doesn't spawn a pile of
       // unrelated "filler" contacts. The importer mirrors this and also drops
-      // any unlinked ref. The human-readable `attendees` text column still
-      // records who was in the room, so nothing is lost from the notes.
+      // any unlinked ref. Unlinked attendees (names with no contact) are a local
+      // triage concept and aren't carried in the portable bundle.
       const attendees = (await client.query(
         `SELECT c.full_name, c.company, c.title, c.email, c.phone, c.linkedin,
                 c.notes, c.kind, c.location_raw, c.city, c.state, c.country
@@ -311,7 +311,7 @@ export class ImportExportService {
 
   async _upsertAccount(client, j, tally, updated) {
     const existing = this.accountsService
-      ? await this.accountsService._findExisting(client, { slug: j.slug })
+      ? await this.accountsService._findExisting(client, { slug: j.slug, domains: j.domains, name: j.name })
       : (await client.query('SELECT id FROM accounts WHERE slug = $1', [j.slug])).rows[0];
 
     if (!existing) {
@@ -477,7 +477,7 @@ export class ImportExportService {
 
   async _findOrCreatePartnerAccount(client, p, tally) {
     const existing = this.accountsService
-      ? await this.accountsService._findExisting(client, { slug: p.slug })
+      ? await this.accountsService._findExisting(client, { slug: p.slug, name: p.name })
       : (await client.query('SELECT id FROM accounts WHERE slug = $1', [p.slug])).rows[0];
     if (existing) return { id: existing.id, created: false };
 
@@ -605,17 +605,17 @@ export class ImportExportService {
       let meetingId;
       if (!existing) {
         const ins = await client.query(
-          `INSERT INTO meetings (user_id, account_id, date, title, filename, attendees, body, internal)
-           VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, $4, $5, $6, false)
+          `INSERT INTO meetings (user_id, account_id, date, title, filename, body, internal)
+           VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, $4, $5, false)
            RETURNING id`,
-          [accountId, m.date, m.title || null, filename, m.attendees || null, m.body]
+          [accountId, m.date, m.title || null, filename, m.body]
         );
         meetingId = ins.rows[0].id;
         tally.meetings++;
       } else {
         await client.query(
-          `UPDATE meetings SET date = $2, title = $3, attendees = $4, body = $5 WHERE id = $1`,
-          [existing.id, m.date, m.title || null, m.attendees || null, m.body]
+          `UPDATE meetings SET date = $2, title = $3, body = $4 WHERE id = $1`,
+          [existing.id, m.date, m.title || null, m.body]
         );
         meetingId = existing.id;
         updated.meetings++;
@@ -625,8 +625,7 @@ export class ImportExportService {
       // account (the profile contacts upserted above — `lookup` is scoped to
       // them). Attendees who were never linked to the account are intentionally
       // dropped rather than recreated as standalone "filler" contacts in the
-      // destination tenant; those are the ones that don't matter. The meeting's
-      // free-text `attendees` column still names everyone who was present.
+      // destination tenant; those are the ones that don't matter.
       const attendeeIds = [];
       for (const ref of m.attendee_refs || []) {
         let id = null;

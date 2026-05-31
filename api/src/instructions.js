@@ -17,6 +17,7 @@ const REFS = {
   'accounts.get_by_domain': { http: 'GET /api/accounts/by-domain/:domain',      mcp: { tool: 'accounts', action: 'get', note: 'with domain' } },
   'accounts.get':          { http: 'GET /api/accounts/:id',                     mcp: { tool: 'accounts', action: 'get' } },
   'accounts.find_existing': { http: 'POST /api/accounts/find-existing',          mcp: { tool: 'accounts', action: 'find_existing' } },
+  'accounts.find_or_create': { http: 'POST /api/accounts/find-or-create',         mcp: { tool: 'accounts', action: 'find_or_create' } },
   'accounts.create':       { http: 'POST /api/accounts',                        mcp: { tool: 'accounts', action: 'create' } },
   'accounts.update':       { http: 'PATCH /api/accounts/:id',                   mcp: { tool: 'accounts', action: 'update' } },
   'accounts.put':          { http: 'PUT /api/accounts/:id',                     mcp: null },
@@ -51,6 +52,8 @@ const REFS = {
   'meetings.get':         { http: 'GET /api/meetings/:id',                       mcp: { tool: 'meetings', action: 'get' } },
   'meetings.create':      { http: 'POST /api/meetings',                          mcp: { tool: 'meetings', action: 'create' } },
   'meetings.update':      { http: 'PUT /api/meetings/:id',                       mcp: { tool: 'meetings', action: 'update' } },
+  'meetings.assign_account': { http: 'POST /api/meetings/:id/assign-account',                mcp: { tool: 'meetings', action: 'assign_account' } },
+  'meetings.link_attendee':  { http: 'POST /api/meetings/:id/attendees/:attendeeId/link',   mcp: { tool: 'meetings', action: 'link_attendee' } },
   'meetings.delete':      { http: 'DELETE /api/meetings/:id',                    mcp: { tool: 'meetings', action: 'delete' } },
   'meetings.resolve_emails':       { http: 'POST /api/meetings/resolve-emails',            mcp: { tool: 'meetings', action: 'resolve_emails' } },
   'meetings.create_from_emails':   { http: 'POST /api/meetings/from-emails',               mcp: { tool: 'meetings', action: 'create_from_emails' } },
@@ -74,6 +77,12 @@ const REFS = {
   'import_export.export':         { http: 'POST /api/import-export/export',          mcp: { tool: 'import_export', action: 'export' } },
   'import_export.export_account': { http: 'GET /api/import-export/accounts/:slug',   mcp: { tool: 'import_export', action: 'export', note: 'with single slug' } },
   'import_export.import':         { http: 'POST /api/import-export/import',          mcp: { tool: 'import_export', action: 'import' } },
+
+  // notes import — bulk-ingest a directory/zip of notes via per-file local-LLM extraction
+  'notes_import.enqueue':    { http: 'POST /api/notes-import',                  mcp: { tool: 'notes_import', action: 'enqueue' } },
+  'notes_import.upload_zip': { http: 'POST /api/notes-import/upload-zip',       mcp: null },
+  'notes_import.get_job':    { http: 'GET /api/notes-import/jobs/:jobId',       mcp: { tool: 'notes_import', action: 'get_job' } },
+  'notes_import.list_jobs':  { http: 'GET /api/notes-import/jobs',              mcp: { tool: 'notes_import', action: 'list_jobs' } },
 
   // outreach (async enrichment)
   'outreach.enqueue':    { http: 'POST /api/outreach/enrich',              mcp: { tool: 'outreach', action: 'enqueue' } },
@@ -238,7 +247,9 @@ Per-tool argument schemas, action enums, and field-level semantics live in ${isM
 ### Entity Model
 - **Accounts** split by status: \`account\` (companies you sell *to*, default) vs \`partner\` (channel partners you sell *with*). Opportunities can only target non-partner accounts. Partners link to non-partner accounts via the partnership endpoints; the partner's contacts then appear as attendee options on the linked account's meetings.
 - **Contacts** carry a \`kind\`: \`account\` (works at a non-partner account — link them), \`partner\` (channel/reseller rep — link to a partner account), or \`internal\` (teammate at your own company — no account link). Default is \`account\`.
-- **Meetings** are either account-bound or \`internal=true\` with NULL \`account_id\`. Both live in the same \`meetings\` table. Account meetings require \`contact_ids\` (≥1). \`internal\` and \`account_id\` are immutable after creation.
+- **Meetings** are either account-bound or \`internal=true\` with NULL \`account_id\`. Both live in the same \`meetings\` table. Account meetings require \`contact_ids\` (≥1). \`internal\` and \`account_id\` are immutable through \`update\` — the one exception is the triage path below.
+- **Meeting attendees** come in two forms. **Linked** attendees are \`contact_ids\` → existing CRM contacts. **Unlinked** attendees are a name (and optional email) with no contact yet — passed via \`attendees\` (free text, split on \`,\`/\`;\`) or \`unlinked_attendees: [{display_name, email?}]\`, recorded for visibility so you can capture who was in the room without spawning a contact per head. On \`update\`, \`contact_ids\` replaces the linked set and \`attendees\`/\`unlinked_attendees\` replaces the unlinked set, independently. The read shape exposes \`contacts\` (linked), \`unlinked_attendees[]\` (each with an \`attendee_id\`), and \`attendees\` (a display string of everyone).
+- **Parked notes & triage.** A note you can't confidently place gets parked: create it \`internal:true, needs_review:true\` (no account), and it shows up in ${ref('meetings.list')} with \`needs_review=true\`. Resolve later: ${ref('meetings.assign_account')} attaches it to an account (sets \`account_id\`, flips \`internal=false\`, clears \`needs_review\`; 409 if already assigned), and ${ref('meetings.link_attendee')} converts an \`unlinked_attendee\` into a link to an existing contact (dedupes if that contact is already linked). This is the "separate creation from assignment" path — capture the note now, place it deterministically later, rather than dropping data or guessing.
 - **Notes** are short markdown blurbs attached to **exactly one** of account / contact / opportunity (DB-enforced). Target is immutable — wrong target means delete and recreate.
 - **Opportunities** are sales deals tied to one non-partner account. Stages run a fixed pipeline: \`opp_identification\` → \`tech_discovery\` → \`non_pov_tech_validation\` → \`pov_planning\` → \`pov_tech_validation\` → \`tech_decision_pending\` → terminal \`tech_loss_closed\` / \`tech_win_closed\` / \`no_tech_validation_closed\`.
 - **Vendor catalog** (\`vendors\` + \`vendor_products\`) is **global** — no per-user RLS, shared across tenants so dedup and stack analytics work org-wide. The per-user **product catalog** (\`products\` + \`product_categories\`) is what *you sell*. The two namespaces do not link.
@@ -250,7 +261,7 @@ Account slugs are lowercase-hyphenated company names (\`bank-of-america\`, not \
 ### Search Before Create
 Avoid duplicate people and companies before creating.
 - **Contacts — prefer ${ref('contacts.find_or_create')}** over plain create. It's idempotent: matches by exact email (case-insensitive) → exact \`full_name\`+\`kind\` → fuzzy \`full_name\` within the same kind (pg_trgm), returns the match (\`matched_by\`, plus \`match_score\` when fuzzy), and (re)links it to \`account_id\` when given — instead of throwing. This is how you keep from piling up near-duplicate contacts, especially \`kind=internal\` teammates: send what you have and let the server decide whether it's truly new. ${ref('contacts.find_existing')} is the read-only probe (returns null, no write); ${ref('contacts.create_standalone')} still refuses with 409 + an \`existing\` payload on a match.
-- **Accounts:** search (or ${ref('accounts.find_existing')}) first — match order slug → any domain → case-insensitive name. \`create\` refuses with 409 + an \`existing\` payload.
+- **Accounts:** search (or ${ref('accounts.find_existing')}) first — match order slug → any domain → case-insensitive name. \`create\` refuses with 409 + an \`existing\` payload. **When ingesting companies from notes/email, prefer ${ref('accounts.find_or_create')}** — it's the idempotent classifier: exact tiers + a near-exact fuzzy name (≥ 0.85) return \`status:"matched"\`; a mid-confidence fuzzy name (0.4–0.85) returns \`status:"ambiguous"\` with ranked \`candidates\` and writes nothing (surface them for one-click triage rather than guessing); no match returns \`status:"none"\`. Pass \`create_if_missing:true\` only when you're willing to spawn a fresh account on "none"; pass \`fuzzy:false\` to match on exact slug/domain/name alone.
 
 ### From-Emails Meeting Flow
 When the user pastes calendar-invite emails, use the two-step flow:
@@ -259,6 +270,17 @@ When the user pastes calendar-invite emails, use the two-step flow:
 3. Poll enrichment via ${ref('meetings.get_enrichment_job')} until \`completed\`. Successful jobs PATCH typed contact fields (\`title\`, \`linkedin\`, \`location_raw\`, normalized city/state/country, \`notes\`) in place.
 
 Auto-proceed only when there's exactly one external account candidate and most attendees already exist as contacts. Otherwise surface choices to the user — especially the per-contact research toggle.
+
+### Notes Import (bulk directory)
+For ingesting a whole directory of existing notes (Obsidian, Apple/Google Notes, a folder of call summaries), use the bulk importer — not one-by-one meeting creates. Send the files as \`[{path, content}]\` to ${ref('notes_import.enqueue')} (read the directory client-side); a \`.zip\` can be posted to ${ref('notes_import.upload_zip')} (HTTP-only — binary doesn't travel over MCP). It returns a \`jobId\`; poll ${ref('notes_import.get_job')} until \`completed\`.
+
+The job processes one file at a time (the local model has a small context window — it never sees the whole directory) and resolves each note to an account deterministically:
+- **Confident account match** → linked cleanly.
+- **Unknown company** → a new account is **auto-created with \`needs_review=true\`** and the note linked to it. Review the queue via ${ref('accounts.list_full')} with \`needs_review=true\`; clear the flag with ${ref('accounts.update')} once verified.
+- **Ambiguous** (a similar account already exists) → the note is **parked** (\`internal=true, needs_review=true\`, no account) rather than risk a duplicate account. Find parked notes via ${ref('meetings.list')} with \`needs_review=true\` and place them with ${ref('meetings.assign_account')}.
+- **Internal / no company** → parked the same way.
+
+Attendees named in a note become **unlinked attendees** (recorded, not turned into contacts) — link them later with ${ref('meetings.link_attendee')}. Re-importing the same files is idempotent (skipped on a filename match), so running it twice is safe.
 
 ### Vendor Catalog Rules
 - **Use \`find_or_create\`, never \`create\`.** ${ref('vendors.find_or_create')} and ${ref('vendor_products.find_or_create')} are idempotent and fuzzy-match (pg_trgm, threshold ~0.4) against existing rows. Auto-created rows get \`needs_review=true\` for later human cleanup. Don't pre-check existence — send what you have and let the server decide.
@@ -332,7 +354,7 @@ ${saveHint}`;
 
 | Field | Strategy |
 |---|---|
-| Scalars (\`status\`, \`last_contact\`, \`relationship_summary\`, \`active_deals\`, \`favorite\`) | Replace |
+| Scalars (\`status\`, \`last_contact\`, \`relationship_summary\`, \`active_deals\`, \`favorite\`, \`needs_review\`) | Replace |
 | \`open_threads\` | Full replace (send the complete list) |
 | \`domains\` | Full replace (send the complete list) |
 

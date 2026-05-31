@@ -1,4 +1,5 @@
 import { withUser } from '../db/connection.js';
+import { slugify } from './_slug.js';
 
 // node-postgres serializes JS arrays as native PG array literals, which breaks
 // JSONB inserts. Stringify explicitly so Postgres casts text → jsonb.
@@ -10,7 +11,7 @@ const ACCOUNT_COLS = `
   id, slug, name, status, last_contact,
   relationship_summary,
   open_threads, active_deals, domains,
-  favorite,
+  favorite, needs_review,
   created_at, updated_at
 `;
 
@@ -26,6 +27,16 @@ function normalizeDomains(input) {
   return [...seen];
 }
 
+// findOrCreate fuzzy-name thresholds. Auto-link only on an exact signal
+// (slug / domain / exact name) or a near-exact fuzzy name (>= AUTOLINK); names
+// scoring in [SUGGEST, AUTOLINK) come back as triage candidates rather than
+// being silently merged — a wrong account merge is expensive to undo. Below
+// SUGGEST nothing is proposed. Tunable via env; keep SUGGEST >= pg_trgm's
+// default similarity_threshold (0.3) so the index-backed `%` prefilter never
+// hides a candidate that would clear it.
+const ACCOUNT_AUTOLINK_THRESHOLD = Number(process.env.ACCOUNT_AUTOLINK_THRESHOLD) || 0.85;
+const ACCOUNT_SUGGEST_THRESHOLD = Number(process.env.ACCOUNT_SUGGEST_THRESHOLD) || 0.4;
+
 export class AccountsService {
   async getAllSlugs(userId) {
     return withUser(userId, async (client) => {
@@ -36,7 +47,7 @@ export class AccountsService {
     });
   }
 
-  async getAll(userId, { status, exclude_status, sort = 'name', order = 'asc', limit, offset = 0 } = {}) {
+  async getAll(userId, { status, exclude_status, needs_review, sort = 'name', order = 'asc', limit, offset = 0 } = {}) {
     return withUser(userId, async (client) => {
       const validSorts = ['name', 'slug', 'status', 'last_contact', 'created_at', 'updated_at'];
       const sortCol = validSorts.includes(sort) ? sort : 'name';
@@ -52,6 +63,8 @@ export class AccountsService {
         params.push(exclude_status);
         conditions.push(`(a.status IS NULL OR LOWER(a.status) <> LOWER($${params.length}))`);
       }
+      if (needs_review === true)  conditions.push('a.needs_review = true');
+      if (needs_review === false) conditions.push('a.needs_review = false');
       const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
       const baseParams = [...params];
@@ -158,6 +171,99 @@ export class AccountsService {
     });
   }
 
+  // Classify whether `data` (name / slug / domains) refers to an existing
+  // account — for the notes-import pipeline and the in-app agent. Unlike
+  // create() (which throws 409 on any match), this returns a decision the
+  // caller acts on, and never silently merges a weak fuzzy match:
+  //
+  //   'matched'   — an exact signal (slug, domain, exact name) or a near-exact
+  //                 fuzzy name (>= AUTOLINK). `account` is enriched; `matched_by`
+  //                 names the signal and `match_score` is set for fuzzy.
+  //   'ambiguous' — fuzzy name(s) in [SUGGEST, AUTOLINK). `candidates` is the
+  //                 ranked shortlist for one-click triage; nothing is written.
+  //   'none'      — no candidate clears SUGGEST.
+  //   'created'   — only with opts.createIfMissing when the result would be
+  //                 'none': a fresh account is inserted and returned enriched.
+  //
+  // opts.fuzzy=false restricts to the exact tiers (used by bundle import, where
+  // the slug is the identity and a fuzzy auto-merge would be wrong).
+  async findOrCreate(userId, data = {}, { createIfMissing = false, fuzzy = true } = {}) {
+    return withUser(userId, async (client) => {
+      const name = (data.name || '').trim();
+      const slug = (data.slug || '').trim();
+      const domains = normalizeDomains(data.domains);
+
+      // Exact tiers (definite match): slug → domain → exact name.
+      if (slug) {
+        const row = (await client.query('SELECT id FROM accounts WHERE slug = $1 LIMIT 1', [slug])).rows[0];
+        if (row) return { status: 'matched', matched_by: 'slug', account: await this._fetchWithChildren(client, 'id', row.id) };
+      }
+      if (domains && domains.length) {
+        for (const d of domains) {
+          const row = (await client.query(
+            'SELECT id FROM accounts WHERE domains @> jsonb_build_array($1::text) ORDER BY id LIMIT 1',
+            [d]
+          )).rows[0];
+          if (row) return { status: 'matched', matched_by: 'domain', account: await this._fetchWithChildren(client, 'id', row.id) };
+        }
+      }
+      if (name) {
+        const row = (await client.query('SELECT id FROM accounts WHERE LOWER(name) = LOWER($1) ORDER BY id LIMIT 1', [name])).rows[0];
+        if (row) return { status: 'matched', matched_by: 'name', account: await this._fetchWithChildren(client, 'id', row.id) };
+      }
+
+      // Fuzzy name tier — the `%` prefilter is served by idx_accounts_name_trgm,
+      // then the app-level thresholds decide auto-link vs. triage vs. nothing.
+      if (fuzzy && name) {
+        const cands = (await client.query(
+          `SELECT id, slug, name, status, similarity(lower(name), lower($1)) AS sim
+             FROM accounts
+            WHERE lower(name) % lower($1)
+            ORDER BY sim DESC NULLS LAST
+            LIMIT 5`,
+          [name]
+        )).rows;
+        if (cands[0] && Number(cands[0].sim) >= ACCOUNT_AUTOLINK_THRESHOLD) {
+          return {
+            status: 'matched', matched_by: 'fuzzy', match_score: Number(cands[0].sim),
+            account: await this._fetchWithChildren(client, 'id', cands[0].id),
+          };
+        }
+        const candidates = cands
+          .filter((c) => Number(c.sim) >= ACCOUNT_SUGGEST_THRESHOLD)
+          .map((c) => ({ id: c.id, slug: c.slug, name: c.name, status: c.status, score: Number(c.sim) }));
+        if (candidates.length) return { status: 'ambiguous', candidates, account: null };
+      }
+
+      if (!createIfMissing) return { status: 'none', account: null };
+
+      // Create. Guard a derived-slug collision (same company, name cased
+      // differently) so we return the match instead of tripping the unique key.
+      const finalSlug = slug || slugify(name);
+      if (!finalSlug) {
+        throw Object.assign(
+          new Error(`Could not derive a slug for the new account (name="${data.name}"). Supply slug explicitly.`),
+          { statusCode: 400 }
+        );
+      }
+      const collision = (await client.query('SELECT id FROM accounts WHERE slug = $1 LIMIT 1', [finalSlug])).rows[0];
+      if (collision) return { status: 'matched', matched_by: 'slug', account: await this._fetchWithChildren(client, 'id', collision.id) };
+
+      const status = (data.status && data.status.trim()) || 'account';
+      // Auto-created via the classifier → flag for review. The caller reached
+      // findOrCreate because it wasn't sure this account existed; a freshly
+      // minted row from that path is unverified by definition, so surface it in
+      // the accounts review queue rather than letting it look hand-curated.
+      const inserted = await client.query(
+        `INSERT INTO accounts (user_id, slug, name, status, domains, needs_review)
+         VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, coalesce($4, '[]'::jsonb), true)
+         RETURNING id`,
+        [finalSlug, name || finalSlug, status, jsonb(domains)]
+      );
+      return { status: 'created', account: await this._fetchWithChildren(client, 'id', inserted.rows[0].id) };
+    });
+  }
+
   async _fetchWithChildren(client, key, value) {
     const row = (await client.query(
       `SELECT ${ACCOUNT_COLS} FROM accounts WHERE ${key} = $1`,
@@ -175,7 +281,7 @@ export class AccountsService {
     )).rows;
 
     const meetings = (await client.query(
-      `SELECT id, date, title, filename, attendees, created_at
+      `SELECT id, date, title, filename, created_at
        FROM meetings
        WHERE account_id = $1
        ORDER BY date DESC`,
@@ -226,10 +332,10 @@ export class AccountsService {
         `INSERT INTO accounts (
            user_id, slug, name, status, last_contact,
            relationship_summary,
-           open_threads, active_deals, domains, favorite
+           open_threads, active_deals, domains, favorite, needs_review
          ) VALUES (
            current_setting('app.current_user_id')::bigint,
-           $1, $2, $3, $4, $5, $6, $7, coalesce($8, '[]'::jsonb), coalesce($9, false)
+           $1, $2, $3, $4, $5, $6, $7, coalesce($8, '[]'::jsonb), coalesce($9, false), coalesce($10, false)
          ) RETURNING id`,
         [
           data.slug || null,
@@ -241,6 +347,7 @@ export class AccountsService {
           data.active_deals || null,
           jsonb(normalizeDomains(data.domains)),
           typeof data.favorite === 'boolean' ? data.favorite : null,
+          typeof data.needs_review === 'boolean' ? data.needs_review : null,
         ]
       );
       return this._fetchWithChildren(client, 'id', inserted.rows[0].id);
@@ -260,7 +367,7 @@ export class AccountsService {
            slug = $2, name = $3, status = $4, last_contact = $5,
            relationship_summary = $6,
            open_threads = $7, active_deals = $8, domains = coalesce($9, '[]'::jsonb),
-           favorite = coalesce($10, false)
+           favorite = coalesce($10, false), needs_review = coalesce($11, false)
          WHERE id = $1`,
         [
           id,
@@ -273,6 +380,7 @@ export class AccountsService {
           data.active_deals || null,
           jsonb(normalizeDomains(data.domains)),
           typeof data.favorite === 'boolean' ? data.favorite : null,
+          typeof data.needs_review === 'boolean' ? data.needs_review : null,
         ]
       );
       return this._fetchWithChildren(client, 'id', id);
@@ -297,6 +405,7 @@ export class AccountsService {
         open_threads: data.open_threads !== undefined ? data.open_threads : existing.open_threads,
         domains: data.domains !== undefined ? normalizeDomains(data.domains) : existing.domains,
         favorite: data.favorite !== undefined ? !!data.favorite : existing.favorite,
+        needs_review: data.needs_review !== undefined ? !!data.needs_review : existing.needs_review,
       };
 
       await client.query(
@@ -304,7 +413,7 @@ export class AccountsService {
            slug = $2, name = $3, status = $4, last_contact = $5,
            relationship_summary = $6,
            open_threads = $7, active_deals = $8, domains = coalesce($9, '[]'::jsonb),
-           favorite = $10
+           favorite = $10, needs_review = $11
          WHERE id = $1`,
         [
           id,
@@ -317,6 +426,7 @@ export class AccountsService {
           updates.active_deals || null,
           jsonb(updates.domains),
           !!updates.favorite,
+          !!updates.needs_review,
         ]
       );
       return this._fetchWithChildren(client, 'id', id);

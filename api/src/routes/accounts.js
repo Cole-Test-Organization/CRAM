@@ -4,13 +4,14 @@ export default async function accountRoutes(fastify, { accountsService }) {
   // List all accounts
   fastify.get('/accounts', {
     schema: {
-      description: 'List accounts. Status is binary: "account" (companies you sell to) or "partner" (channel partners you sell with). Pass status=partner to get just partners, exclude_status=partner to get all non-partner accounts.',
+      description: 'List accounts. Status is binary: "account" (companies you sell to) or "partner" (channel partners you sell with). Pass status=partner to get just partners, exclude_status=partner to get all non-partner accounts. Pass needs_review=true to list only accounts flagged for review (e.g. auto-created by the notes importer).',
       tags: ['accounts'],
       querystring: {
         type: 'object',
         properties: {
           status: { type: 'string', description: 'Filter to rows whose status matches (case-insensitive). Use "account" or "partner".' },
           exclude_status: { type: 'string', description: 'Filter out rows whose status matches (case-insensitive). Typically "partner" to list non-partner accounts.' },
+          needs_review: { type: 'boolean', description: 'Filter by the review flag. true = only accounts flagged for review (e.g. auto-created during import); false = only verified; omit for both.' },
           sort: { type: 'string', enum: ['name', 'slug', 'status', 'last_contact', 'created_at', 'updated_at'], default: 'name' },
           order: { type: 'string', enum: ['asc', 'desc'], default: 'asc' },
           limit: { type: 'integer', minimum: 1, description: 'Optional. Omit to return all rows.' },
@@ -81,6 +82,45 @@ export default async function accountRoutes(fastify, { accountsService }) {
     const account = await accountsService.findExisting(request.userId, request.body || {});
     if (!account) { reply.code(404); return { error: 'No matching account' }; }
     return account;
+  });
+
+  // Idempotent classifier for the import pipeline / agent. Unlike find-existing
+  // (null-or-match) and create (409 on any match), this returns a decision the
+  // caller acts on: matched | ambiguous (triage candidates) | none | created.
+  // Never silently merges a weak fuzzy match.
+  fastify.post('/accounts/find-or-create', {
+    schema: {
+      description: 'Classify whether name/slug/domains refer to an existing account, for ingestion and triage. Exact tiers (slug → domain → case-insensitive name) and a near-exact fuzzy name (>= autolink threshold, default 0.85) return {status:"matched", account, matched_by, match_score?}. Fuzzy names in [suggest, autolink) (default [0.4, 0.85)) return {status:"ambiguous", candidates:[{id,slug,name,status,score}]} — a ranked shortlist for one-click triage, nothing written. No candidate over the suggest floor returns {status:"none"}. Set create_if_missing=true to insert a fresh account (slug derived from name if omitted) when the result would be "none" → {status:"created", account}. fuzzy=false restricts to the exact tiers (use for bundle import where the slug is the identity).',
+      tags: ['accounts'],
+      body: {
+        type: 'object',
+        properties: {
+          slug: { type: 'string', description: 'Exact slug to match (highest-priority tier).' },
+          name: { type: 'string', description: 'Company display name — drives the exact-name tier and the fuzzy tier.' },
+          domains: { type: 'array', items: { type: 'string' }, description: 'Domains to match (second tier, after slug).' },
+          status: { type: 'string', description: 'Only used when create_if_missing creates a row. "account" (default) or "partner".' },
+          create_if_missing: { type: 'boolean', default: false, description: 'Create a new account when the classification is "none". Off by default — callers usually want to surface ambiguity for triage first.' },
+          fuzzy: { type: 'boolean', default: true, description: 'Run the pg_trgm fuzzy-name tier. Set false to match only on exact slug/domain/name.' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { create_if_missing, fuzzy, ...data } = request.body || {};
+    if (!data.slug && !data.name && !(Array.isArray(data.domains) && data.domains.length)) {
+      reply.code(400);
+      return { error: 'find-or-create requires at least one of: slug, name, or domains[].' };
+    }
+    try {
+      const result = await accountsService.findOrCreate(request.userId, data, {
+        createIfMissing: !!create_if_missing,
+        fuzzy: fuzzy !== false,
+      });
+      reply.code(result.status === 'created' ? 201 : 200);
+      return result;
+    } catch (err) {
+      if (err.statusCode) { reply.code(err.statusCode); return { error: err.message }; }
+      throw err;
+    }
   });
 
   // Get account by slug (convenience for agents)
@@ -168,6 +208,7 @@ export default async function accountRoutes(fastify, { accountsService }) {
           active_deals: { type: 'string', description: 'Active deals markdown (for partner accounts)' },
           domains: { type: 'array', items: { type: 'string' }, description: 'List of domains associated with this account (e.g., ["acme.com", "acme-ventures.com"]). Normalized to lowercase; protocol and www. stripped. Used for lookup when only an email/domain is known.' },
           favorite: { type: 'boolean', description: 'Per-user favorite flag — pinned rows sort to the top of /api/accounts listings.' },
+          needs_review: { type: 'boolean', description: 'Flag this account for review. Usually left false on explicit creation; set true for speculative/auto-created rows.' },
         },
       },
     },
@@ -238,6 +279,7 @@ export default async function accountRoutes(fastify, { accountsService }) {
           active_deals: { type: 'string' },
           domains: { type: 'array', items: { type: 'string' }, description: 'Full replace on PATCH. Send the complete list of domains.' },
           favorite: { type: 'boolean', description: 'Per-user favorite flag — pinned rows sort to the top of /api/accounts listings.' },
+          needs_review: { type: 'boolean', description: 'Review flag. Set false to clear it after verifying an auto-created account (triage).' },
         },
       },
     },

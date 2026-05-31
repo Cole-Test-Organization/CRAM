@@ -22,17 +22,6 @@ import { logger } from "../lib/logger.js";
 
 const MAX_ITERATIONS = 25;
 
-// A turn that produces neither a tool call nor any user-facing text — only
-// internal reasoning (or nothing at all) — is the model quitting mid-task: it
-// "thinks out loud" about what it would do and then stops without doing or
-// saying it (the gemma4:e4b failure that motivated this guard, where the model
-// reasoned through a create_from_emails call and ended the turn instead of
-// emitting it). Such a turn must NOT end the loop. Instead we inject a
-// corrective prompt and let the model try again, bounded so a model that simply
-// can't comply doesn't spin one slow turn after another. The counter resets
-// whenever the model makes real progress (a tool call), so a long legitimate
-// workflow with the occasional stall isn't penalized — only consecutive
-// reasoning-only turns count toward the cap.
 const MAX_THINKING_ONLY_NUDGES = 3;
 const THINKING_ONLY_NUDGE = [
     "You replied with internal reasoning only — no tool call and no written answer.",

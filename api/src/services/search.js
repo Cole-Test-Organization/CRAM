@@ -50,7 +50,7 @@ export class SearchService {
 
       if (type === 'all' || type === 'meetings') {
         results.meetings = (await client.query(`
-          SELECT m.id, m.date, m.title, m.filename, m.attendees, m.account_id, m.internal,
+          SELECT m.id, m.date, m.title, m.filename, m.account_id, m.internal,
             a.slug AS account_slug, a.name AS account_name,
             ts_headline('english', coalesce(m.body, ''),
               to_tsquery('english', $1),

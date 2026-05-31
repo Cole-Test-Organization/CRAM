@@ -76,7 +76,11 @@ export class ExportService {
       WHERE ac.account_id = $1 ORDER BY c.full_name
     `, [acct.id])).rows;
     const meetings = (await client.query(
-      `SELECT id, account_id, date, title, filename, attendees, body, created_at, updated_at
+      `SELECT id, account_id, date, title, filename, body, created_at, updated_at,
+              (SELECT string_agg(COALESCE(c.full_name, ma.display_name), ', '
+                        ORDER BY (ma.contact_id IS NULL), c.full_name, ma.display_name)
+                 FROM meeting_attendees ma LEFT JOIN contacts c ON c.id = ma.contact_id
+                WHERE ma.meeting_id = meetings.id) AS attendees
        FROM meetings WHERE account_id = $1 ORDER BY date DESC`,
       [acct.id]
     )).rows;
@@ -134,7 +138,11 @@ export class ExportService {
       }
 
       const internal = (await client.query(
-        `SELECT id, date, title, filename, attendees, body, created_at, updated_at
+        `SELECT id, date, title, filename, body, created_at, updated_at,
+                (SELECT string_agg(COALESCE(c.full_name, ma.display_name), ', '
+                          ORDER BY (ma.contact_id IS NULL), c.full_name, ma.display_name)
+                   FROM meeting_attendees ma LEFT JOIN contacts c ON c.id = ma.contact_id
+                  WHERE ma.meeting_id = meetings.id) AS attendees
          FROM meetings WHERE internal = true ORDER BY date DESC`
       )).rows;
       for (const n of internal) {

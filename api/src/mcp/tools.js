@@ -7,7 +7,7 @@ import { callService, errorResponse } from './helpers.js';
  * Until per-session auth lands it's a constant (the default user).
  */
 export function registerTools(server, services, resolveUserId) {
-  const { accountsService, contactsService, meetingsService, searchService, todoistService, exportService, outreachService, eventsService, opportunitiesService, productsService, productCategoriesService, vendorsService, vendorProductsService, accountDetailsService, vendorHeatmapService, importExportService, notesService, backupService, contactEnrichmentService, internalDomainsService, agentSettingsService, memoriesService } = services;
+  const { accountsService, contactsService, meetingsService, searchService, todoistService, exportService, outreachService, eventsService, opportunitiesService, productsService, productCategoriesService, vendorsService, vendorProductsService, accountDetailsService, vendorHeatmapService, importExportService, notesImportService, notesService, backupService, contactEnrichmentService, internalDomainsService, agentSettingsService, memoriesService } = services;
 
   const todoistDest = () => {
     const project = process.env.TODOIST_DEFAULT_PROJECT || 'Inbox';
@@ -19,15 +19,18 @@ export function registerTools(server, services, resolveUserId) {
 
   server.tool(
     'accounts',
-    'Manage CRM accounts (companies). **If you only have a company name (e.g. "FixtureCorp"), use the `search` tool (type="accounts") first — slug/domain/id lookups here all require structured input and will reject or 404 on a bare name.** Actions: list (returns ALL account slugs as a flat string array — no filtering, no pagination, no extra fields; drill into any specific account with `get`), list_full (full account rows with filters/sort/pagination — pass `status`/`exclude_status` to filter customers vs partners; mirrors `GET /api/accounts`), get (by id/slug/domain — returns full account with contacts, meetings, and linked partners), find_existing (pre-create dedupe probe — same match rules `create` uses: slug → domain → case-insensitive name; returns the match or null), create, update (PATCH merge — open_threads/domains fully replaced), delete, list_partners (channel partner accounts linked to this account), add_partner (link a partner account by id), remove_partner (unlink). Partner contacts live as contacts with kind=partner on the partner account; teammates at your own company live as contacts with kind=internal (not tied to any account). Technical environment (firewalls, EDRs, employee count, site count, …) lives in a separate `account_details` tool — do NOT shove it into this account record.',
+    'Manage CRM accounts (companies). **If you only have a company name (e.g. "FixtureCorp"), use the `search` tool (type="accounts") first — slug/domain/id lookups here all require structured input and will reject or 404 on a bare name.** Actions: list (returns ALL account slugs as a flat string array — no filtering, no pagination, no extra fields; drill into any specific account with `get`), list_full (full account rows with filters/sort/pagination — pass `status`/`exclude_status` to filter customers vs partners; mirrors `GET /api/accounts`), get (by id/slug/domain — returns full account with contacts, meetings, and linked partners), find_existing (pre-create dedupe probe — same match rules `create` uses: slug → domain → case-insensitive name; returns the match or null), find_or_create (idempotent classifier for ingestion/triage — exact tiers + near-exact fuzzy name return status="matched" with the enriched account; mid-confidence fuzzy names return status="ambiguous" with ranked triage candidates and write nothing; nothing over the suggest floor returns status="none"; set create_if_missing=true to insert when "none" → status="created". Never silently merges a weak match — prefer this over create when ingesting companies from notes/email), create, update (PATCH merge — open_threads/domains fully replaced), delete, list_partners (channel partner accounts linked to this account), add_partner (link a partner account by id), remove_partner (unlink). Partner contacts live as contacts with kind=partner on the partner account; teammates at your own company live as contacts with kind=internal (not tied to any account). Technical environment (firewalls, EDRs, employee count, site count, …) lives in a separate `account_details` tool — do NOT shove it into this account record.',
     {
-      action: z.enum(['list', 'list_full', 'get', 'find_existing', 'create', 'update', 'delete', 'list_partners', 'add_partner', 'remove_partner']),
+      action: z.enum(['list', 'list_full', 'get', 'find_existing', 'find_or_create', 'create', 'update', 'delete', 'list_partners', 'add_partner', 'remove_partner']),
       id: z.number().optional().describe('Account ID (for get, update, delete, list_partners, add_partner, remove_partner)'),
       partner_id: z.number().optional().describe('Partner account ID (for add_partner, remove_partner)'),
       slug: z.string().optional().describe('Account slug — lowercase-hyphenated alphanumeric (e.g. "acme-manufacturing", "fixturecorp-test"). For get by slug, or in data for create. If you only have a company name (e.g. "FixtureCorp"), call the `search` tool with `type="accounts"` instead — slug lookups require the exact slug, not the display name.'),
       domain: z.string().optional().describe('Real domain only — must contain "." (e.g. "acme.com"). Case-insensitive, www./protocol/path stripped. Matches any entry in the account\'s domains list. If you only have a company name (e.g. "FixtureCorp"), call the `search` tool with `type="accounts"` instead; if you have the URL slug, pass `slug`.'),
       status: z.string().optional().describe('Filter to accounts whose status matches, case-insensitive (for list_full). Use "account" or "partner".'),
       exclude_status: z.string().optional().describe('Filter out accounts whose status matches, case-insensitive (for list_full). Typically "partner" to list non-partner accounts.'),
+      needs_review: z.boolean().optional().describe('Filter list_full by the review flag (true = only accounts flagged for review, e.g. auto-created by the notes importer; false = only verified; omit for both).'),
+      create_if_missing: z.boolean().optional().describe('For find_or_create: insert a new account when the classification is "none" (off by default — usually you want to surface ambiguity for triage first). The matching tiers still run first, so this never creates a duplicate of a confident match.'),
+      fuzzy: z.boolean().optional().describe('For find_or_create: run the pg_trgm fuzzy-name tier (default true). Set false to match only on exact slug/domain/name — e.g. bundle import where the slug is the identity and a fuzzy auto-merge would be wrong.'),
       sort: z.enum(['name', 'slug', 'status', 'last_contact', 'created_at', 'updated_at']).optional().describe('Sort column (for list_full, default name)'),
       order: z.enum(['asc', 'desc']).optional().describe('Sort order (for list_full, default asc)'),
       limit: z.number().optional().describe('Page size (for list_full). Omit to return all rows.'),
@@ -42,15 +45,16 @@ export function registerTools(server, services, resolveUserId) {
         active_deals: z.string().optional(),
         domains: z.array(z.string()).optional().describe('Domains associated with this account (e.g., ["acme.com", "acme-ventures.com"]). Full replace on update.'),
         favorite: z.boolean().optional().describe('Per-user favorite flag — pinned rows sort to the top of list_full.'),
+        needs_review: z.boolean().optional().describe('Review flag. Set false on update to clear it after verifying an auto-created account (triage).'),
       }).optional().describe('Account data (for create/update)'),
     },
-    async ({ action, id, partner_id, slug, domain, status, exclude_status, sort, order, limit, offset, data }) => {
+    async ({ action, id, partner_id, slug, domain, status, exclude_status, needs_review, create_if_missing, fuzzy, sort, order, limit, offset, data }) => {
       const userId = await resolveUserId();
       switch (action) {
         case 'list':
           return callService(() => accountsService.getAllSlugs(userId).then(slugs => ({ slugs })));
         case 'list_full':
-          return callService(() => accountsService.getAll(userId, { status, exclude_status, sort, order, limit, offset }));
+          return callService(() => accountsService.getAll(userId, { status, exclude_status, needs_review, sort, order, limit, offset }));
         case 'get':
           if (slug) return callService(() => accountsService.getBySlug(userId, slug), { notFoundMsg: `No account with slug "${slug}". Try the search tool (type="accounts") to fuzzy-match by name — slugs are exact.` });
           if (domain) return callService(() => accountsService.getByDomain(userId, domain), { notFoundMsg: `No account associated with domain "${domain}". Try the search tool (type="accounts") to fuzzy-match by name.` });
@@ -61,6 +65,11 @@ export function registerTools(server, services, resolveUserId) {
             return errorResponse('find_existing requires data with at least one of: slug, name, or domains[]. Uses the same match rules as create (slug → domain → case-insensitive name). Returns null when nothing matches.');
           }
           return callService(() => accountsService.findExisting(userId, data));
+        case 'find_or_create':
+          if (!data || (!data.slug && !data.name && !(Array.isArray(data.domains) && data.domains.length))) {
+            return errorResponse('find_or_create requires data with at least one of: slug, name, or domains[]. Returns a decision object: status "matched" (account + matched_by, plus match_score when fuzzy) | "ambiguous" (candidates[] for triage, nothing written) | "none". Pass create_if_missing=true to insert on "none" (status becomes "created"). Pass fuzzy=false to skip the pg_trgm tier (exact slug/domain/name only).');
+          }
+          return callService(() => accountsService.findOrCreate(userId, data, { createIfMissing: !!create_if_missing, fuzzy: fuzzy !== false }));
         case 'create':
           if (!data?.slug || !data?.name) return errorResponse('create requires data.slug (lowercase-hyphenated, e.g. "acme-manufacturing") and data.name (display name, e.g. "Acme Manufacturing"). Optional: data.domains, data.status ("account" default | "partner"), data.relationship_summary.');
           return callService(() => accountsService.create(userId, data));
@@ -197,12 +206,15 @@ export function registerTools(server, services, resolveUserId) {
 
   server.tool(
     'meetings',
-    'Manage meeting notes. Meetings can be tied to an account (account or partner) or internal-only (no account). Actions: list (all, paginated; filter by account_id, or internal flag), get (by id — includes full body and linked contacts), create (pass account_id for an account meeting and contact_ids for attendees; pass internal=true and omit account_id for an internal-only note), update (partial — if contact_ids provided, replaces attendee links; the internal flag and account_id cannot be changed after creation), delete, resolve_emails (pure read — given a list of attendee emails, return matched contacts + account candidates grouped by domain so the caller can stage a from-emails meeting), create_from_emails (atomic: creates account if requested, creates new contacts if requested, creates the meeting, and fires off optional background outreach + LLM enrichment for new contacts), get_enrichment_job (poll a single enrichment job kicked off by create_from_emails), list_enrichment_jobs (list all enrichment jobs for the contacts on a given meeting — useful for a progress dashboard).',
+    'Manage meeting notes. Meetings can be tied to an account (account or partner) or internal-only (no account). Attendees come in two forms: LINKED (contact_ids → existing CRM contacts) and UNLINKED (a name/email with no contact yet — recorded for visibility, linkable later). Actions: list (all, paginated; filter by account_id, internal flag, or needs_review), get (by id — body, linked contacts, and unlinked_attendees[]), create (pass account_id + contact_ids for an account meeting; pass internal=true and omit account_id for an internal-only note; needs_review=true parks an uncertain/imported note for triage), update (partial — contact_ids replaces the LINKED set, attendees/unlinked_attendees replaces the UNLINKED set, independently; the internal flag and account_id cannot be changed after creation), delete, assign_account (triage — attach a parked account-less note to an account, flipping internal→false and clearing needs_review; 409 if already assigned), link_attendee (triage — convert an unlinked attendee row into a link to an existing contact, deduping if already linked), resolve_emails (pure read — given a list of attendee emails, return matched contacts + account candidates grouped by domain so the caller can stage a from-emails meeting), create_from_emails (atomic: creates account if requested, creates new contacts if requested, creates the meeting, and fires off optional background outreach + LLM enrichment for new contacts), get_enrichment_job (poll a single enrichment job kicked off by create_from_emails), list_enrichment_jobs (list all enrichment jobs for the contacts on a given meeting — useful for a progress dashboard).',
     {
-      action: z.enum(['list', 'get', 'create', 'update', 'delete', 'resolve_emails', 'create_from_emails', 'get_enrichment_job', 'list_enrichment_jobs']),
-      id: z.number().optional().describe('Meeting ID (for get, update, delete)'),
-      account_id: z.number().optional().describe('Account ID — for list (filter to that account), or create (omit for internal=true).'),
+      action: z.enum(['list', 'get', 'create', 'update', 'delete', 'assign_account', 'link_attendee', 'resolve_emails', 'create_from_emails', 'get_enrichment_job', 'list_enrichment_jobs']),
+      id: z.number().optional().describe('Meeting ID (for get, update, delete, assign_account, link_attendee)'),
+      account_id: z.number().optional().describe('Account ID — for list (filter to that account), create (omit for internal=true), or assign_account (the account to attach a parked note to).'),
+      attendee_id: z.number().optional().describe('Unlinked attendee row id (from the meeting\'s unlinked_attendees[]) — for link_attendee.'),
+      contact_id: z.number().optional().describe('Existing contact id to link an unlinked attendee to — for link_attendee.'),
       internal: z.boolean().optional().describe('For list: filter by internal flag (true=only internal, false=only account meetings, omit=both). For create: set true for an internal-only note.'),
+      needs_review: z.boolean().optional().describe('For list: filter by the triage flag (true=only parked notes awaiting triage, false=only settled, omit=both). Set on create/update via data.needs_review.'),
       limit: z.number().optional(),
       offset: z.number().optional(),
       emails: z.union([z.array(z.string()), z.string()]).optional().describe('Attendee emails (for resolve_emails). Either an array, or a single string with comma/semicolon/newline separators. Accepts "Name <email>" form.'),
@@ -231,17 +243,19 @@ export function registerTools(server, services, resolveUserId) {
       data: z.object({
         date: z.string().optional().describe('YYYY-MM-DD'),
         title: z.string().optional(),
-        attendees: z.string().optional().describe('Display-only attendee text'),
+        needs_review: z.boolean().optional().describe('Park this note for triage (create/update). Surfaced by list with needs_review=true; cleared by assign_account.'),
+        attendees: z.string().optional().describe('Free-text attendees (comma/semicolon separated). Each name with no matching linked contact becomes an UNLINKED attendee row (not just display text). On update, replaces the unlinked set.'),
+        unlinked_attendees: z.array(z.object({ display_name: z.string(), email: z.string().optional() })).optional().describe('Structured attendees with no CRM contact yet: [{display_name, email?}]. Recorded for visibility + later one-click linking. On update, replaces the unlinked set. Alternative to the free-text attendees string.'),
         body: z.string().optional().describe('Meeting notes markdown'),
-        contact_ids: z.array(z.number()).optional().describe('Array of contact IDs to link as attendees. Required for non-internal meetings; for internal meetings, typically kind=internal or kind=partner.'),
+        contact_ids: z.array(z.number()).optional().describe('Array of contact IDs to link as attendees (LINKED set). Required for non-internal meetings; for internal meetings, typically kind=internal or kind=partner. On update, replaces the linked set.'),
       }).optional().describe('Meeting data (for create/update)'),
     },
-    async ({ action, id, account_id, internal, limit, offset, emails, enrichment_job_id, from_emails_payload, data }) => {
+    async ({ action, id, account_id, attendee_id, contact_id, internal, needs_review, limit, offset, emails, enrichment_job_id, from_emails_payload, data }) => {
       const userId = await resolveUserId();
       switch (action) {
         case 'list':
           if (account_id) return callService(() => meetingsService.getByAccount(userId, account_id));
-          return callService(() => meetingsService.getAll(userId, { limit, offset, internal }));
+          return callService(() => meetingsService.getAll(userId, { limit, offset, internal, needs_review }));
         case 'get':
           if (!id) return errorResponse('get requires id (the numeric meeting id). Use action="list" (optionally with account_id) to find meeting ids.');
           return callService(() => meetingsService.getById(userId, id), { notFoundMsg: `Meeting not found: id=${id}. Try action="list" to find the right id.` });
@@ -260,6 +274,12 @@ export function registerTools(server, services, resolveUserId) {
         case 'delete':
           if (!id) return errorResponse('delete requires id (the numeric meeting id). Use action="list" to find ids.');
           return callService(() => meetingsService.delete(userId, id), { notFoundMsg: `Meeting not found: id=${id}. Already deleted, or wrong id.` });
+        case 'assign_account':
+          if (!id || !account_id) return errorResponse('assign_account requires id (the parked meeting id) and account_id (the account to attach it to). Find parked notes via action="list" with needs_review=true; resolve the account via the accounts tool (find_or_create / search / get). Only works on unassigned notes — returns 409 if the meeting already has an account.');
+          return callService(() => meetingsService.assignAccount(userId, id, account_id), { notFoundMsg: `Meeting not found: id=${id}. Try action="list" with needs_review=true to find parked notes.` });
+        case 'link_attendee':
+          if (!id || !attendee_id || !contact_id) return errorResponse('link_attendee requires id (meeting id), attendee_id (the unlinked attendee row id from the meeting\'s unlinked_attendees[]), and contact_id (the existing contact to link it to). Resolve the contact first via the contacts tool (find_or_create / get_by_email / list). If the contact is already an attendee, the unlinked row is dropped (dedupe).');
+          return callService(() => meetingsService.linkAttendee(userId, id, attendee_id, contact_id), { notFoundMsg: `No unlinked attendee id=${attendee_id} on meeting id=${id}. Re-fetch the meeting with action="get" to see current unlinked_attendees[].` });
         case 'resolve_emails':
           if (!emails) return errorResponse('resolve_emails requires emails — an array of email strings, or a single newline/comma/semicolon-separated string (e.g. straight from a calendar invite). "Name <email>" form is accepted.');
           return callService(() => meetingsService.resolveEmails(userId, emails));
@@ -280,6 +300,40 @@ export function registerTools(server, services, resolveUserId) {
             return { jobs: contactEnrichmentService.listJobsForContacts(contactIds) };
           }, { notFoundMsg: `Meeting not found: id=${id}. Try action="list" to confirm the id.` });
         }
+        default:
+          return errorResponse(`Unknown action: ${action}`);
+      }
+    }
+  );
+
+  // ── notes_import ──────────────────────────────────────────────────────
+
+  server.tool(
+    'notes_import',
+    'Bulk-import a directory of notes (markdown/plain text from Obsidian, Apple/Google Notes, a folder of call summaries, …). Each file is processed ONE AT A TIME by the local model to extract metadata (date, title, account, attendees), then resolved to an account and written as a meeting. Account resolution: a confident match links the note cleanly; an unknown company auto-creates a flagged account (needs_review) and links it; an ambiguous near-match parks the note (internal + needs_review) so you place it via triage instead of minting a near-duplicate; an internal/no-company note parks too. Async + serial (one local-LLM call at a time). Actions: enqueue (pass files=[{path, content}] — read the directory client-side; returns a jobId), get_job (poll by jobId — status queued→running→completed, stage shows progress, results[] has a per-file outcome, counts aggregates them), list_jobs (recent jobs). Idempotent: re-importing the same file is skipped on a filename match. (Uploading a raw .zip is HTTP-only — POST /api/notes-import/upload-zip — since MCP can\'t carry binary; from here, send the unpacked files[].)',
+    {
+      action: z.enum(['enqueue', 'get_job', 'list_jobs']),
+      files: z.array(z.object({
+        path: z.string().describe('Relative path within the dropped directory — used to derive a stable meeting filename for idempotent re-imports.'),
+        content: z.string().describe('Full text of the note. Stored verbatim as the meeting body; the model sees a truncated copy for metadata extraction.'),
+      })).optional().describe('Notes to import (for enqueue). Non-empty array of { path, content }.'),
+      job_id: z.string().optional().describe('Job id returned by enqueue (for get_job).'),
+      status: z.enum(['queued', 'running', 'completed', 'failed']).optional().describe('Filter (for list_jobs).'),
+      limit: z.number().optional().describe('Max jobs to return (for list_jobs).'),
+    },
+    async ({ action, files, job_id, status, limit }) => {
+      const userId = await resolveUserId();
+      switch (action) {
+        case 'enqueue':
+          if (!Array.isArray(files) || files.length === 0) {
+            return errorResponse('enqueue requires files — a non-empty array of { path, content }. Read the notes directory client-side and send each text file. (To import a .zip, use the HTTP endpoint POST /api/notes-import/upload-zip; MCP can\'t carry binary.)');
+          }
+          return callService(async () => ({ jobId: notesImportService.enqueue(userId, { files }) }));
+        case 'get_job':
+          if (!job_id) return errorResponse('get_job requires job_id (the string returned by action="enqueue"). Use action="list_jobs" to find recent jobs if you lost it.');
+          return callService(() => Promise.resolve(notesImportService.getJob(job_id)), { notFoundMsg: `Notes-import job not found: ${job_id}. Jobs are in-memory and reset on server restart.` });
+        case 'list_jobs':
+          return callService(async () => ({ jobs: notesImportService.listJobs({ status, limit }) }));
         default:
           return errorResponse(`Unknown action: ${action}`);
       }

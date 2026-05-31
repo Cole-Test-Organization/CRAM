@@ -1,7 +1,7 @@
 import { withUser } from '../db/connection.js';
 import { deriveFilename } from './_slug.js';
 
-const MEETING_COLS = 'id, account_id, date, title, filename, attendees, body, internal, created_at, updated_at';
+const MEETING_COLS = 'id, account_id, date, title, filename, body, internal, needs_review, created_at, updated_at';
 
 function normalizeDomain(d) {
   if (!d || typeof d !== 'string') return null;
@@ -75,17 +75,19 @@ export class MeetingsService {
     this.internalDomainsService = internalDomainsService;
   }
 
-  async getAll(userId, { limit = 50, offset = 0, internal } = {}) {
+  async getAll(userId, { limit = 50, offset = 0, internal, needs_review } = {}) {
     return withUser(userId, async (client) => {
       const where = [];
       const params = [];
       if (internal === true)  { where.push('m.internal = true'); }
       if (internal === false) { where.push('m.internal = false'); }
+      if (needs_review === true)  { where.push('m.needs_review = true'); }
+      if (needs_review === false) { where.push('m.needs_review = false'); }
       const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
       params.push(limit, offset);
       const meetings = (await client.query(`
-        SELECT m.id, m.account_id, m.date, m.title, m.filename, m.attendees, m.internal,
+        SELECT m.id, m.account_id, m.date, m.title, m.filename, m.internal, m.needs_review,
                m.created_at, m.updated_at,
                a.slug AS account_slug, a.name AS account_name
         FROM meetings m
@@ -96,7 +98,7 @@ export class MeetingsService {
       `, params)).rows;
 
       for (const m of meetings) {
-        m.contacts = await this._getContacts(client, m.id);
+        await this._attachAttendees(client, m);
       }
       return meetings;
     });
@@ -109,20 +111,40 @@ export class MeetingsService {
         [accountId]
       )).rows;
       for (const m of meetings) {
-        m.contacts = await this._getContacts(client, m.id);
+        await this._attachAttendees(client, m);
       }
       return meetings;
     });
   }
 
-  async _getContacts(client, meetingId) {
-    return (await client.query(`
-      SELECT c.id, c.full_name, c.company, c.title, c.email
-      FROM contacts c
-      JOIN meeting_attendees ma ON ma.contact_id = c.id
+  // Load a meeting's attendees (linked contacts + unlinked display-name rows)
+  // and attach them to the meeting object:
+  //   m.contacts           — linked contacts (back-compat with the old shape)
+  //   m.unlinked_attendees — [{ attendee_id, display_name, email }] awaiting a link
+  //   m.attendees          — display string of everyone, linked first. Replaces
+  //                          the retired free-text column so readers and the GUI
+  //                          keep seeing `attendees` as a string.
+  async _attachAttendees(client, meeting) {
+    const rows = (await client.query(`
+      SELECT ma.id AS attendee_id, ma.contact_id, ma.display_name, ma.email,
+             c.full_name, c.company, c.title, c.email AS contact_email, c.phone, c.linkedin
+      FROM meeting_attendees ma
+      LEFT JOIN contacts c ON c.id = ma.contact_id
       WHERE ma.meeting_id = $1
-      ORDER BY c.full_name
-    `, [meetingId])).rows;
+      ORDER BY (ma.contact_id IS NULL), c.full_name, ma.display_name
+    `, [meeting.id])).rows;
+
+    meeting.contacts = rows
+      .filter((r) => r.contact_id)
+      .map((r) => ({
+        id: r.contact_id, full_name: r.full_name, company: r.company,
+        title: r.title, email: r.contact_email, phone: r.phone, linkedin: r.linkedin,
+      }));
+    meeting.unlinked_attendees = rows
+      .filter((r) => !r.contact_id)
+      .map((r) => ({ attendee_id: r.attendee_id, display_name: r.display_name, email: r.email }));
+    meeting.attendees = rows.map((r) => r.full_name || r.display_name).filter(Boolean).join(', ');
+    return meeting;
   }
 
   async getById(userId, id) {
@@ -144,15 +166,10 @@ export class MeetingsService {
       )).rows[0];
     }
 
-    const contacts = (await client.query(`
-      SELECT c.id, c.full_name, c.company, c.title, c.email, c.phone, c.linkedin
-      FROM contacts c
-      JOIN meeting_attendees ma ON ma.contact_id = c.id
-      WHERE ma.meeting_id = $1
-      ORDER BY c.full_name
-    `, [id])).rows;
-
-    return { ...meeting, account_slug: account?.slug || null, account_name: account?.name || null, contacts };
+    meeting.account_slug = account?.slug || null;
+    meeting.account_name = account?.name || null;
+    await this._attachAttendees(client, meeting);
+    return meeting;
   }
 
   async create(userId, accountId, data) {
@@ -181,7 +198,7 @@ export class MeetingsService {
       }
 
       const res = await client.query(
-        `INSERT INTO meetings (user_id, account_id, date, title, filename, attendees, body, internal)
+        `INSERT INTO meetings (user_id, account_id, date, title, filename, body, internal, needs_review)
          VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, $4, $5, $6, $7)
          RETURNING id`,
         [
@@ -189,19 +206,15 @@ export class MeetingsService {
           data.date,
           data.title || null,
           filename,
-          data.attendees || null,
           data.body,
           internal,
+          !!data.needs_review,
         ]
       );
       const meetingId = res.rows[0].id;
 
-      for (const contactId of contactIds) {
-        await client.query(
-          'INSERT INTO meeting_attendees (meeting_id, contact_id) VALUES ($1, $2)',
-          [meetingId, contactId]
-        );
-      }
+      await this._linkContacts(client, meetingId, contactIds);
+      await this._addUnlinked(client, meetingId, { attendeesText: data.attendees, unlinked: data.unlinked_attendees });
       return this._fetchFull(client, meetingId);
     });
   }
@@ -232,30 +245,33 @@ export class MeetingsService {
       const nextFilename = data.filename
         ? deriveFilename(nextDate, nextTitle, data.filename)
         : existing.filename;
+      const nextNeedsReview = data.needs_review !== undefined ? !!data.needs_review : existing.needs_review;
 
       await client.query(
         `UPDATE meetings SET
            date = $2, title = $3, filename = $4,
-           attendees = $5, body = $6
+           body = $5, needs_review = $6
          WHERE id = $1`,
         [
           id,
           nextDate,
           nextTitle,
           nextFilename,
-          data.attendees !== undefined ? data.attendees : existing.attendees,
           data.body || existing.body,
+          nextNeedsReview,
         ]
       );
 
+      // Linked and unlinked attendees are managed independently so updating one
+      // doesn't wipe the other. contact_ids replaces the linked set; an
+      // attendees string / unlinked_attendees array replaces the unlinked set.
       if (contactIds !== undefined) {
-        await client.query('DELETE FROM meeting_attendees WHERE meeting_id = $1', [id]);
-        for (const contactId of contactIds) {
-          await client.query(
-            'INSERT INTO meeting_attendees (meeting_id, contact_id) VALUES ($1, $2)',
-            [id, contactId]
-          );
-        }
+        await client.query('DELETE FROM meeting_attendees WHERE meeting_id = $1 AND contact_id IS NOT NULL', [id]);
+        await this._linkContacts(client, id, contactIds || []);
+      }
+      if (data.attendees !== undefined || data.unlinked_attendees !== undefined) {
+        await client.query('DELETE FROM meeting_attendees WHERE meeting_id = $1 AND contact_id IS NULL', [id]);
+        await this._addUnlinked(client, id, { attendeesText: data.attendees, unlinked: data.unlinked_attendees });
       }
       return this._fetchFull(client, id);
     });
@@ -270,6 +286,109 @@ export class MeetingsService {
       if (!existing) return null;
       await client.query('DELETE FROM meetings WHERE id = $1', [id]);
       return existing;
+    });
+  }
+
+  // Link existing contacts as attendees (linked rows). Callers validate the
+  // contact ids exist first.
+  async _linkContacts(client, meetingId, contactIds) {
+    for (const contactId of contactIds || []) {
+      await client.query(
+        'INSERT INTO meeting_attendees (meeting_id, contact_id) VALUES ($1, $2)',
+        [meetingId, contactId]
+      );
+    }
+  }
+
+  // Add unlinked attendees (a name, optionally an email, no contact yet) from a
+  // free-text `attendeesText` (split on , or ;) and/or an explicit `unlinked`
+  // array. Skips any name already represented by a linked contact on this
+  // meeting so the same person isn't listed twice. This is where the retired
+  // free-text column's content now lands — and how the import pipeline records
+  // who was in the room without spawning a contact per attendee.
+  async _addUnlinked(client, meetingId, { attendeesText = null, unlinked = [] } = {}) {
+    const linkedNames = new Set(
+      (await client.query(
+        `SELECT lower(c.full_name) AS n
+         FROM meeting_attendees ma JOIN contacts c ON c.id = ma.contact_id
+         WHERE ma.meeting_id = $1`,
+        [meetingId]
+      )).rows.map((r) => r.n).filter(Boolean)
+    );
+
+    const candidates = [];
+    for (const u of unlinked || []) {
+      const name = (u?.display_name || u?.name || '').trim();
+      if (name) candidates.push({ name, email: u.email || null });
+    }
+    if (typeof attendeesText === 'string') {
+      for (const tok of attendeesText.split(/[,;]/)) {
+        const name = tok.trim();
+        if (name) candidates.push({ name, email: null });
+      }
+    }
+
+    const seen = new Set();
+    for (const c of candidates) {
+      const key = c.name.toLowerCase();
+      if (linkedNames.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      await client.query(
+        'INSERT INTO meeting_attendees (meeting_id, display_name, email) VALUES ($1, $2, $3)',
+        [meetingId, c.name, c.email]
+      );
+    }
+  }
+
+  // Triage: attach a parked (account-less, needs_review) note to an account.
+  // The one path allowed to set account_id after creation — flips the note from
+  // internal to a real account meeting and clears the review flag.
+  async assignAccount(userId, id, accountId) {
+    return withUser(userId, async (client) => {
+      const m = (await client.query('SELECT id, account_id FROM meetings WHERE id = $1', [id])).rows[0];
+      if (!m) return null;
+      if (m.account_id) {
+        throw Object.assign(new Error(`Meeting ${id} is already linked to account ${m.account_id}. Account assignment only applies to unassigned notes.`), { statusCode: 409 });
+      }
+      const acct = (await client.query('SELECT id FROM accounts WHERE id = $1', [accountId])).rows[0];
+      if (!acct) {
+        throw Object.assign(new Error(`Account not found: id=${accountId}.`), { statusCode: 404 });
+      }
+      await client.query(
+        'UPDATE meetings SET account_id = $2, internal = false, needs_review = false WHERE id = $1',
+        [id, accountId]
+      );
+      return this._fetchFull(client, id);
+    });
+  }
+
+  // Triage: link an unlinked attendee row to a contact. If the contact is
+  // already an attendee on this meeting, the unlinked row is dropped (dedupe)
+  // rather than creating a duplicate link.
+  async linkAttendee(userId, meetingId, attendeeId, contactId) {
+    return withUser(userId, async (client) => {
+      const att = (await client.query(
+        'SELECT id, contact_id FROM meeting_attendees WHERE id = $1 AND meeting_id = $2',
+        [attendeeId, meetingId]
+      )).rows[0];
+      if (!att) return null;
+      const contact = (await client.query('SELECT id FROM contacts WHERE id = $1', [contactId])).rows[0];
+      if (!contact) {
+        throw Object.assign(new Error(`Contact not found: id=${contactId}.`), { statusCode: 404 });
+      }
+      const dup = (await client.query(
+        'SELECT id FROM meeting_attendees WHERE meeting_id = $1 AND contact_id = $2',
+        [meetingId, contactId]
+      )).rows[0];
+      if (dup) {
+        await client.query('DELETE FROM meeting_attendees WHERE id = $1', [attendeeId]);
+      } else {
+        await client.query(
+          'UPDATE meeting_attendees SET contact_id = $2, display_name = NULL, email = NULL WHERE id = $1',
+          [attendeeId, contactId]
+        );
+      }
+      return this._fetchFull(client, meetingId);
     });
   }
 

@@ -43,6 +43,10 @@ Schemas (request/response shapes, validation) come from the OpenAPI spec (HTTP) 
 
 **Removing an operation?** Delete its `REFS` entry and any prose that referenced it — leaving a stale key will crash the renderer (`Unknown instruction reference`).
 
+**Exception — deterministic HTTP-only endpoints.** A surface that is *only ever* machine-to-machine and deterministic — never invoked by the in-app agent or an external MCP client — may live as **service + HTTP route only**, and is deliberately excluded from the MCP tool (`api/src/mcp/tools.js`), both `services` bags (`api/src/mcp/server.js`, `api/src/agent/mcp-client.js`), and `api/src/instructions.js` / `REFS`. Keep these out of the four-surface parity check. Current exceptions:
+
+- **`calendar-import`** (`POST /api/calendar-import` → `api/src/services/calendar-import.js` + `api/src/routes/calendar-import.js`) — the daily Google Calendar ingestion a Google Apps Script forwards through a Cloudflare tunnel. It's deterministic (no LLM) and consumed by the tunnel, not the agent, so it has **no** `calendar_import` MCP tool, is **not** in either `services` bag, and has **no** `instructions.js` entry. If it ever needs to be agent-callable, wire all four surfaces at that point.
+
 ### Keep api/SCHEMA.md in sync with the database — MANDATORY
 
 `api/SCHEMA.md` is an auto-generated reference for the live Postgres schema (tables, columns, FKs, unique/check constraints, indexes, enums, views, RLS policies). It's pulled directly from `pg_catalog` by `dev/scripts/dump-schema.js` — **never edit it by hand**.

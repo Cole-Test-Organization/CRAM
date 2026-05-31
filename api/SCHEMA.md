@@ -4,7 +4,7 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-05-29T15:36:33.620Z
+- **Generated:** 2026-05-31T16:03:26.406Z
 - **Tables:** 23
 - **Enums:** 0
 - **Views:** 0
@@ -200,6 +200,7 @@
 | `domains` | `jsonb` | NO | `'[]'::jsonb` |  |
 | `search_vector` | `tsvector` | YES | `to_tsvector('english'::regconfig, ((((((((((COALESCE(slug, ''::text) \|\| ' '::text) \|\| COALESCE(name, ''::text)) \|\| ' '::text) \|\| COALESCE(status, ''::text)) \|\| ' '::text) \|\| COALESCE(relationship_summary, ''::text)) \|\| ' '::text) \|\| COALESCE((open_threads)::text, ''::text)) \|\| ' '::text) \|\| COALESCE((domains)::text, ''::text)))` |  |
 | `favorite` | `boolean` | NO | `false` |  |
+| `needs_review` | `boolean` | NO | `false` |  |
 
 **Primary key:** `id`
 
@@ -217,6 +218,8 @@
 - `idx_accounts_domains` — `CREATE INDEX idx_accounts_domains ON public.accounts USING gin (domains jsonb_path_ops)`
 - `idx_accounts_favorite` — `CREATE INDEX idx_accounts_favorite ON public.accounts USING btree (favorite) WHERE (favorite = true)`
 - `idx_accounts_last_contact` — `CREATE INDEX idx_accounts_last_contact ON public.accounts USING btree (last_contact)`
+- `idx_accounts_name_trgm` — `CREATE INDEX idx_accounts_name_trgm ON public.accounts USING gin (lower(name) gin_trgm_ops)`
+- `idx_accounts_needs_review` — `CREATE INDEX idx_accounts_needs_review ON public.accounts USING btree (needs_review) WHERE (needs_review = true)`
 - `idx_accounts_search` — `CREATE INDEX idx_accounts_search ON public.accounts USING gin (search_vector)`
 - `idx_accounts_slug` — `CREATE INDEX idx_accounts_slug ON public.accounts USING btree (slug)`
 - `idx_accounts_status` — `CREATE INDEX idx_accounts_status ON public.accounts USING btree (status)`
@@ -372,25 +375,34 @@
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `meeting_id` | `bigint` | NO | — | **PK** |
-| `contact_id` | `bigint` | NO | — | **PK** |
+| `meeting_id` | `bigint` | NO | — |  |
+| `contact_id` | `bigint` | YES | — |  |
+| `id` | `bigint` | NO | `nextval('meeting_attendees_id_seq'::regclass)` | **PK** |
+| `display_name` | `text` | YES | — |  |
+| `email` | `text` | YES | — |  |
 
-**Primary key:** `meeting_id`, `contact_id`
+**Primary key:** `id`
 
 **Foreign keys:**
 
 - `contact_id` → `public.contacts`(`id`) — ON DELETE CASCADE
 - `meeting_id` → `public.meetings`(`id`) — ON DELETE CASCADE
 
+**Check constraints:**
+
+- `meeting_attendees_identity_chk`: `CHECK (((contact_id IS NOT NULL) OR (display_name IS NOT NULL)))`
+
 **Indexes:**
 
 - `idx_ma_contact` — `CREATE INDEX idx_ma_contact ON public.meeting_attendees USING btree (contact_id)`
+- `idx_ma_unlinked` — `CREATE INDEX idx_ma_unlinked ON public.meeting_attendees USING btree (meeting_id) WHERE (contact_id IS NULL)`
+- `meeting_attendees_linked_uniq` *(unique)* — `CREATE UNIQUE INDEX meeting_attendees_linked_uniq ON public.meeting_attendees USING btree (meeting_id, contact_id) WHERE (contact_id IS NOT NULL)`
 
 **Row-Level Security:** enabled (forced)
 
 - `meeting_attendees_isolation` — ALL, PERMISSIVE, roles: public
   - USING: `(EXISTS ( SELECT 1    FROM meetings m   WHERE (m.id = meeting_attendees.meeting_id)))`
-  - WITH CHECK: `((EXISTS ( SELECT 1    FROM meetings m   WHERE (m.id = meeting_attendees.meeting_id))) AND (EXISTS ( SELECT 1    FROM contacts c   WHERE (c.id = meeting_attendees.contact_id))))`
+  - WITH CHECK: `((EXISTS ( SELECT 1    FROM meetings m   WHERE (m.id = meeting_attendees.meeting_id))) AND ((contact_id IS NULL) OR (EXISTS ( SELECT 1    FROM contacts c   WHERE (c.id = meeting_attendees.contact_id)))))`
 
 ---
 
@@ -403,13 +415,13 @@
 | `date` | `date` | NO | — |  |
 | `title` | `text` | YES | — |  |
 | `filename` | `text` | NO | — |  |
-| `attendees` | `text` | YES | — |  |
 | `body` | `text` | NO | — |  |
 | `created_at` | `timestamp with time zone` | NO | `now()` |  |
 | `updated_at` | `timestamp with time zone` | NO | `now()` |  |
-| `search_vector` | `tsvector` | YES | `to_tsvector('english'::regconfig, ((((COALESCE(title, ''::text) \|\| ' '::text) \|\| COALESCE(attendees, ''::text)) \|\| ' '::text) \|\| COALESCE(body, ''::text)))` |  |
 | `user_id` | `bigint` | NO | — |  |
 | `internal` | `boolean` | NO | `false` |  |
+| `needs_review` | `boolean` | NO | `false` |  |
+| `search_vector` | `tsvector` | YES | `to_tsvector('english'::regconfig, ((COALESCE(title, ''::text) \|\| ' '::text) \|\| COALESCE(body, ''::text)))` |  |
 
 **Primary key:** `id`
 
@@ -423,6 +435,7 @@
 - `idx_meetings_account` — `CREATE INDEX idx_meetings_account ON public.meetings USING btree (account_id)`
 - `idx_meetings_date` — `CREATE INDEX idx_meetings_date ON public.meetings USING btree (date)`
 - `idx_meetings_internal` — `CREATE INDEX idx_meetings_internal ON public.meetings USING btree (internal) WHERE (internal = true)`
+- `idx_meetings_needs_review` — `CREATE INDEX idx_meetings_needs_review ON public.meetings USING btree (needs_review) WHERE (needs_review = true)`
 - `idx_meetings_search` — `CREATE INDEX idx_meetings_search ON public.meetings USING gin (search_vector)`
 - `idx_meetings_user` — `CREATE INDEX idx_meetings_user ON public.meetings USING btree (user_id)`
 - `meetings_account_filename_uniq` *(unique)* — `CREATE UNIQUE INDEX meetings_account_filename_uniq ON public.meetings USING btree (account_id, filename) WHERE (account_id IS NOT NULL)`

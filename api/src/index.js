@@ -29,6 +29,8 @@ import { VendorProductsService } from './services/vendor-products.js';
 import { AccountDetailsService } from './services/account-details.js';
 import { VendorHeatmapService } from './services/vendor-heatmap.js';
 import { ImportExportService } from './services/import-export.js';
+import { NotesImportService } from './services/notes-import.js';
+import { CalendarImportService } from './services/calendar-import.js';
 import { NotesService } from './services/notes.js';
 import { BackupService } from './services/backup.js';
 import { ContactEnrichmentService } from './services/contact-enrichment.js';
@@ -55,6 +57,8 @@ import vendorRoutes from './routes/vendors.js';
 import vendorProductRoutes from './routes/vendorProducts.js';
 import accountDetailsRoutes from './routes/accountDetails.js';
 import importExportRoutes from './routes/import-export.js';
+import notesImportRoutes from './routes/notes-import.js';
+import calendarImportRoutes from './routes/calendar-import.js';
 import noteRoutes from './routes/notes.js';
 import backupRoutes from './routes/backup.js';
 import internalDomainRoutes from './routes/internal-domains.js';
@@ -101,6 +105,8 @@ const vendorProductsService = new VendorProductsService({ vendorsService });
 const accountDetailsService = new AccountDetailsService();
 const vendorHeatmapService = new VendorHeatmapService();
 const importExportService = new ImportExportService({ contactsService, accountsService });
+const notesImportService = new NotesImportService({ meetingsService, accountsService, agentSettingsService });
+const calendarImportService = new CalendarImportService({ meetingsService, accountsService, contactsService, internalDomainsService });
 const notesService = new NotesService();
 const backupService = new BackupService();
 const themesService = new ThemesService();
@@ -135,6 +141,8 @@ await fastify.register(swagger, {
       { name: 'notes', description: 'Timestamped markdown notes attached to an account, contact, or opportunity' },
       { name: 'export', description: 'Markdown export' },
       { name: 'import-export', description: 'Portable JSON bundles for moving accounts between tenants' },
+      { name: 'notes-import', description: 'Bulk-import a notes directory (or .zip): per-file local-LLM extraction → account resolution → meetings, with parked/triage fallback' },
+      { name: 'calendar-import', description: 'Ingest a day of Google Calendar events (forwarded via tunnel): domain-classify attendees → contacts + account, one meeting per non-declined event' },
       { name: 'backup', description: 'Database backup configuration, pg_dump scheduling, list/restore/download' },
       { name: 'themes', description: 'GUI themes — built-in palettes plus per-user custom themes and the active-theme pointer' },
       { name: 'memories', description: 'Per-user long-lived preferences/rules/facts injected into the agent\'s system prompt at session start' },
@@ -169,6 +177,8 @@ await fastify.register(async (api) => {
   await api.register(vendorProductRoutes, { vendorProductsService });
   await api.register(accountDetailsRoutes, { accountDetailsService, vendorHeatmapService });
   await api.register(importExportRoutes, { importExportService });
+  await api.register(notesImportRoutes, { notesImportService });
+  await api.register(calendarImportRoutes, { calendarImportService });
   await api.register(noteRoutes, { notesService });
   await api.register(backupRoutes, { backupService });
   await api.register(internalDomainRoutes, { internalDomainsService });

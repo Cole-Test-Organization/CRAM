@@ -21,6 +21,7 @@ import { VendorProductsService } from '../services/vendor-products.js';
 import { AccountDetailsService } from '../services/account-details.js';
 import { VendorHeatmapService } from '../services/vendor-heatmap.js';
 import { ImportExportService } from '../services/import-export.js';
+import { NotesImportService } from '../services/notes-import.js';
 import { NotesService } from '../services/notes.js';
 import { BackupService } from '../services/backup.js';
 import { ContactEnrichmentService } from '../services/contact-enrichment.js';
@@ -54,15 +55,17 @@ const contactEnrichmentService = new ContactEnrichmentService({
 });
 const internalDomainsService = new InternalDomainsService();
 const memoriesService = new MemoriesService();
+// Lifted out of the services literal so notesImportService can depend on it.
+const meetingsService = new MeetingsService({
+  contactsService,
+  accountsService,
+  contactEnrichmentService,
+  internalDomainsService,
+});
 const services = {
   accountsService,
   contactsService,
-  meetingsService: new MeetingsService({
-    contactsService,
-    accountsService,
-    contactEnrichmentService,
-    internalDomainsService,
-  }),
+  meetingsService,
   searchService: new SearchService(),
   todoistService: todoistEnabled ? new TodoistService() : null,
   exportService: new ExportService(),
@@ -76,6 +79,7 @@ const services = {
   accountDetailsService: new AccountDetailsService(),
   vendorHeatmapService: new VendorHeatmapService(),
   importExportService: new ImportExportService({ contactsService, accountsService }),
+  notesImportService: new NotesImportService({ meetingsService, accountsService, agentSettingsService }),
   notesService: new NotesService(),
   backupService: new BackupService(),
   contactEnrichmentService,

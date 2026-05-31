@@ -1,5 +1,38 @@
 const BASE = '/api';
 
+// ── Notes-import job shapes (bulk directory/zip → meetings) ───────────────
+export type NotesImportOutcome = 'linked' | 'created' | 'parked' | 'skipped' | 'error';
+
+export type NotesImportResult = {
+  path: string;
+  ok: boolean;
+  outcome: NotesImportOutcome;
+  reason?: string | null; // 'internal' | 'ambiguous' | 'no_account_hint' | 'duplicate'
+  meeting_id?: number;
+  account_id?: number | null;
+  account_slug?: string | null;
+  account_created?: boolean;
+  matched_by?: string | null;
+  match_score?: number | null;
+  candidates?: Array<{ id: number; slug: string; name: string; status?: string; score: number }> | null;
+  note?: string;
+  error?: string;
+};
+
+export type NotesImportJob = {
+  jobId: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  stage: string | null;
+  total: number;
+  processed: number;
+  counts: { linked: number; created: number; parked: number; skipped: number; error: number };
+  results: NotesImportResult[];
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+};
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -453,6 +486,38 @@ export const api = {
   exportBundle: (slugs: string[]) => post<any>('/import-export/export', { slugs }),
   exportAccountBundle: (slug: string) => get<any>(`/import-export/accounts/${encodeURIComponent(slug)}`),
   importBundle: (bundle: any) => post<any>('/import-export/import', bundle),
+
+  // Notes import — bulk-ingest a directory (or .zip) of notes. Each file is run
+  // through the local model one at a time, then resolved to an account and
+  // written as a meeting (linked, auto-created, or parked for triage). Async:
+  // returns a jobId; poll getNotesImportJob until status is completed/failed.
+  importNotes: (files: Array<{ path: string; content: string }>) =>
+    post<{ jobId: string }>('/notes-import', { files }),
+  importNotesZip: async (file: File) => {
+    // Raw octet-stream like the backup upload — the API unpacks text entries
+    // server-side. No Content-Type juggling, no multipart.
+    const res = await fetch(`${BASE}/notes-import/upload-zip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file,
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      let msg = `${res.status} ${res.statusText}`;
+      try { msg = JSON.parse(body).error || msg; } catch {}
+      throw new Error(msg);
+    }
+    return res.json() as Promise<{ jobId: string; file_count: number }>;
+  },
+  getNotesImportJob: (jobId: string) =>
+    get<NotesImportJob>(`/notes-import/jobs/${encodeURIComponent(jobId)}`),
+  listNotesImportJobs: (params?: { status?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return get<{ jobs: NotesImportJob[] }>(`/notes-import/jobs${q ? '?' + q : ''}`);
+  },
 
   // Notes (timestamped markdown blurbs on an account, contact, or opportunity).
   getNotes: (target: { account_id?: number; contact_id?: number; opportunity_id?: number; limit?: number; offset?: number }) => {
