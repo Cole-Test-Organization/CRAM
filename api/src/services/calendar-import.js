@@ -7,7 +7,8 @@
 // "get ready for today" summary.
 //
 // Per event:
-//   skip if RSVP = Declined (denylist — everything else imports), skip all-day
+//   skip if RSVP = Declined (denylist — everything else imports), skip all-day,
+//   skip "organizer-only" holds (no guest but yourself — focus time, lunch, DND)
 //     →  classify each attendee email by domain:
 //          internal  (a domain the user owns — see internal_domains)  → kind=internal, no account link
 //          partner   (domain maps to a status=partner account, or is
@@ -245,6 +246,10 @@ export class CalendarImportService {
         this.partnerDomains = envDomainSet("CALENDAR_PARTNER_DOMAINS");
         // All-day events (OOO, holidays, focus blocks) are noise by default.
         this.skipAllDay = process.env.CALENDAR_IMPORT_ALL_DAY !== "true";
+        // "Organizer-only" holds (no guest but yourself — focus time, lunch, DND
+        // blocks, reminders) aren't meetings; skip by default. Opt in to importing
+        // them with CALENDAR_IMPORT_SOLO=true.
+        this.skipSolo = process.env.CALENDAR_IMPORT_SOLO !== "true";
     }
 
     // Ingest a day's worth of calendar events. Synchronous: processes the whole
@@ -405,6 +410,20 @@ export class CalendarImportService {
         // (real display name + RSVP status per guest) and falls back to the flat
         // guestEmails[] for older exports; both are deduped by email.
         const parsed = buildAttendees(meeting);
+
+        // "Blocking the calendar" holds — focus time, lunch, DND, reminders — have
+        // no guest other than the organizer (you). They aren't meetings, so by
+        // default we skip them instead of letting them pile up as empty internal
+        // notes (and clutter the Today timeline). Any event with even one other
+        // attendee — internal teammate or external — is kept. With selfEmail
+        // unknown we can still catch the zero-guest case.
+        const hasOtherAttendee = parsed.some(
+            (p) => p.email && (!selfEmail || p.email !== selfEmail),
+        );
+        if (this.skipSolo && !hasOtherAttendee) {
+            return { title, outcome: "skipped", reason: "organizer_only" };
+        }
+
         const internalAtt = [];
         const externalByDomain = new Map(); // domain → [{email, name_guess}], insertion-ordered
         for (const p of parsed) {
