@@ -201,32 +201,11 @@ export default async function meetingRoutes(fastify, { meetingsService, accounts
     }
   });
 
-  // Resolve a list of emails into known contacts and account candidates.
-  // Pure read — no side effects. Step 1 of the from-emails meeting flow.
-  fastify.post('/meetings/resolve-emails', {
-    schema: {
-      description: 'Resolve a list of attendee emails into existing contacts (by case-insensitive email match) and account candidates (by domain match). Self-domains (env: SELF_DOMAINS) are flagged kind=internal. Pure read — no writes. Pair with POST /api/meetings/from-emails to persist the user\'s choices.',
-      tags: ['meetings'],
-      body: {
-        type: 'object',
-        required: ['emails'],
-        properties: {
-          emails: {
-            type: 'string',
-            description: 'Raw email list. Accepts comma/semicolon/newline separators and "Name <email>" form. The server regex-extracts each address, so leading/trailing prose ("Attendees: …") is fine.',
-          },
-        },
-      },
-    },
-  }, async (request) => {
-    return meetingsService.resolveEmails(request.userId, request.body.emails);
-  });
-
   // Create a meeting from a resolved email list. Caller picks which account
   // candidate is the primary and which new contacts to create / research.
   fastify.post('/meetings/from-emails', {
     schema: {
-      description: 'Create a non-internal meeting from a resolved email list. Account: either link to an existing one (mode=existing, account_id) or create a new one (mode=new, name + optional domain). Contacts: array of {mode:existing, contact_id} or {mode:new, full_name, email?, kind?, research?} — research=true kicks off a background outreach + local-LLM contact enrichment job (results PATCHed into the contact when ready). Account-level research is not yet implemented.',
+      description: 'Create a non-internal meeting from a resolved email list — AND its account + contacts — in one call. Use this only when you have actual meeting notes (a body); to just add the account + people with no meeting, use POST /api/contacts/from-emails instead. The account + contacts half is delegated to that same import path. Account: link an existing one (mode=existing, account_id) or create a new one (mode=new, name + optional domain). Contacts: array of {mode:existing, contact_id, link_to_account?} or {mode:new, full_name, email?, kind?, research?} — research=true kicks off a background outreach + local-LLM contact enrichment job (results PATCHed into the contact when ready). Account-level research is not yet implemented.',
       tags: ['meetings'],
       body: {
         type: 'object',

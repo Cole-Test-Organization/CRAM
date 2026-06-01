@@ -45,6 +45,8 @@ const REFS = {
   'contacts.research':             { http: 'POST /api/contacts/:id/research',                   mcp: { tool: 'contacts', action: 'research' } },
   'contacts.get_enrichment_job':   { http: 'GET /api/contacts/enrichment-jobs/:jobId',          mcp: { tool: 'contacts', action: 'get_enrichment_job' } },
   'contacts.list_enrichment_jobs': { http: 'GET /api/contacts/:id/enrichment-jobs',             mcp: { tool: 'contacts', action: 'list_enrichment_jobs' } },
+  'contacts.resolve_emails':       { http: 'POST /api/contacts/resolve-emails',                 mcp: { tool: 'contacts', action: 'resolve_emails' } },
+  'contacts.import_from_emails':   { http: 'POST /api/contacts/from-emails',                    mcp: { tool: 'contacts', action: 'import_from_emails' } },
 
   // meetings (external + internal — internal=true means no account)
   'meetings.list':        { http: 'GET /api/meetings',                           mcp: { tool: 'meetings', action: 'list' } },
@@ -55,7 +57,6 @@ const REFS = {
   'meetings.assign_account': { http: 'POST /api/meetings/:id/assign-account',                mcp: { tool: 'meetings', action: 'assign_account' } },
   'meetings.link_attendee':  { http: 'POST /api/meetings/:id/attendees/:attendeeId/link',   mcp: { tool: 'meetings', action: 'link_attendee' } },
   'meetings.delete':      { http: 'DELETE /api/meetings/:id',                    mcp: { tool: 'meetings', action: 'delete' } },
-  'meetings.resolve_emails':       { http: 'POST /api/meetings/resolve-emails',            mcp: { tool: 'meetings', action: 'resolve_emails' } },
   'meetings.create_from_emails':   { http: 'POST /api/meetings/from-emails',               mcp: { tool: 'meetings', action: 'create_from_emails' } },
   'meetings.get_enrichment_job':   { http: 'GET /api/meetings/enrichment-jobs/:jobId',     mcp: { tool: 'meetings', action: 'get_enrichment_job' } },
   'meetings.list_enrichment_jobs': { http: 'GET /api/meetings/:id/enrichment-jobs',        mcp: { tool: 'meetings', action: 'list_enrichment_jobs' } },
@@ -263,11 +264,12 @@ Avoid duplicate people and companies before creating.
 - **Contacts — prefer ${ref('contacts.find_or_create')}** over plain create. It's the single creation path, running full dedupe + enrich: matches by exact email (case-insensitive) → exact \`full_name\`+\`kind\` → fuzzy \`full_name\` within the same kind (pg_trgm), returns the match (\`matched_by\`, plus \`match_score\` when fuzzy), (re)links it to \`account_id\` when given, and — when you supply a value for a field that's currently BLANK on the stored contact — fills it in (reported via \`enriched\`/\`enriched_fields\`), never overwriting existing data. Send at least an email OR a name: an **email-only contact is valid** (you see \`jsmith@acme.com\` with no display name — store it now, and the name gets filled the next time you see them with one). This keeps you from piling up near-duplicate contacts, especially \`kind=internal\` teammates. ${ref('contacts.find_existing')} is the read-only probe (returns null, no write); ${ref('contacts.create_standalone')} runs the same dedupe but still refuses with 409 + an \`existing\` payload on a match.
 - **Accounts:** search (or ${ref('accounts.find_existing')}) first — match order slug → any domain → case-insensitive name. \`create\` refuses with 409 + an \`existing\` payload. **When ingesting companies from notes/email, prefer ${ref('accounts.find_or_create')}** — it's the idempotent classifier: exact tiers + a near-exact fuzzy name (≥ 0.85) return \`status:"matched"\`; a mid-confidence fuzzy name (0.4–0.85) returns \`status:"ambiguous"\` with ranked \`candidates\` and writes nothing (surface them for one-click triage rather than guessing); no match returns \`status:"none"\`. Pass \`create_if_missing:true\` only when you're willing to spawn a fresh account on "none"; pass \`fuzzy:false\` to match on exact slug/domain/name alone.
 
-### From-Emails Meeting Flow
-When the user pastes calendar-invite emails, use the two-step flow:
-1. ${ref('meetings.resolve_emails')} — pure read. Returns attendees tagged \`kind: account|internal\` plus account candidates grouped by domain. Internal-flagged domains (managed via \`internal_domains\`) don't appear as account candidates. \`SELF_DOMAINS\` / \`INTERNAL_DOMAINS\` env vars act as a bootstrap default until the user curates the list.
-2. ${ref('meetings.create_from_emails')} — atomic write. Creates the account (if new), creates new contacts linked to it, creates the meeting, fires background enrichment for any new contact flagged \`research: true\` (opt-in per contact — it burns LinkedIn quota).
-3. Poll enrichment via ${ref('meetings.get_enrichment_job')} until \`completed\`. Successful jobs PATCH typed contact fields (\`title\`, \`linkedin\`, \`location_raw\`, normalized city/state/country, \`notes\`) in place.
+### From-Emails Flow (add people; a meeting only if there are notes)
+When the user pastes an attendee list / calendar-invite emails, **default to adding the account + contacts only — do NOT create a meeting unless the user actually has meeting notes to record.** A pasted To/CC line is not a meeting.
+1. ${ref('contacts.resolve_emails')} — pure read. Returns attendees tagged \`kind: account|internal\` plus account candidates grouped by domain. Internal-flagged domains (managed via \`internal_domains\`) don't appear as account candidates. \`SELF_DOMAINS\` / \`INTERNAL_DOMAINS\` env vars act as a bootstrap default until the user curates the list.
+2. ${ref('contacts.import_from_emails')} — atomic write, **no meeting**. Creates the account (if new), creates/links the contacts, fires background enrichment for any new contact flagged \`research: true\` (opt-in per contact — it burns LinkedIn quota). This is the right call for "add this account and these contacts".
+3. **Only if the user also has meeting notes**, use ${ref('meetings.create_from_emails')} *instead of* step 2 — it runs the same account + contact import and then attaches the meeting body. Never invent a meeting just to capture people.
+4. Poll enrichment via ${ref('contacts.get_enrichment_job')} (or ${ref('meetings.get_enrichment_job')} for the meeting flow) until \`completed\`. Successful jobs PATCH typed contact fields (\`title\`, \`linkedin\`, \`location_raw\`, normalized city/state/country, \`notes\`) in place.
 
 Auto-proceed only when there's exactly one external account candidate and most attendees already exist as contacts. Otherwise surface choices to the user — especially the per-contact research toggle.
 

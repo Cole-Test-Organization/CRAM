@@ -217,7 +217,9 @@ export const api = {
 
   // From-emails flow: resolve a list of attendee emails into known contacts +
   // account candidates, then submit the user's choices to create the meeting
-  // (and optionally fire off background contact enrichment).
+  // (and optionally fire off background contact enrichment). The resolve step
+  // now lives on the contacts surface (POST /api/contacts/resolve-emails) — it's
+  // a contacts/accounts concern, shared with the no-meeting import path.
   resolveMeetingEmails: (emails: string[] | string) =>
     post<{
       attendees: Array<{
@@ -235,7 +237,7 @@ export const api = {
         suggested_name: string;
       }>;
       primary_domain: string | null;
-    }>('/meetings/resolve-emails', { emails }),
+    }>('/contacts/resolve-emails', { emails }),
 
   createMeetingFromEmails: (payload: {
     date: string;

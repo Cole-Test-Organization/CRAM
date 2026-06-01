@@ -99,9 +99,9 @@ export function registerTools(server, services, resolveUserId) {
 
   server.tool(
     'contacts',
-    'Manage CRM contacts (people). Actions: list (filter by company slug, kind, city, country, search text; paginate), get (by id — includes linked accounts and `meetings`: the contact\'s meeting history, newest first, each with their per-meeting RSVP/attendance status), get_by_email (case-insensitive single-contact lookup by email — returns null if no match), find_existing (read-only dedupe probe — email-first case-insensitive, then exact full_name+kind, no fuzzy; returns the match or null), find_or_create (PREFERRED — the single creation path: idempotent dedupe + enrich. Matches by exact email, then exact full_name+kind, then fuzzy full_name within the same kind via pg_trgm; returns the existing contact with matched_by + match_score instead of throwing 409, else creates. On a match it fills any BLANK stored field from what you pass (enriched/enriched_fields) without overwriting existing data, and (re)links account_id. Pass at least an email OR a name — an email-only contact is valid. Use it so you don\'t pile up near-duplicates, especially kind=internal teammates), create (explicit insert — runs the same dedupe core but throws 409 if a duplicate is detected, instead of upserting; supply at least an email or a name; prefer find_or_create), update (partial), delete, link_account, unlink_account, attendee_options (returns buckets for the meeting/internal-note picker), research (enqueue a background outreach + local-LLM enrichment job for an existing contact — same ContactEnrichmentService as create_from_emails uses, results PATCHed into the contact when ready), get_enrichment_job (poll a single job), list_enrichment_jobs (jobs targeting a single contact, newest first). Contact kinds: account = works at a non-partner account (a company you sell to); partner = channel/reseller rep (link them to a partner account); internal = teammate at your own company (no account link needed). Each contact carries a location (location_raw + normalized city/state/country) — populate when researching via outreach so we can match contacts to in-person events nearby.',
+    'Manage CRM contacts (people). Actions: list (filter by company slug, kind, city, country, search text; paginate), get (by id — includes linked accounts and `meetings`: the contact\'s meeting history, newest first, each with their per-meeting RSVP/attendance status), get_by_email (case-insensitive single-contact lookup by email — returns null if no match), find_existing (read-only dedupe probe — email-first case-insensitive, then exact full_name+kind, no fuzzy; returns the match or null), find_or_create (PREFERRED — the single creation path: idempotent dedupe + enrich. Matches by exact email, then exact full_name+kind, then fuzzy full_name within the same kind via pg_trgm; returns the existing contact with matched_by + match_score instead of throwing 409, else creates. On a match it fills any BLANK stored field from what you pass (enriched/enriched_fields) without overwriting existing data, and (re)links account_id. Pass at least an email OR a name — an email-only contact is valid. Use it so you don\'t pile up near-duplicates, especially kind=internal teammates), create (explicit insert — runs the same dedupe core but throws 409 if a duplicate is detected, instead of upserting; supply at least an email or a name; prefer find_or_create), update (partial), delete, link_account, unlink_account, attendee_options (returns buckets for the meeting/internal-note picker), research (enqueue a background outreach + local-LLM enrichment job for an existing contact — same ContactEnrichmentService as create_from_emails uses, results PATCHed into the contact when ready), get_enrichment_job (poll a single job), list_enrichment_jobs (jobs targeting a single contact, newest first), resolve_emails (pure read — turn a pasted attendee/email list into matched contacts + account candidates grouped by domain; internal-domain emails are flagged kind=internal and never become account candidates), import_from_emails (materialize the account + contacts from that resolved list WITHOUT creating a meeting — the "add these people" path; pass from_emails_payload. Use the meetings tool create_from_emails only when you also have meeting notes). Contact kinds: account = works at a non-partner account (a company you sell to); partner = channel/reseller rep (link them to a partner account); internal = teammate at your own company (no account link needed). Each contact carries a location (location_raw + normalized city/state/country) — populate when researching via outreach so we can match contacts to in-person events nearby.',
     {
-      action: z.enum(['list', 'get', 'get_by_email', 'find_existing', 'find_or_create', 'create', 'update', 'delete', 'link_account', 'unlink_account', 'attendee_options', 'research', 'get_enrichment_job', 'list_enrichment_jobs']),
+      action: z.enum(['list', 'get', 'get_by_email', 'find_existing', 'find_or_create', 'create', 'update', 'delete', 'link_account', 'unlink_account', 'attendee_options', 'resolve_emails', 'import_from_emails', 'research', 'get_enrichment_job', 'list_enrichment_jobs']),
       id: z.number().optional().describe('Contact ID'),
       email: z.string().optional().describe('Email address (for get_by_email)'),
       account_id: z.number().optional().describe('Account ID (for create, link, unlink, attendee_options external mode)'),
@@ -128,8 +128,26 @@ export function registerTools(server, services, resolveUserId) {
         state: z.string().optional().describe('Normalized state/region, e.g., "AZ"'),
         country: z.string().optional().describe('Normalized country, e.g., "USA"'),
       }).optional().describe('Contact data (for create/update)'),
+      emails: z.union([z.array(z.string()), z.string()]).optional().describe('Attendee emails (for resolve_emails). Either an array, or a single string with comma/semicolon/newline separators. Accepts "Name <email>" form.'),
+      from_emails_payload: z.object({
+        account: z.object({
+          mode: z.enum(['existing', 'new']),
+          account_id: z.number().optional(),
+          name: z.string().optional(),
+          domain: z.string().optional(),
+        }),
+        contacts: z.array(z.object({
+          mode: z.enum(['existing', 'new']),
+          contact_id: z.number().optional(),
+          link_to_account: z.boolean().optional(),
+          full_name: z.string().optional(),
+          email: z.string().optional(),
+          kind: z.enum(['account', 'partner', 'internal']).optional(),
+          research: z.boolean().optional(),
+        })),
+      }).optional().describe('Payload for import_from_emails — creates the account + contacts, NO meeting. See POST /api/contacts/from-emails for full semantics.'),
     },
-    async ({ action, id, email, account_id, company, kind, city, country, mode, search, enrichment_job_id, limit, offset, data }) => {
+    async ({ action, id, email, account_id, company, kind, city, country, mode, search, enrichment_job_id, emails, from_emails_payload, limit, offset, data }) => {
       const userId = await resolveUserId();
       switch (action) {
         case 'list':
@@ -168,6 +186,12 @@ export function registerTools(server, services, resolveUserId) {
           if (!mode) return errorResponse('attendee_options requires mode: "external" (for an account meeting — also pass account_id) returns {account, partner, internal} buckets; "internal" (for an internal-only meeting) returns {partner, internal}.');
           if (mode === 'external' && !account_id) return errorResponse('attendee_options mode="external" requires account_id (the account whose meeting you are picking attendees for). Resolve the account via the accounts tool first.');
           return callService(() => contactsService.getAttendeeOptions(userId, { mode, accountId: account_id }));
+        case 'resolve_emails':
+          if (!emails) return errorResponse('resolve_emails requires emails — an array of email strings, or a single newline/comma/semicolon-separated string (e.g. straight from a calendar invite). "Name <email>" form is accepted.');
+          return callService(() => contactsService.resolveEmails(userId, emails));
+        case 'import_from_emails':
+          if (!from_emails_payload) return errorResponse('import_from_emails requires from_emails_payload — the resolved structure from action="resolve_emails" with your decisions filled in (account mode existing|new, each contact mode existing|new, optional research:true). Creates the account + contacts but NO meeting (the "add these people" path). Use the meetings tool action="create_from_emails" instead only when you also have meeting notes to attach.');
+          return callService(() => contactsService.importFromEmails(userId, from_emails_payload));
         case 'research': {
           if (!contactEnrichmentService) return errorResponse('Contact enrichment service not available on this server. Check ops config.');
           if (!id) return errorResponse('research requires id (the numeric contact id to enrich). Resolve via action="get_by_email" or action="list" with search first.');
@@ -206,9 +230,9 @@ export function registerTools(server, services, resolveUserId) {
 
   server.tool(
     'meetings',
-    'Manage meeting notes. Meetings can be tied to an account (account or partner) or internal-only (no account). Attendees come in two forms: LINKED (contact_ids → existing CRM contacts) and UNLINKED (a name/email with no contact yet — recorded for visibility, linkable later). Actions: list (all, paginated; filter by account_id, internal flag, or needs_review), get (by id — body, linked contacts, and unlinked_attendees[]), create (pass account_id + contact_ids for an account meeting; pass internal=true and omit account_id for an internal-only note; needs_review=true parks an uncertain/imported note for triage), update (partial — contact_ids replaces the LINKED set, attendees/unlinked_attendees replaces the UNLINKED set, independently; the internal flag and account_id cannot be changed after creation), delete, assign_account (triage — attach a parked account-less note to an account, flipping internal→false and clearing needs_review; 409 if already assigned), link_attendee (triage — convert an unlinked attendee row into a link to an existing contact, deduping if already linked), resolve_emails (pure read — given a list of attendee emails, return matched contacts + account candidates grouped by domain so the caller can stage a from-emails meeting), create_from_emails (atomic: creates account if requested, creates new contacts if requested, creates the meeting, and fires off optional background outreach + LLM enrichment for new contacts), get_enrichment_job (poll a single enrichment job kicked off by create_from_emails), list_enrichment_jobs (list all enrichment jobs for the contacts on a given meeting — useful for a progress dashboard).',
+    'Manage meeting notes. Meetings can be tied to an account (account or partner) or internal-only (no account). Attendees come in two forms: LINKED (contact_ids → existing CRM contacts) and UNLINKED (a name/email with no contact yet — recorded for visibility, linkable later). Actions: list (all, paginated; filter by account_id, internal flag, or needs_review), get (by id — body, linked contacts, and unlinked_attendees[]), create (pass account_id + contact_ids for an account meeting; pass internal=true and omit account_id for an internal-only note; needs_review=true parks an uncertain/imported note for triage), update (partial — contact_ids replaces the LINKED set, attendees/unlinked_attendees replaces the UNLINKED set, independently; the internal flag and account_id cannot be changed after creation), delete, assign_account (triage — attach a parked account-less note to an account, flipping internal→false and clearing needs_review; 409 if already assigned), link_attendee (triage — convert an unlinked attendee row into a link to an existing contact, deduping if already linked), create_from_emails (atomic: creates the account + contacts AND a meeting from a resolved email list — use ONLY when you have meeting notes/body; to add the account + people WITHOUT a meeting, use the contacts tool actions resolve_emails + import_from_emails, which this delegates the account/people half to. Fires optional background outreach + LLM enrichment for new contacts flagged research:true), get_enrichment_job (poll a single enrichment job kicked off by create_from_emails), list_enrichment_jobs (list all enrichment jobs for the contacts on a given meeting — useful for a progress dashboard).',
     {
-      action: z.enum(['list', 'get', 'create', 'update', 'delete', 'assign_account', 'link_attendee', 'resolve_emails', 'create_from_emails', 'get_enrichment_job', 'list_enrichment_jobs']),
+      action: z.enum(['list', 'get', 'create', 'update', 'delete', 'assign_account', 'link_attendee', 'create_from_emails', 'get_enrichment_job', 'list_enrichment_jobs']),
       id: z.number().optional().describe('Meeting ID (for get, update, delete, assign_account, link_attendee)'),
       account_id: z.number().optional().describe('Account ID — for list (filter to that account), create (omit for internal=true), or assign_account (the account to attach a parked note to).'),
       attendee_id: z.number().optional().describe('Unlinked attendee row id (from the meeting\'s unlinked_attendees[]) — for link_attendee.'),
@@ -217,7 +241,6 @@ export function registerTools(server, services, resolveUserId) {
       needs_review: z.boolean().optional().describe('For list: filter by the triage flag (true=only parked notes awaiting triage, false=only settled, omit=both). Set on create/update via data.needs_review.'),
       limit: z.number().optional(),
       offset: z.number().optional(),
-      emails: z.union([z.array(z.string()), z.string()]).optional().describe('Attendee emails (for resolve_emails). Either an array, or a single string with comma/semicolon/newline separators. Accepts "Name <email>" form.'),
       enrichment_job_id: z.string().optional().describe('Enrichment job ID returned by create_from_emails (for get_enrichment_job).'),
       from_emails_payload: z.object({
         date: z.string(),
@@ -253,7 +276,7 @@ export function registerTools(server, services, resolveUserId) {
         contact_ids: z.array(z.number()).optional().describe('Array of contact IDs to link as attendees (LINKED set). Required for non-internal meetings; for internal meetings, typically kind=internal or kind=partner. On update, replaces the linked set.'),
       }).optional().describe('Meeting data (for create/update)'),
     },
-    async ({ action, id, account_id, attendee_id, contact_id, internal, needs_review, limit, offset, emails, enrichment_job_id, from_emails_payload, data }) => {
+    async ({ action, id, account_id, attendee_id, contact_id, internal, needs_review, limit, offset, enrichment_job_id, from_emails_payload, data }) => {
       const userId = await resolveUserId();
       switch (action) {
         case 'list':
@@ -283,11 +306,8 @@ export function registerTools(server, services, resolveUserId) {
         case 'link_attendee':
           if (!id || !attendee_id || !contact_id) return errorResponse('link_attendee requires id (meeting id), attendee_id (the unlinked attendee row id from the meeting\'s unlinked_attendees[]), and contact_id (the existing contact to link it to). Resolve the contact first via the contacts tool (find_or_create / get_by_email / list). If the contact is already an attendee, the unlinked row is dropped (dedupe).');
           return callService(() => meetingsService.linkAttendee(userId, id, attendee_id, contact_id), { notFoundMsg: `No unlinked attendee id=${attendee_id} on meeting id=${id}. Re-fetch the meeting with action="get" to see current unlinked_attendees[].` });
-        case 'resolve_emails':
-          if (!emails) return errorResponse('resolve_emails requires emails — an array of email strings, or a single newline/comma/semicolon-separated string (e.g. straight from a calendar invite). "Name <email>" form is accepted.');
-          return callService(() => meetingsService.resolveEmails(userId, emails));
         case 'create_from_emails':
-          if (!from_emails_payload) return errorResponse('create_from_emails requires from_emails_payload — the resolved structure from action="resolve_emails" with your decisions filled in (account mode existing|new, each contact mode existing|new, and optional research:true flags). See the from-emails section of the agent instructions for the shape.');
+          if (!from_emails_payload) return errorResponse('create_from_emails requires from_emails_payload — the resolved structure from the contacts tool action="resolve_emails" with your decisions filled in (account mode existing|new, each contact mode existing|new, optional research:true) PLUS meeting fields date + body. Only use this when you have meeting notes; to add the account + people without a meeting, use the contacts tool action="import_from_emails". See the from-emails section of the agent instructions for the shape.');
           return callService(() => meetingsService.createFromEmails(userId, from_emails_payload));
         case 'get_enrichment_job':
           if (!contactEnrichmentService) return errorResponse('Contact enrichment service not available on this server.');

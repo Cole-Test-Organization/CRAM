@@ -1,6 +1,9 @@
 import { withUser } from '../db/connection.js';
-import { badRequest, conflict } from '../lib/http-error.js';
+import { badRequest, conflict, notFound } from '../lib/http-error.js';
 import { fillBlanks } from './_enrich.js';
+import { normalizeDomain, suggestAccountName } from './_domain.js';
+import { parseEmailList } from './_email.js';
+import { slugify } from './_slug.js';
 
 const CONTACT_COLS = 'id, full_name, company, title, email, phone, linkedin, notes, kind, location_raw, city, state, country, created_at, updated_at';
 const VALID_KINDS = new Set(['account', 'partner', 'internal']);
@@ -31,6 +34,18 @@ function normalizeKind(kind) {
 }
 
 export class ContactsService {
+  // accountsService / internalDomainsService / contactEnrichmentService are
+  // wired onto the instance AFTER construction by the service bags
+  // (mcp/server.js, agent/mcp-client.js): ContactEnrichmentService itself
+  // depends on ContactsService, so taking these as constructor args would
+  // create a construction-order cycle. They power the from-emails staging
+  // methods (resolveEmails, importFromEmails); plain CRUD doesn't need them.
+  constructor({ accountsService = null, internalDomainsService = null, contactEnrichmentService = null } = {}) {
+    this.accountsService = accountsService;
+    this.internalDomainsService = internalDomainsService;
+    this.contactEnrichmentService = contactEnrichmentService;
+  }
+
   async getAll(userId, { company, search, kind, city, country, limit, offset = 0 } = {}) {
     return withUser(userId, async (client) => {
       const params = [];
@@ -581,5 +596,183 @@ export class ContactsService {
       await client.query('DELETE FROM contacts WHERE id = $1', [id]);
       return existing;
     });
+  }
+
+  // ── From-emails staging (account + people; no meeting) ──────────────────
+  // These two used to live on MeetingsService, which forced every "add these
+  // people" request through a meeting. They belong here: resolving an email
+  // list and materializing the account + contacts is a contacts/accounts
+  // concern. MeetingsService.createFromEmails now layers a meeting on top of
+  // importFromEmails when (and only when) there are actual notes.
+
+  // Resolve a list of email strings (raw or RFC-5322) into what we already know
+  // about each one — matched contacts + account candidates grouped by domain —
+  // so the caller can stage an import (account + contacts) or a from-emails
+  // meeting. Pure read, no writes. Lookups are deliberately SLIM (identity-only
+  // contact + account rows, no linked-record fan-out): this is a staging probe,
+  // and embedding full account subtrees here — then duplicating them per
+  // attendee via account_match — used to blow out agent context windows on
+  // large accounts. Output:
+  //   { attendees: [{ email, domain, name_guess, kind, contact, account_match }],
+  //     accounts:  [{ domain, account, attendee_count, suggested_name }],
+  //     primary_domain }
+  async resolveEmails(userId, emails) {
+    if (!this.accountsService) {
+      throw new Error('ContactsService.resolveEmails requires accountsService (wire it onto the instance in the service bag)');
+    }
+    const parsed = Array.isArray(emails)
+      ? parseEmailList(emails.join('\n'))
+      : parseEmailList(emails);
+    const internalDomains = this.internalDomainsService
+      ? await this.internalDomainsService.getDomainSet(userId)
+      : new Set();
+
+    const attendees = [];
+    const domainAttendeeCount = new Map();
+    for (const p of parsed) {
+      const isInternal = !!(p.domain && internalDomains.has(p.domain));
+      const contact = await this.getByEmailBrief(userId, p.email);
+      attendees.push({
+        email: p.email,
+        domain: p.domain,
+        name_guess: p.name_guess,
+        kind: isInternal ? 'internal' : 'account',
+        contact: contact || null,
+      });
+      if (!isInternal && p.domain) {
+        domainAttendeeCount.set(p.domain, (domainAttendeeCount.get(p.domain) || 0) + 1);
+      }
+    }
+
+    const accounts = [];
+    for (const [domain, count] of domainAttendeeCount.entries()) {
+      const account = await this.accountsService.getByDomainBrief(userId, domain);
+      accounts.push({
+        domain,
+        account: account || null,
+        attendee_count: count,
+        suggested_name: account ? account.name : suggestAccountName(domain),
+      });
+    }
+    accounts.sort((a, b) => b.attendee_count - a.attendee_count || a.domain.localeCompare(b.domain));
+    const primary = accounts[0]?.domain || null;
+
+    // Attach the matched (slim) account to each external attendee so the caller
+    // doesn't have to cross-reference. Identity-only objects, so the
+    // per-attendee duplication is cheap.
+    for (const a of attendees) {
+      if (a.kind !== 'account' || !a.domain) { a.account_match = null; continue; }
+      const candidate = accounts.find(c => c.domain === a.domain);
+      a.account_match = candidate?.account || null;
+    }
+    return { attendees, accounts, primary_domain: primary };
+  }
+
+  // Materialize an account + its contacts from a resolved email list — WITHOUT
+  // creating a meeting. The account-and-people half of the from-emails flow;
+  // MeetingsService.createFromEmails layers a meeting on top of this. The caller
+  // is expected to have run resolveEmails first and filled in its decisions.
+  //
+  // Payload:
+  //   {
+  //     account: { mode: 'existing'|'new', account_id?, name?, domain? },
+  //     contacts: [
+  //       { mode: 'existing', contact_id, link_to_account? } |
+  //       { mode: 'new', full_name, email?, kind?, research? }
+  //     ]
+  //   }
+  // Returns { account_id, contact_ids, enrichment_jobs }.
+  async importFromEmails(userId, payload) {
+    if (!this.accountsService) {
+      throw new Error('ContactsService.importFromEmails requires accountsService (wire it onto the instance in the service bag)');
+    }
+    if (!payload?.account?.mode) {
+      throw badRequest('payload.account.mode is required: "existing" (also pass account_id of a matched account) or "new" (also pass name and optional domain — a fresh account row will be created).');
+    }
+
+    // 1) Resolve/create the account.
+    let accountId;
+    if (payload.account.mode === 'existing') {
+      if (!payload.account.account_id) {
+        throw badRequest('payload.account.account_id is required when account.mode="existing". Use resolve_emails to get the matched account candidate id, or look up the account via the accounts tool.');
+      }
+      const acct = await this.accountsService.getById(userId, payload.account.account_id);
+      if (!acct) throw notFound(`Account not found: id=${payload.account.account_id}. Use the accounts tool (list/search/get) to find the right id, or switch to account.mode="new" with a name.`);
+      accountId = acct.id;
+      // If the user typed a domain that isn't yet on the account, append it.
+      if (payload.account.domain) {
+        const domain = normalizeDomain(payload.account.domain);
+        const existingDomains = Array.isArray(acct.domains) ? acct.domains : [];
+        if (domain && !existingDomains.includes(domain)) {
+          await this.accountsService.patch(userId, acct.id, { domains: [...existingDomains, domain] });
+        }
+      }
+    } else if (payload.account.mode === 'new') {
+      if (!payload.account.name) {
+        throw badRequest('payload.account.name is required when account.mode="new" (the company display name — the slug is derived automatically). Optional: payload.account.domain to populate the domains array.');
+      }
+      const slug = slugify(payload.account.name);
+      const domain = normalizeDomain(payload.account.domain || '');
+      const created = await this.accountsService.create(userId, {
+        name: payload.account.name,
+        slug,
+        domains: domain ? [domain] : [],
+      });
+      accountId = created.id;
+    } else {
+      throw badRequest(`Unknown account.mode: "${payload.account.mode}". Must be "existing" (also pass account_id) or "new" (also pass name).`);
+    }
+
+    // 2) Resolve/create contacts.
+    const contactIds = [];
+    const enrichTargets = [];
+    for (const c of payload.contacts || []) {
+      if (c.mode === 'existing') {
+        if (!c.contact_id) {
+          throw badRequest('contact.contact_id is required when contact.mode="existing". Use the contact ids returned by resolve_emails (or look them up via the contacts tool).');
+        }
+        contactIds.push(c.contact_id);
+        if (c.link_to_account) {
+          try { await this.linkAccount(userId, c.contact_id, accountId); }
+          catch { /* idempotent — ignore conflict */ }
+        }
+      } else if (c.mode === 'new') {
+        if (!c.full_name) {
+          throw badRequest('contact.full_name is required when contact.mode="new" (the person\'s display name). Optional: contact.email, contact.kind ("account" default | "partner" | "internal"), contact.research (true to enqueue background enrichment).');
+        }
+        const kind = c.kind || 'account';
+        const linkAccountId = kind === 'internal' ? null : accountId;
+        // findOrCreate, not create: a "new" attendee that turns out to already
+        // exist should link/enrich idempotently, not 409 the whole write.
+        const { contact } = await this.findOrCreate(userId, {
+          full_name: c.full_name,
+          email: c.email || null,
+          kind,
+        }, linkAccountId);
+        contactIds.push(contact.id);
+        if (c.research) enrichTargets.push({ contactId: contact.id, name: contact.full_name });
+      } else {
+        throw badRequest(`Unknown contact.mode: "${c.mode}". Must be "existing" (also pass contact_id) or "new" (also pass full_name).`);
+      }
+    }
+
+    // 3) Fire-and-forget enrichment for new contacts the user opted in for.
+    //    Pulls account name from the just-created/-resolved account so the
+    //    outreach lookup has the right disambiguator.
+    const enrichmentJobs = [];
+    if (enrichTargets.length > 0 && this.contactEnrichmentService) {
+      const acct = await this.accountsService.getById(userId, accountId);
+      const accountName = acct?.name || null;
+      for (const t of enrichTargets) {
+        const jobId = this.contactEnrichmentService.enqueue(userId, {
+          contactId: t.contactId,
+          name: t.name,
+          accountName,
+        });
+        enrichmentJobs.push({ contact_id: t.contactId, enrichment_job_id: jobId });
+      }
+    }
+
+    return { account_id: accountId, contact_ids: contactIds, enrichment_jobs: enrichmentJobs };
   }
 }

@@ -62,6 +62,13 @@ const meetingsService = new MeetingsService({
   contactEnrichmentService,
   internalDomainsService,
 });
+// ContactsService owns the from-emails staging methods (resolveEmails,
+// importFromEmails), which need these three deps. They can't be constructor
+// args — contactEnrichmentService depends on contactsService, so passing them
+// in would be a construction-order cycle. Wire them on after the fact.
+contactsService.accountsService = accountsService;
+contactsService.internalDomainsService = internalDomainsService;
+contactsService.contactEnrichmentService = contactEnrichmentService;
 const services = {
   accountsService,
   contactsService,

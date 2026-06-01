@@ -121,6 +121,79 @@ export default async function contactRoutes(fastify, { contactsService, accounts
     }
   });
 
+  // ── From-emails staging (account + people; NO meeting) ─────────────────
+  // resolve-emails: pure read — turn a pasted attendee list into matched
+  // contacts + account candidates. from-emails: materialize the account +
+  // contacts WITHOUT a meeting. To also log a meeting, use the meetings
+  // equivalent (POST /api/meetings/from-emails) instead.
+  fastify.post('/contacts/resolve-emails', {
+    schema: {
+      description: 'Resolve a list of attendee emails into existing contacts (case-insensitive email match) and account candidates (by domain). Internal-domain emails (managed via internal-domains; env SELF_DOMAINS/INTERNAL_DOMAINS as bootstrap) are flagged kind=internal and never become account candidates. Pure read — no writes. Pair with POST /api/contacts/from-emails to create the account + contacts, or POST /api/meetings/from-emails to also log a meeting.',
+      tags: ['contacts'],
+      body: {
+        type: 'object',
+        required: ['emails'],
+        properties: {
+          emails: {
+            type: 'string',
+            description: 'Raw email list. Accepts comma/semicolon/newline separators and "Name <email>" form. The server regex-extracts each address, so leading/trailing prose ("Attendees: …") is fine.',
+          },
+        },
+      },
+    },
+  }, async (request) => {
+    return contactsService.resolveEmails(request.userId, request.body.emails);
+  });
+
+  // Create an account (if new) + contacts from a resolved email list — NO
+  // meeting. This is the "add these people" path; only reach for the meetings
+  // equivalent when you actually have notes to attach.
+  fastify.post('/contacts/from-emails', {
+    schema: {
+      description: 'Materialize an account + contacts from a resolved email list, WITHOUT creating a meeting — the "add these people" path. Account: link an existing one (mode=existing, account_id) or create a new one (mode=new, name + optional domain). Contacts: array of {mode:existing, contact_id, link_to_account?} or {mode:new, full_name, email?, kind?, research?} — research=true enqueues background outreach + local-LLM enrichment (opt-in per contact; burns LinkedIn quota). Returns { account_id, contact_ids, enrichment_jobs }. To also log a meeting, use POST /api/meetings/from-emails instead.',
+      tags: ['contacts'],
+      body: {
+        type: 'object',
+        required: ['account', 'contacts'],
+        properties: {
+          account: {
+            type: 'object',
+            required: ['mode'],
+            properties: {
+              mode: { type: 'string', enum: ['existing', 'new'] },
+              account_id: { type: 'integer' },
+              name: { type: 'string' },
+              domain: { type: 'string' },
+            },
+          },
+          contacts: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['mode'],
+              properties: {
+                mode: { type: 'string', enum: ['existing', 'new'] },
+                contact_id: { type: 'integer' },
+                link_to_account: { type: 'boolean' },
+                full_name: { type: 'string' },
+                email: { type: 'string' },
+                kind: { type: 'string', enum: ['account', 'partner', 'internal'] },
+                research: { type: 'boolean' },
+              },
+            },
+          },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    try {
+      return await contactsService.importFromEmails(request.userId, request.body);
+    } catch (err) {
+      if (err.statusCode) { reply.code(err.statusCode); return { error: err.message }; }
+      throw err;
+    }
+  });
+
   // Lookup a contact by email (case-insensitive). 404 if not found — used by
   // the from-emails meeting flow to decide whether to create a new contact.
   fastify.get('/contacts/by-email/:email', {
