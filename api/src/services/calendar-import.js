@@ -258,11 +258,31 @@ export class CalendarImportService {
         };
 
         const results = [];
+
         logger.info(
+            {
+                event: "import_meetings_start",
+                component: "meeting_importer",
+                userId: userId,
+                meetingCount: payload.meetings.length,
+            },
             `Importing ${payload.meetings.length} meetings for user ${userId}`,
         );
+
         for (const m of payload.meetings) {
-            logger.info(`Entire meeting being added: ${JSON.stringify(m)}`);
+            logger.info(
+                {
+                    event: "import_meeting_item",
+                    component: "meeting_importer",
+                    userId: userId,
+                    meetingId: m.id, // Assumes your meeting object has an 'id' property
+                    meetingProvider: m.provider, // Optional: helpful if you have Zoom vs Google Meet etc.
+                    meetingKeys: Object.keys(m),
+                    meetingData: m, // Pass the raw object instead of stringifying
+                },
+                `Adding meeting ${m.id || "item"} for user ${userId}`,
+            );
+
             let result;
             try {
                 result = await this._importOne(userId, m || {}, ctx);
