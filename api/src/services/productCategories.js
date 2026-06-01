@@ -4,15 +4,24 @@ import { badRequest } from '../lib/http-error.js';
 const CAT_COLS = 'id, name, created_at, updated_at';
 
 export class ProductCategoriesService {
-  async getAll(userId, { limit = 200, offset = 0 } = {}) {
+  async getAll(userId, { limit, offset = 0 } = {}) {
     return withUser(userId, async (client) => {
+      const params = [];
+      let paginationSql = '';
+      if (limit != null) {
+        params.push(limit, offset);
+        paginationSql = `LIMIT $${params.length - 1} OFFSET $${params.length}`;
+      } else if (offset) {
+        params.push(offset);
+        paginationSql = `OFFSET $${params.length}`;
+      }
       const rows = (await client.query(
         `SELECT ${CAT_COLS},
                 (SELECT COUNT(*)::int FROM products WHERE category_id = pc.id) AS product_count
          FROM product_categories pc
          ORDER BY name
-         LIMIT $1 OFFSET $2`,
-        [limit, offset]
+         ${paginationSql}`,
+        params
       )).rows;
       const total = (await client.query('SELECT COUNT(*)::int AS c FROM product_categories')).rows[0].c;
       return { categories: rows, total };

@@ -20,6 +20,22 @@ type EnrichmentJob = {
   completedAt: string | null;
 };
 
+// Per-meeting attendance/RSVP badge (from meeting_attendees.status). Reuses the
+// existing palette: going/owner = surf (present), declined = scarlet, maybe =
+// amber, invited/other = muted base.
+const ATTENDEE_STATUS_LABEL: Record<string, string> = {
+  going: 'Going', declined: 'Declined', maybe: 'Maybe', invited: 'Invited', owner: 'Owner',
+};
+function attendeeStatusClass(status: string): string {
+  switch (status) {
+    case 'going':
+    case 'owner': return 'border-surf-300 text-surf-300';
+    case 'declined': return 'border-scarlet-400 text-scarlet-400';
+    case 'maybe': return 'border-amber-300 text-amber-300';
+    default: return 'border-base-500 text-base-300';
+  }
+}
+
 export default function MeetingView() {
   const params = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -113,8 +129,13 @@ export default function MeetingView() {
                 <div class="flex gap-2 flex-wrap">
                   <For each={m().contacts}>
                     {(c: any) => (
-                      <A href={`/contacts/${c.id}`} class="bg-base-950 border-2 border-base-500 px-2.5 py-1 text-[12px] text-base-50 font-semibold uppercase tracking-wider hover:border-surf-300 hover:shadow-[2px_2px_0_0_var(--color-surf-300)] transition-all">
-                        {c.full_name}
+                      <A href={`/contacts/${c.id}`} class="inline-flex items-center gap-1.5 bg-base-950 border-2 border-base-500 px-2.5 py-1 text-[12px] text-base-50 font-semibold uppercase tracking-wider hover:border-surf-300 hover:shadow-[2px_2px_0_0_var(--color-surf-300)] transition-all">
+                        <span>{c.full_name || c.email}</span>
+                        <Show when={c.status}>
+                          <span class={`text-[10px] leading-none px-1 py-0.5 border ${attendeeStatusClass(c.status)}`}>
+                            {ATTENDEE_STATUS_LABEL[c.status] || c.status}
+                          </span>
+                        </Show>
                       </A>
                     )}
                   </For>

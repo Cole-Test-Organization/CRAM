@@ -11,7 +11,7 @@ const SELECT_WITH_CATEGORY = `
 `;
 
 export class ProductsService {
-  async getAll(userId, { category_id, search, limit = 200, offset = 0 } = {}) {
+  async getAll(userId, { category_id, search, limit, offset = 0 } = {}) {
     return withUser(userId, async (client) => {
       const params = [];
       const conditions = [];
@@ -24,13 +24,20 @@ export class ProductsService {
         conditions.push(`p.name ILIKE $${params.length}`);
       }
       const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-      params.push(limit, offset);
+      let paginationSql = '';
+      if (limit != null) {
+        params.push(limit, offset);
+        paginationSql = `LIMIT $${params.length - 1} OFFSET $${params.length}`;
+      } else if (offset) {
+        params.push(offset);
+        paginationSql = `OFFSET $${params.length}`;
+      }
 
       const rows = (await client.query(
         `${SELECT_WITH_CATEGORY}
          ${whereClause}
          ORDER BY p.name
-         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+         ${paginationSql}`,
         params
       )).rows;
 

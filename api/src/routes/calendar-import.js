@@ -45,7 +45,19 @@ export default async function calendarImportRoutes(fastify, { calendarImportServ
                 isAllDay: { type: 'boolean', description: 'All-day events are skipped unless CALENDAR_IMPORT_ALL_DAY=true.' },
                 location: { type: 'string' },
                 guestCount: { type: 'integer' },
-                guestEmails: { type: 'array', items: { type: 'string' }, description: 'Attendee email addresses. Classified by domain (internal/partner/personal/customer) to create contacts and pick the account.' },
+                guestEmails: { type: 'array', items: { type: 'string' }, description: 'Attendee email addresses. Classified by domain (internal/partner/personal/customer) to create contacts and pick the account. Legacy fallback — prefer guests[] when display names / RSVP status are available.' },
+                guests: {
+                  type: 'array',
+                  description: 'Structured attendees [{ email, name, status }] — preferred over guestEmails. `name` is the invite display name ("" when none — the contact stays email-only until a later event carries a name); `status` is the RSVP/attendance (Going | Declined | Maybe | Invited | Owner | ""). Names flow into the contact via fill-only enrich; status is recorded per attendee on meeting_attendees.status (normalized to going/declined/maybe/invited/owner, or null for unrecognized values). Falls back to guestEmails[] when omitted.',
+                  items: {
+                    type: 'object',
+                    properties: {
+                      email: { type: 'string' },
+                      name: { type: 'string' },
+                      status: { type: 'string' },
+                    },
+                  },
+                },
                 myStatus: { type: 'string', description: 'The owner\'s RSVP. Only "Declined" (case-insensitive) is skipped; Going/Maybe/Invited/unknown all import.' },
                 description: { type: 'string', description: 'Event description (HTML ok). Converted to markdown and prepended to the meeting body for review.' },
               },

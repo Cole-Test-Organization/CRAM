@@ -23,16 +23,25 @@ function pickTarget({ account_id, contact_id, opportunity_id }) {
 }
 
 export class NotesService {
-  async getAll(userId, { account_id, contact_id, opportunity_id, limit = 200, offset = 0 } = {}) {
+  async getAll(userId, { account_id, contact_id, opportunity_id, limit, offset = 0 } = {}) {
     const { key, value } = pickTarget({ account_id, contact_id, opportunity_id });
     return withUser(userId, async (client) => {
+      const params = [value];
+      let paginationSql = '';
+      if (limit != null) {
+        params.push(limit, offset);
+        paginationSql = `LIMIT $${params.length - 1} OFFSET $${params.length}`;
+      } else if (offset) {
+        params.push(offset);
+        paginationSql = `OFFSET $${params.length}`;
+      }
       const rows = (await client.query(
         `SELECT ${COLS}
          FROM notes
          WHERE ${key} = $1
          ORDER BY created_at DESC
-         LIMIT $2 OFFSET $3`,
-        [value, limit, offset]
+         ${paginationSql}`,
+        params
       )).rows;
       const total = (await client.query(
         `SELECT COUNT(*)::int AS c FROM notes WHERE ${key} = $1`,

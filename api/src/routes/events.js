@@ -24,7 +24,7 @@ export default async function eventRoutes(fastify, { eventsService }) {
           tags: { type: 'string', description: 'Comma-separated tag list — matches events with ANY of the supplied tags' },
           sort: { type: 'string', enum: ['start_date', 'end_date', 'title', 'created_at', 'updated_at'], default: 'start_date' },
           order: { type: 'string', enum: ['asc', 'desc'], default: 'asc' },
-          limit: { type: 'integer', default: 200 },
+          limit: { type: 'integer', minimum: 1, description: 'Optional. Omit to return all rows.' },
           offset: { type: 'integer', default: 0 },
         },
       },

@@ -159,10 +159,39 @@ export interface MeetingSummary {
   internal: boolean;
 }
 
+// Per-meeting RSVP / attendance, recorded on the meeting↔contact join row.
+// null when unknown (notes-import rows, legacy events, contacts attached
+// without a status).
+export type AttendeeStatus = 'going' | 'declined' | 'maybe' | 'invited' | 'owner';
+
+// A contact linked to a meeting, as returned on Meeting.contacts. Narrower than
+// Contact (no kind/notes/account fields are sent on this shape) plus the
+// per-meeting status.
+export interface MeetingAttendee {
+  id: number;
+  full_name: string | null;
+  company: string | null;
+  title: string | null;
+  email: string | null;
+  phone: string | null;
+  linkedin: string | null;
+  status: AttendeeStatus | null;
+}
+
+// An attendee recorded on a meeting with no CRM contact yet (linkable later).
+export interface UnlinkedAttendee {
+  attendee_id: number;
+  display_name: string | null;
+  email: string | null;
+  status: AttendeeStatus | null;
+}
+
 export interface Meeting extends MeetingSummary {
   body: string;
   account_slug: string | null;
   account_name: string | null;
+  contacts?: MeetingAttendee[];
+  unlinked_attendees?: UnlinkedAttendee[];
 }
 
 export interface ProductCategory {

@@ -15,7 +15,7 @@ export class VendorProductsService {
     this.vendorsService = vendorsService;
   }
 
-  async getAll({ vendor_id, vendor_slug, category, search, include_deleted = false, needs_review, limit = 200, offset = 0 } = {}) {
+  async getAll({ vendor_id, vendor_slug, category, search, include_deleted = false, needs_review, limit, offset = 0 } = {}) {
     const client = await getPool().connect();
     try {
       const params = [];
@@ -43,14 +43,21 @@ export class VendorProductsService {
       }
       const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
       const baseParams = [...params];
-      params.push(limit, offset);
+      let paginationSql = '';
+      if (limit != null) {
+        params.push(limit, offset);
+        paginationSql = `LIMIT $${params.length - 1} OFFSET $${params.length}`;
+      } else if (offset) {
+        params.push(offset);
+        paginationSql = `OFFSET $${params.length}`;
+      }
       const rows = (await client.query(
         `SELECT ${COLS}
          FROM vendor_products vp
          JOIN vendors v ON v.id = vp.vendor_id
          ${whereClause}
          ORDER BY v.name ASC, vp.name ASC
-         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+         ${paginationSql}`,
         params
       )).rows;
       const totalRes = await client.query(

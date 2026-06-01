@@ -15,6 +15,9 @@
 //          personal  (gmail/yahoo/… freemail)                         → skipped entirely (no contact, ignored for account-picking)
 //          customer  (any other business domain)                      → kind=account, link to that domain's account
 //          self      (the calendar owner)                             → skipped (never a contact for yourself)
+//     →  each linked attendee also records their RSVP/attendance status
+//        (going/declined/maybe/invited/owner) on the meeting_attendees join row,
+//        taken from the guest's status in the structured guests[] payload.
 //     →  the meeting's account = the most-attended CUSTOMER domain (internal and
 //        partner attendees never decide the account). If there is no customer
 //        domain at all, it's an INTERNAL note (account_id NULL, internal=true).
@@ -33,7 +36,7 @@
 // 23505 we catch and report as "skipped" rather than duplicating.
 
 import { parseEmailList, normalizeEmail } from './_email.js';
-import { envDomainSet, suggestAccountName } from './_domain.js';
+import { envDomainSet, suggestAccountName, normalizeDomain } from './_domain.js';
 import { htmlToMarkdown } from './_html.js';
 import { slugify } from './_slug.js';
 import { badRequest } from '../lib/http-error.js';
@@ -64,6 +67,58 @@ const DEFAULT_PERSONAL_DOMAINS = [
 // don't have to know every label the exporter might emit.
 export function isDeclined(status) {
   return String(status || '').trim().toLowerCase() === 'declined';
+}
+
+// Map a guest's RSVP/attendance response to a canonical lowercase token (the set
+// meeting_attendees.status is CHECK-constrained to), or null when blank /
+// unrecognized. The export uses the human labels "Going" | "Declined" | "Maybe"
+// | "Invited" | "Owner"; we also accept the raw Google API values so the import
+// doesn't care which the exporter sends. Same denylist philosophy as isDeclined:
+// anything we don't recognize collapses to null (records no status) rather than
+// risking a constraint violation, so a new label can never break an import.
+const ATTENDEE_STATUS_ALIASES = {
+  going: 'going', yes: 'going', accepted: 'going',
+  declined: 'declined', no: 'declined',
+  maybe: 'maybe', tentative: 'maybe',
+  invited: 'invited', needsaction: 'invited', notresponded: 'invited', awaitingresponse: 'invited',
+  owner: 'owner', organizer: 'owner',
+};
+export function normalizeAttendeeStatus(status) {
+  // Collapse to letters only so "needs action" / "needs-action" / "needsAction"
+  // all key the same alias.
+  const v = String(status || '').trim().toLowerCase().replace(/[^a-z]/g, '');
+  if (!v) return null;
+  return ATTENDEE_STATUS_ALIASES[v] || null;
+}
+
+// Build the deduped attendee list for one event. The structured guests[] form —
+// { email, name, status } — is preferred: it carries each guest's real display
+// name (no longer guessed from the email local-part) and their RSVP, so we can
+// both name the contact correctly and record per-attendee attendance. Older
+// exports that only send the flat guestEmails[] still work (no names, no
+// status). Returns [{ email, domain, name_guess, status }], deduped by email.
+export function buildAttendees(meeting) {
+  if (Array.isArray(meeting.guests) && meeting.guests.length) {
+    const byEmail = new Map();
+    for (const g of meeting.guests) {
+      const email = normalizeEmail(g?.email);
+      if (!email) continue;
+      const domain = normalizeDomain(email.split('@')[1]);
+      const name = (typeof g?.name === 'string' && g.name.trim()) ? g.name.trim() : null;
+      const status = normalizeAttendeeStatus(g?.status);
+      const prev = byEmail.get(email);
+      if (prev) {
+        if (!prev.name_guess && name) prev.name_guess = name;   // keep the first known name
+        if (!prev.status && status) prev.status = status;       // keep the first known status
+      } else {
+        byEmail.set(email, { email, domain, name_guess: name, status });
+      }
+    }
+    return [...byEmail.values()];
+  }
+  // Fallback: flat guestEmails[] (legacy export shape — no names, no status).
+  return parseEmailList((Array.isArray(meeting.guestEmails) ? meeting.guestEmails : []).join('\n'))
+    .map((p) => ({ ...p, status: null }));
 }
 
 // The calendar gives times in UTC plus the calendar's timezone; the meetings
@@ -171,10 +226,10 @@ export class CalendarImportService {
       || (typeof meeting.start === 'string' ? meeting.start.slice(0, 10) : null);
     if (!date) return { title, outcome: 'skipped', reason: 'no_date' };
 
-    // Parse + classify attendees. parseEmailList dedupes and derives a name
-    // guess from the local-part when no display name is present (the calendar
-    // export carries bare emails).
-    const parsed = parseEmailList((Array.isArray(meeting.guestEmails) ? meeting.guestEmails : []).join('\n'));
+    // Parse + classify attendees. buildAttendees prefers the structured guests[]
+    // (real display name + RSVP status per guest) and falls back to the flat
+    // guestEmails[] for older exports; both are deduped by email.
+    const parsed = buildAttendees(meeting);
     const internalAtt = [];
     const externalByDomain = new Map(); // domain → [{email, name_guess}], insertion-ordered
     for (const p of parsed) {
@@ -228,9 +283,17 @@ export class CalendarImportService {
     }
 
     // Create/resolve every attendee as a contact (idempotent — dedupes across
-    // events and re-runs), collecting ids to link onto the meeting.
+    // events and re-runs), collecting ids to link onto the meeting plus each
+    // one's RSVP status. The real display name from guests[] now flows into
+    // findOrCreate, so an attendee who was previously stored email-only gets
+    // named. Dedupe the linked ids: two different invite addresses can resolve
+    // to the same contact, and the meeting_attendees (meeting_id, contact_id)
+    // unique index would otherwise reject the second link (and surface as a
+    // misleading "duplicate meeting" via the 23505 handler below).
     let contactsCreated = 0;
     const contactIds = [];
+    const seenContactIds = new Set();
+    const attendeeStatus = {};               // String(contactId) → canonical status
     const resolve = async (att, kind, accountId) => {
       const r = await this.contactsService.findOrCreate(
         userId,
@@ -238,7 +301,13 @@ export class CalendarImportService {
         accountId || null,
       );
       if (r.created) contactsCreated++;
-      contactIds.push(r.contact.id);
+      const cid = String(r.contact.id);
+      if (!seenContactIds.has(cid)) {
+        seenContactIds.add(cid);
+        contactIds.push(r.contact.id);
+      }
+      // First non-null status wins; a later blank/duplicate won't clear it.
+      if (att.status && !attendeeStatus[cid]) attendeeStatus[cid] = att.status;
     };
     for (const a of internalAtt) await resolve(a, 'internal', null);
     for (const a of partnerAtt) await resolve(a, 'partner', a.partnerAccountId);
@@ -272,6 +341,7 @@ export class CalendarImportService {
         internal,
         needs_review: needsReview,
         contact_ids: contactIds,
+        attendee_status: attendeeStatus,
       });
       return {
         title,

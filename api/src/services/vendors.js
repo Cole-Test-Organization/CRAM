@@ -9,7 +9,7 @@ const COLS = 'id, name, slug, website, notes, needs_review, deleted_at, created_
 // users so analytics ("which of my accounts run Palo Alto?") work across the
 // whole org.
 export class VendorsService {
-  async getAll({ search, include_deleted = false, needs_review, limit = 200, offset = 0 } = {}) {
+  async getAll({ search, include_deleted = false, needs_review, limit, offset = 0 } = {}) {
     const client = await getPool().connect();
     try {
       const params = [];
@@ -24,16 +24,24 @@ export class VendorsService {
         conditions.push(`(name ILIKE $${params.length} OR slug ILIKE $${params.length})`);
       }
       const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-      params.push(limit, offset);
+      const baseParams = [...params];
+      let paginationSql = '';
+      if (limit != null) {
+        params.push(limit, offset);
+        paginationSql = `LIMIT $${params.length - 1} OFFSET $${params.length}`;
+      } else if (offset) {
+        params.push(offset);
+        paginationSql = `OFFSET $${params.length}`;
+      }
       const rows = (await client.query(
         `SELECT ${COLS} FROM vendors ${whereClause}
          ORDER BY name ASC
-         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+         ${paginationSql}`,
         params
       )).rows;
       const totalRes = await client.query(
         `SELECT COUNT(*)::int AS c FROM vendors ${whereClause}`,
-        params.slice(0, -2)
+        baseParams
       );
       return { vendors: rows, total: totalRes.rows[0].c };
     } finally {

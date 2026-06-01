@@ -4,7 +4,7 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-05-31T16:03:26.406Z
+- **Generated:** 2026-06-01T00:19:41.701Z
 - **Tables:** 23
 - **Enums:** 0
 - **Views:** 0
@@ -281,7 +281,7 @@
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
 | `id` | `bigint` | NO | `nextval('contacts_id_seq'::regclass)` | **PK** |
-| `full_name` | `text` | NO | — |  |
+| `full_name` | `text` | YES | — |  |
 | `company` | `text` | YES | — |  |
 | `title` | `text` | YES | — |  |
 | `email` | `text` | YES | — |  |
@@ -380,6 +380,7 @@
 | `id` | `bigint` | NO | `nextval('meeting_attendees_id_seq'::regclass)` | **PK** |
 | `display_name` | `text` | YES | — |  |
 | `email` | `text` | YES | — |  |
+| `status` | `text` | YES | — |  |
 
 **Primary key:** `id`
 
@@ -391,6 +392,7 @@
 **Check constraints:**
 
 - `meeting_attendees_identity_chk`: `CHECK (((contact_id IS NOT NULL) OR (display_name IS NOT NULL)))`
+- `meeting_attendees_status_check`: `CHECK (((status IS NULL) OR (status = ANY (ARRAY['going'::text, 'declined'::text, 'maybe'::text, 'invited'::text, 'owner'::text]))))`
 
 **Indexes:**
 

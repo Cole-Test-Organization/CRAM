@@ -1,8 +1,15 @@
 import { withUser } from '../db/connection.js';
 import { badRequest, conflict } from '../lib/http-error.js';
+import { fillBlanks } from './_enrich.js';
 
 const CONTACT_COLS = 'id, full_name, company, title, email, phone, linkedin, notes, kind, location_raw, city, state, country, created_at, updated_at';
 const VALID_KINDS = new Set(['account', 'partner', 'internal']);
+
+// Columns findOrCreate fills on a matched contact when they're blank and we now
+// have a value (fill-only enrich — never overwrites curated data). Deliberately
+// excludes `kind` (a classification, never blank) and the DB-managed
+// id/timestamps/user_id.
+const CONTACT_ENRICHABLE_COLS = ['full_name', 'company', 'title', 'email', 'phone', 'linkedin', 'notes', 'location_raw', 'city', 'state', 'country'];
 
 // findOrCreate fuzzy-name threshold. Higher than the vendor catalog's 0.4
 // because person names are short and a false merge (treating two different
@@ -24,7 +31,7 @@ function normalizeKind(kind) {
 }
 
 export class ContactsService {
-  async getAll(userId, { company, search, kind, city, country, limit = 200, offset = 0 } = {}) {
+  async getAll(userId, { company, search, kind, city, country, limit, offset = 0 } = {}) {
     return withUser(userId, async (client) => {
       const params = [];
       const conditions = [];
@@ -54,7 +61,16 @@ export class ContactsService {
       }
 
       const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-      params.push(limit, offset);
+      // No default cap: list everything matching unless the caller explicitly
+      // asks for a page. (limit omitted ⇒ all rows; offset alone still works.)
+      let paginationSql = '';
+      if (limit != null) {
+        params.push(limit, offset);
+        paginationSql = `LIMIT $${params.length - 1} OFFSET $${params.length}`;
+      } else if (offset) {
+        params.push(offset);
+        paginationSql = `OFFSET $${params.length}`;
+      }
       const sql = `
         SELECT DISTINCT ${CONTACT_COLS.split(',').map(c => `c.${c.trim()}`).join(', ')},
           (SELECT string_agg(a2.name, ', ')
@@ -67,7 +83,7 @@ export class ContactsService {
         ${joinClause}
         ${whereClause}
         ORDER BY c.full_name
-        LIMIT $${params.length - 1} OFFSET $${params.length}
+        ${paginationSql}
       `;
       return (await client.query(sql, params)).rows;
     });
@@ -238,34 +254,96 @@ export class ContactsService {
     return { ...contact, accounts };
   }
 
+  // Resolve the (kind, full_name, email) identity from raw input. The one hard
+  // rule for creating a contact: it needs at least one identifying handle — an
+  // email OR a name. Everything else is optional and enrichable. Returns
+  // full_name trimmed and email trimmed+lowercased; empty values collapse to ''.
+  _identity(data) {
+    const kind = normalizeKind(data?.kind) || 'account';
+    const fullName = typeof data?.full_name === 'string' ? data.full_name.trim() : '';
+    const email = typeof data?.email === 'string' ? data.email.trim().toLowerCase() : '';
+    if (!fullName && !email) {
+      throw badRequest('A contact needs at least an email or a full_name — both were empty. Pass data.email (e.g. "jsmith@acme.com") or data.full_name.');
+    }
+    return { kind, fullName, email };
+  }
+
+  // Single dedupe core shared by create() and findOrCreate() so every creation
+  // path runs identical checks. Precedence:
+  //   1. exact email (case-insensitive) — strongest signal
+  //   2. exact full_name + kind
+  //   3. fuzzy full_name within the same kind (pg_trgm >= CONTACT_FUZZY_THRESHOLD),
+  //      vetoed when the candidate carries a *different* email (distinct address
+  //      ⇒ distinct human)
+  // Name tiers are skipped for email-only input (no name to match on). No
+  // writes — returns { id, matched_by, match_score? } or null and lets the
+  // caller decide whether to enrich, (re)link, or 409.
+  async _matchExisting(client, { email, fullName, kind }) {
+    if (email) {
+      const row = (await client.query(
+        'SELECT id FROM contacts WHERE LOWER(email) = $1 ORDER BY id LIMIT 1',
+        [email]
+      )).rows[0];
+      if (row) return { id: row.id, matched_by: 'email' };
+    }
+    if (fullName) {
+      const exact = (await client.query(
+        'SELECT id FROM contacts WHERE full_name = $1 AND kind = $2 ORDER BY id LIMIT 1',
+        [fullName, kind]
+      )).rows[0];
+      if (exact) return { id: exact.id, matched_by: 'full_name' };
+
+      // The `%` prefilter is served by idx_contacts_full_name_trgm; we then
+      // enforce the stricter app-level threshold (and email-conflict veto) in JS.
+      const cand = (await client.query(
+        `SELECT id, email, similarity(lower(full_name), lower($1)) AS sim
+           FROM contacts
+          WHERE kind = $2 AND lower(full_name) % lower($1)
+          ORDER BY sim DESC NULLS LAST
+          LIMIT 1`,
+        [fullName, kind]
+      )).rows[0];
+      if (cand && Number(cand.sim) >= CONTACT_FUZZY_THRESHOLD) {
+        const candEmail = (cand.email || '').trim().toLowerCase();
+        const emailsConflict = email && candEmail && email !== candEmail;
+        if (!emailsConflict) return { id: cand.id, matched_by: 'fuzzy', match_score: Number(cand.sim) };
+      }
+    }
+    return null;
+  }
+
+  // Explicit create. Runs the same dedupe core as findOrCreate but *refuses*
+  // (409, with the existing row attached) on a match instead of upserting —
+  // and never writes on that path (no enrich). Prefer findOrCreate for
+  // ingestion; this is for callers that genuinely expect a brand-new contact.
   async create(userId, data, accountId) {
     return withUser(userId, async (client) => {
-      const kind = normalizeKind(data.kind) || 'account';
-      const dup = await this._findExisting(client, { ...data, kind });
-      if (dup) {
-        const enriched = await this._fetchWithAccounts(client, dup.id);
-        const matchedBy = data.email && enriched?.email && enriched.email.toLowerCase() === String(data.email).trim().toLowerCase()
-          ? 'email'
-          : 'full_name+kind';
+      const { kind, fullName, email } = this._identity(data);
+      const match = await this._matchExisting(client, { email, fullName, kind });
+      if (match) {
+        const existing = await this._fetchWithAccounts(client, match.id);
         throw Object.assign(
-          conflict(`Contact already exists (matched on ${matchedBy}): id=${dup.id}, name="${enriched?.full_name}"${enriched?.email ? `, email="${enriched.email}"` : ''}. Update the existing contact via PATCH /api/contacts/${dup.id} (or the contacts MCP tool with action="update"), or link it to a new account via POST /api/contacts/${dup.id}/accounts/:accountId (action="link_account").`),
-          { existing: enriched }
+          conflict(`Contact already exists (matched on ${match.matched_by}): id=${match.id}, name="${existing?.full_name ?? ''}"${existing?.email ? `, email="${existing.email}"` : ''}. Update it via PATCH /api/contacts/${match.id} (contacts tool action="update"), link it via POST /api/contacts/${match.id}/accounts/:accountId (action="link_account"), or use find_or_create to upsert idempotently.`),
+          { existing }
         );
       }
-      return this._insert(client, data, kind, accountId);
+      return this._insert(client, { ...data, full_name: fullName || null }, kind, accountId);
     });
   }
 
-  // Shared INSERT used by create() and findOrCreate(). Assumes the caller has
-  // already validated/normalized `kind` and decided no dedupe match applies.
-  async _insert(client, data, kind, accountId) {
+  // The one and only `INSERT INTO contacts` in the codebase — every creation
+  // path (create, findOrCreate, the bulk importer) routes through here so no
+  // bespoke INSERT can skip a column default or a future constraint. Assumes
+  // the caller has validated/normalized `kind` and decided no dedupe match
+  // applies. full_name may be null (email-only contact). Returns the new id.
+  async _insertRow(client, data, kind) {
     const result = await client.query(
       `INSERT INTO contacts (user_id, full_name, company, title, email, phone, linkedin, notes, kind,
                              location_raw, city, state, country)
        VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING id`,
       [
-        data.full_name,
+        data.full_name ?? null,
         data.company || null,
         data.title || null,
         data.email || null,
@@ -279,7 +357,14 @@ export class ContactsService {
         data.country || null,
       ]
     );
-    const contactId = result.rows[0].id;
+    return result.rows[0].id;
+  }
+
+  // Insert + (optional) account link + fetch with accounts. The full-object
+  // variant used by create()/findOrCreate(); the importer uses _insertRow
+  // directly to skip the per-row fetch.
+  async _insert(client, data, kind, accountId) {
+    const contactId = await this._insertRow(client, data, kind);
     return this._linkAndFetch(client, contactId, accountId);
   }
 
@@ -295,70 +380,58 @@ export class ContactsService {
     return this._fetchWithAccounts(client, contactId);
   }
 
-  // Idempotent create — the contacts analogue of vendor_products.findOrCreate.
-  // Lets the agent send what it has and let the server decide whether the person
-  // already exists, so near-duplicate contacts (especially kind=internal
-  // teammates) stop piling up. Match precedence:
-  //   1. exact email (case-insensitive) — strongest signal
-  //   2. exact full_name + kind
-  //   3. fuzzy full_name within the same kind (pg_trgm >= CONTACT_FUZZY_THRESHOLD)
-  //      — absorbs typos / spacing / punctuation variants. A *different* email on
-  //      the candidate vetoes the fuzzy merge (a distinct address ⇒ distinct human).
-  // A match is (re)linked to accountId when provided. Never throws 409 (that's
-  // the difference from create). Returns { contact, created, matched_by?, match_score? }.
+  // Fill-only enrich on a matched contact: copy any value we now have into a
+  // column that's currently blank (null / empty), never overwriting a non-blank
+  // stored value. Idempotent — re-running with the same data writes nothing, so
+  // the updated_at trigger stays quiet on a pure re-link. Returns the list of
+  // columns filled (empty ⇒ no UPDATE issued).
+  async _enrichBlanks(client, id, data) {
+    const existing = (await client.query(
+      `SELECT ${CONTACT_ENRICHABLE_COLS.join(', ')} FROM contacts WHERE id = $1`,
+      [id]
+    )).rows[0];
+    if (!existing) return [];
+    const { patch, fields } = fillBlanks(existing, data, CONTACT_ENRICHABLE_COLS);
+    if (!fields.length) return [];
+    const cols = Object.keys(patch);
+    const setSql = cols.map((c, i) => `${c} = $${i + 2}`).join(', ');
+    await client.query(
+      `UPDATE contacts SET ${setSql} WHERE id = $1`,
+      [id, ...cols.map((c) => patch[c])]
+    );
+    return fields;
+  }
+
+  // Idempotent upsert — the single creation path every caller should funnel
+  // through (calendar/notes import, the from-emails meeting flow, the agent),
+  // so the same dedupe + enrich checks always run and near-duplicate contacts
+  // (especially kind=internal teammates) stop piling up. Match precedence lives
+  // in _matchExisting (email → exact name+kind → fuzzy name). On a match we
+  //   (a) fill any blank column we now have a value for (fill-only enrich —
+  //       never overwriting curated data), and
+  //   (b) (re)link to accountId when given.
+  // On no match we insert — full_name may be null (an email-only contact is
+  // valid; we no longer fabricate a name from the address). Never throws 409
+  // (that's create()'s job). Returns
+  //   { contact, created, matched_by?, match_score?, enriched?, enriched_fields? }.
   async findOrCreate(userId, data, accountId) {
     return withUser(userId, async (client) => {
-      const kind = normalizeKind(data.kind) || 'account';
-      const fullName = (data.full_name || '').trim();
-      if (!fullName) {
-        throw badRequest('findOrCreate requires a non-empty full_name.');
+      const { kind, fullName, email } = this._identity(data);
+      const match = await this._matchExisting(client, { email, fullName, kind });
+      if (match) {
+        const enriched_fields = await this._enrichBlanks(
+          client, match.id, { ...data, full_name: fullName || null, email: email || null }
+        );
+        const contact = await this._linkAndFetch(client, match.id, accountId);
+        return {
+          contact,
+          created: false,
+          matched_by: match.matched_by,
+          ...(match.match_score != null ? { match_score: match.match_score } : {}),
+          ...(enriched_fields.length ? { enriched: true, enriched_fields } : {}),
+        };
       }
-      const email = typeof data.email === 'string' ? data.email.trim().toLowerCase() : '';
-
-      // 1) exact email match
-      if (email) {
-        const row = (await client.query(
-          'SELECT id FROM contacts WHERE LOWER(email) = $1 ORDER BY id LIMIT 1',
-          [email]
-        )).rows[0];
-        if (row) {
-          const contact = await this._linkAndFetch(client, row.id, accountId);
-          return { contact, created: false, matched_by: 'email' };
-        }
-      }
-
-      // 2) exact full_name + kind match
-      const exact = (await client.query(
-        'SELECT id FROM contacts WHERE full_name = $1 AND kind = $2 ORDER BY id LIMIT 1',
-        [fullName, kind]
-      )).rows[0];
-      if (exact) {
-        const contact = await this._linkAndFetch(client, exact.id, accountId);
-        return { contact, created: false, matched_by: 'full_name' };
-      }
-
-      // 3) fuzzy full_name within the same kind. The `%` prefilter is served by
-      //    idx_contacts_full_name_trgm; we then enforce the stricter app-level
-      //    threshold (and the email-conflict veto) in JS.
-      const cand = (await client.query(
-        `SELECT id, email, similarity(lower(full_name), lower($1)) AS sim
-           FROM contacts
-          WHERE kind = $2 AND lower(full_name) % lower($1)
-          ORDER BY sim DESC NULLS LAST
-          LIMIT 1`,
-        [fullName, kind]
-      )).rows[0];
-      if (cand && Number(cand.sim) >= CONTACT_FUZZY_THRESHOLD) {
-        const candEmail = (cand.email || '').trim().toLowerCase();
-        const emailsConflict = email && candEmail && email !== candEmail;
-        if (!emailsConflict) {
-          const contact = await this._linkAndFetch(client, cand.id, accountId);
-          return { contact, created: false, matched_by: 'fuzzy', match_score: Number(cand.sim) };
-        }
-      }
-
-      // 4) no match → create
-      const contact = await this._insert(client, { ...data, full_name: fullName }, kind, accountId);
+      const contact = await this._insert(client, { ...data, full_name: fullName || null }, kind, accountId);
       return { contact, created: true };
     });
   }

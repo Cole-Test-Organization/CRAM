@@ -49,9 +49,6 @@ const MAX_FILES_PER_JOB = Number(process.env.NOTES_IMPORT_MAX_FILES) || 2000;
 // is still stored as the meeting body — this only bounds the prompt so a giant
 // note can't blow the small local context window.
 const MAX_EXTRACT_CHARS = Number(process.env.NOTES_IMPORT_MAX_EXTRACT_CHARS) || 16000;
-// Largest single file we'll pull out of a zip (defends against zip bombs / stray
-// binaries). Text notes are tiny; 2MB is already generous.
-const MAX_ZIP_ENTRY_BYTES = Number(process.env.NOTES_IMPORT_MAX_ZIP_ENTRY_BYTES) || 2 * 1024 * 1024;
 
 const LLM_TIMEOUT_MS = Number(process.env.NOTES_IMPORT_LLM_TIMEOUT_MS) || 120000;
 const LLM_MAX_ATTEMPTS = Number(process.env.NOTES_IMPORT_LLM_RETRIES) || 3;
@@ -138,7 +135,6 @@ export function filesFromZip(buffer) {
     const dot = path.lastIndexOf('.');
     const ext = dot === -1 ? '' : path.slice(dot).toLowerCase();
     if (!TEXT_EXTENSIONS.has(ext)) continue;
-    if (entry.header.size > MAX_ZIP_ENTRY_BYTES) continue;
     const content = entry.getData().toString('utf8');
     out.push({ path, content });
   }

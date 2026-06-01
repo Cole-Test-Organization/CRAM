@@ -9,7 +9,7 @@ export default async function noteRoutes(fastify, { notesService }) {
           account_id: { type: 'integer' },
           contact_id: { type: 'integer' },
           opportunity_id: { type: 'integer' },
-          limit: { type: 'integer', minimum: 1, maximum: 500, default: 200 },
+          limit: { type: 'integer', minimum: 1, description: 'Optional. Omit to return all rows.' },
           offset: { type: 'integer', minimum: 0, default: 0 },
         },
       },

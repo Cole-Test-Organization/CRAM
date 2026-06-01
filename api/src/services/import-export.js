@@ -524,6 +524,14 @@ export class ImportExportService {
     }
 
     if (!existing) {
+      // Route creation through the shared insert so there is exactly one
+      // `INSERT INTO contacts` in the codebase. Import keeps its own strict
+      // match (above) and authoritative merge (below) — only the create is
+      // shared. The raw INSERT remains as a fallback for the (defensive) path
+      // where no ContactsService was injected.
+      if (this.contactsService) {
+        return this.contactsService._insertRow(client, c, kind);
+      }
       const ins = await client.query(
         `INSERT INTO contacts (user_id, full_name, company, title, email, phone, linkedin,
                                notes, kind, location_raw, city, state, country)

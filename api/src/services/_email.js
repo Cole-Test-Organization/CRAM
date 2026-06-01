@@ -36,13 +36,14 @@ export function parseEmailList(text) {
       .replace(/^[\s,;]+|[\s,;.]+$/g, '')
       .replace(/^["']|["']$/g, '')
       .trim();
-    const [local, domainRaw] = e.split('@');
+    const [, domainRaw] = e.split('@');
     const domain = normalizeDomain(domainRaw);
-    const nameGuess = cleaned || local
-      .replace(/[._\-]+/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .replace(/\b\w/g, c => c.toUpperCase());
+    // Only a genuine display name becomes name_guess. We deliberately do NOT
+    // derive a name from the email local-part ("jsmith" → "Jsmith") anymore:
+    // an address-only attendee stays nameless (name_guess = null) and is stored
+    // as an email-only contact, with the real name filled in later if a future
+    // event carries one.
+    const nameGuess = cleaned || null;
     seen.set(e, { email: e, domain, name_guess: nameGuess });
   }
 

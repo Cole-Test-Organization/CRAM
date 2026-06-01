@@ -58,14 +58,17 @@ export class MeetingsService {
 
   // Load a meeting's attendees (linked contacts + unlinked display-name rows)
   // and attach them to the meeting object:
-  //   m.contacts           — linked contacts (back-compat with the old shape)
-  //   m.unlinked_attendees — [{ attendee_id, display_name, email }] awaiting a link
+  //   m.contacts           — linked contacts (back-compat with the old shape),
+  //                          each carrying their per-meeting `status` (RSVP /
+  //                          attendance: going/declined/maybe/invited/owner, or
+  //                          null when unknown)
+  //   m.unlinked_attendees — [{ attendee_id, display_name, email, status }] awaiting a link
   //   m.attendees          — display string of everyone, linked first. Replaces
   //                          the retired free-text column so readers and the GUI
   //                          keep seeing `attendees` as a string.
   async _attachAttendees(client, meeting) {
     const rows = (await client.query(`
-      SELECT ma.id AS attendee_id, ma.contact_id, ma.display_name, ma.email,
+      SELECT ma.id AS attendee_id, ma.contact_id, ma.display_name, ma.email, ma.status,
              c.full_name, c.company, c.title, c.email AS contact_email, c.phone, c.linkedin
       FROM meeting_attendees ma
       LEFT JOIN contacts c ON c.id = ma.contact_id
@@ -78,10 +81,11 @@ export class MeetingsService {
       .map((r) => ({
         id: r.contact_id, full_name: r.full_name, company: r.company,
         title: r.title, email: r.contact_email, phone: r.phone, linkedin: r.linkedin,
+        status: r.status,
       }));
     meeting.unlinked_attendees = rows
       .filter((r) => !r.contact_id)
-      .map((r) => ({ attendee_id: r.attendee_id, display_name: r.display_name, email: r.email }));
+      .map((r) => ({ attendee_id: r.attendee_id, display_name: r.display_name, email: r.email, status: r.status }));
     meeting.attendees = rows.map((r) => r.full_name || r.display_name).filter(Boolean).join(', ');
     return meeting;
   }
@@ -152,7 +156,7 @@ export class MeetingsService {
       );
       const meetingId = res.rows[0].id;
 
-      await this._linkContacts(client, meetingId, contactIds);
+      await this._linkContacts(client, meetingId, contactIds, data.attendee_status || null);
       await this._addUnlinked(client, meetingId, { attendeesText: data.attendees, unlinked: data.unlinked_attendees });
       return this._fetchFull(client, meetingId);
     });
@@ -206,7 +210,7 @@ export class MeetingsService {
       // attendees string / unlinked_attendees array replaces the unlinked set.
       if (contactIds !== undefined) {
         await client.query('DELETE FROM meeting_attendees WHERE meeting_id = $1 AND contact_id IS NOT NULL', [id]);
-        await this._linkContacts(client, id, contactIds || []);
+        await this._linkContacts(client, id, contactIds || [], data.attendee_status || null);
       }
       if (data.attendees !== undefined || data.unlinked_attendees !== undefined) {
         await client.query('DELETE FROM meeting_attendees WHERE meeting_id = $1 AND contact_id IS NULL', [id]);
@@ -229,12 +233,16 @@ export class MeetingsService {
   }
 
   // Link existing contacts as attendees (linked rows). Callers validate the
-  // contact ids exist first.
-  async _linkContacts(client, meetingId, contactIds) {
+  // contact ids exist first. `statusById` (optional) maps a contact id →
+  // canonical RSVP/attendance status ('going'|'declined'|'maybe'|'invited'|
+  // 'owner'); contacts without an entry are linked with status NULL. Keyed by
+  // String(id) so numeric and bigint-string ids both resolve.
+  async _linkContacts(client, meetingId, contactIds, statusById = null) {
     for (const contactId of contactIds || []) {
+      const status = statusById ? (statusById[String(contactId)] ?? null) : null;
       await client.query(
-        'INSERT INTO meeting_attendees (meeting_id, contact_id) VALUES ($1, $2)',
-        [meetingId, contactId]
+        'INSERT INTO meeting_attendees (meeting_id, contact_id, status) VALUES ($1, $2, $3)',
+        [meetingId, contactId, status]
       );
     }
   }
@@ -468,14 +476,16 @@ export class MeetingsService {
         }
         const kind = c.kind || 'account';
         const linkAccountId = kind === 'internal' ? null : accountId;
-        const created = await this.contactsService.create(userId, {
+        // findOrCreate, not create: a "new" attendee that turns out to already
+        // exist should link/enrich idempotently, not 409 the whole meeting write.
+        const { contact } = await this.contactsService.findOrCreate(userId, {
           full_name: c.full_name,
           email: c.email || null,
           kind,
         }, linkAccountId);
-        contactIds.push(created.id);
+        contactIds.push(contact.id);
         if (c.research) {
-          enrichTargets.push({ contactId: created.id, name: created.full_name });
+          enrichTargets.push({ contactId: contact.id, name: contact.full_name });
         }
       } else {
         throw badRequest(`Unknown contact.mode: "${c.mode}". Must be "existing" (also pass contact_id) or "new" (also pass full_name).`);

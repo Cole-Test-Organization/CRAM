@@ -20,7 +20,7 @@ function normalizeMode(mode) {
 
 export class EventsService {
   // Events are global data — no user scoping. Pool, not withUser.
-  async list({ city, country, mode, source, after, before, has_location, search, tags, sort = 'start_date', order = 'asc', limit = 200, offset = 0 } = {}) {
+  async list({ city, country, mode, source, after, before, has_location, search, tags, sort = 'start_date', order = 'asc', limit, offset = 0 } = {}) {
     const validSorts = new Set(['start_date', 'end_date', 'title', 'created_at', 'updated_at']);
     const sortCol = validSorts.has(sort) ? sort : 'start_date';
     const sortOrder = order === 'desc' ? 'DESC' : 'ASC';
@@ -73,20 +73,28 @@ export class EventsService {
     }
 
     const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-    params.push(limit, offset);
+    const baseParams = [...params];
+    let paginationSql = '';
+    if (limit != null) {
+      params.push(limit, offset);
+      paginationSql = `LIMIT $${params.length - 1} OFFSET $${params.length}`;
+    } else if (offset) {
+      params.push(offset);
+      paginationSql = `OFFSET $${params.length}`;
+    }
     const sql = `
       SELECT ${EVENT_COLS}
       FROM events
       ${whereClause}
       ORDER BY ${sortCol} ${sortOrder} NULLS LAST, id ${sortOrder}
-      LIMIT $${params.length - 1} OFFSET $${params.length}
+      ${paginationSql}
     `;
 
     const pool = getPool();
     const rows = (await pool.query(sql, params)).rows;
     const countRes = await pool.query(
       `SELECT COUNT(*)::int AS count FROM events ${whereClause}`,
-      params.slice(0, params.length - 2)
+      baseParams
     );
     return { events: rows, total: countRes.rows[0].count };
   }
