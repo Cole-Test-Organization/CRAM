@@ -45,7 +45,7 @@ Schemas (request/response shapes, validation) come from the OpenAPI spec (HTTP) 
 
 **Exception — deterministic HTTP-only endpoints.** A surface that is *only ever* machine-to-machine and deterministic — never invoked by the in-app agent or an external MCP client — may live as **service + HTTP route only**, and is deliberately excluded from the MCP tool (`api/src/mcp/tools.js`), both `services` bags (`api/src/mcp/server.js`, `api/src/agent/mcp-client.js`), and `api/src/instructions.js` / `REFS`. Keep these out of the four-surface parity check. Current exceptions:
 
-- **`calendar-import`** (`POST /api/calendar-import` → `api/src/services/calendar-import.js` + `api/src/routes/calendar-import.js`) — the daily Google Calendar ingestion a Google Apps Script forwards through a Cloudflare tunnel. It's deterministic (no LLM) and consumed by the tunnel, not the agent, so it has **no** `calendar_import` MCP tool, is **not** in either `services` bag, and has **no** `instructions.js` entry. If it ever needs to be agent-callable, wire all four surfaces at that point.
+- **`calendar-import`** (`POST /api/calendar-import` → `api/src/services/calendar-import.js` + `api/src/routes/calendar-import.js`) — the daily Google Calendar ingestion a Google Apps Script forwards through a Cloudflare tunnel (the Apps Script exporter source lives in `calendar/`). It's deterministic (no LLM) and consumed by the tunnel, not the agent, so it has **no** `calendar_import` MCP tool, is **not** in either `services` bag, and has **no** `instructions.js` entry. If it ever needs to be agent-callable, wire all four surfaces at that point.
 
 ### Keep api/SCHEMA.md in sync with the database — MANDATORY
 

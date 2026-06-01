@@ -12,6 +12,7 @@
     "db:migrate:down": "node-pg-migrate --migrations-dir migrations down",
     "db:migrate:create": "node-pg-migrate --migrations-dir migrations create",
     "db:schema": "node ../dev/scripts/dump-schema.js",
+    "db:clear": "node ../dev/scripts/clear-db.js",
     "test": "node --test test/endpoints.test.js"
   },
   "dependencies": {

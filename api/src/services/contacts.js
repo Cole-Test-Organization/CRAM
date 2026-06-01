@@ -142,6 +142,24 @@ export class ContactsService {
     });
   }
 
+  // Slim email lookup for staging flows (resolve_emails): identity-only, just
+  // enough to label an attendee in the from-emails picker. Skips the full
+  // record + linked-accounts fan-out that getByEmail/_fetchWithAccounts pull,
+  // so a many-attendee resolve doesn't serialize a fat contact per row.
+  // Returns null when no contact owns the email.
+  async getByEmailBrief(userId, email) {
+    if (!email || typeof email !== 'string') return null;
+    const normalized = email.trim().toLowerCase();
+    if (!normalized) return null;
+    return withUser(userId, async (client) => {
+      const row = (await client.query(
+        `SELECT id, full_name, email, title, company, kind FROM contacts WHERE LOWER(email) = $1 ORDER BY id LIMIT 1`,
+        [normalized]
+      )).rows[0];
+      return row || null;
+    });
+  }
+
   // Buckets for the meeting/internal-note attendee picker.
   //   mode='external' + accountId: account (that account's contacts) + partner
   //     (contacts at partner accounts linked via account_partners) + internal (all)

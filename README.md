@@ -141,6 +141,10 @@ In `.env`:
 
 To add new sources, drop a scraper file into `events/src/scrapers/` and register it.
 
+### Calendar import (daily auto-import)
+
+Your daily meetings can flow into the CRM automatically. A Google Apps Script reads a day's calendar events and POSTs them to `POST /api/calendar-import`, which creates a meeting per event and resolves attendees/accounts by email domain. The exporter source and setup steps live in [`calendar/`](calendar/README.md). It's optional — the CRM works fine without it; you can also create meetings by hand or via the API/MCP.
+
 ## Usage
 
 Once running:

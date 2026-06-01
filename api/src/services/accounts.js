@@ -121,6 +121,23 @@ export class AccountsService {
     });
   }
 
+  // Slim domain lookup for staging flows (resolve_emails): account identity
+  // only — NOT _fetchWithChildren's contacts/meetings/partners/opportunities
+  // fan-out, which on a large account bloats the response by orders of
+  // magnitude and, duplicated per attendee via account_match, has blown out
+  // agent context windows. Returns null when no account owns the domain.
+  async getByDomainBrief(userId, domain) {
+    return withUser(userId, async (client) => {
+      const [normalized] = normalizeDomains([domain]);
+      if (!normalized || !normalized.includes('.')) return null;
+      const row = (await client.query(
+        `SELECT id, slug, name, status FROM accounts WHERE domains @> jsonb_build_array($1::text) ORDER BY id LIMIT 1`,
+        [normalized]
+      )).rows[0];
+      return row || null;
+    });
+  }
+
   // Dedupe lookup: slug match wins (the DB-unique key); falls back to a
   // matching domain in the jsonb domains array, then a case-insensitive name
   // match. Returns { id } or null. Internal — runs inside the caller's

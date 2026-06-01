@@ -5,6 +5,7 @@ node_modules/
 # Env / secrets
 .env
 todoist/.env
+calendar/.env
 
 # DB backups
 backups/
@@ -28,3 +29,4 @@ outreach/.ratelimit.json
 
 # Local-only sample fixtures for manual smoke tests (e.g. notes-import zips)
 sample-imports/
+dev/sample-notes/

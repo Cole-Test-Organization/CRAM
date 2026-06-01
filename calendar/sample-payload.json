@@ -1,0 +1,41 @@
+{
+  "date": "2026-05-31",
+  "calendarId": "primary",
+  "timezone": "America/New_York",
+  "count": 2,
+  "meetings": [
+    {
+      "title": "Company Holiday",
+      "isAllDay": true,
+      "start": "2026-05-31T04:00:00.000Z",
+      "end": "2026-06-01T04:00:00.000Z",
+      "startStr": "All day",
+      "endStr": "",
+      "location": "",
+      "guestCount": 0,
+      "guests": [],
+      "guestEmails": [],
+      "myStatus": "Owner",
+      "description": "",
+      "id": "0p1q2r3s4t5u6v7w8x9y0z1a2b@google.com"
+    },
+    {
+      "title": "Sprint Planning",
+      "isAllDay": false,
+      "start": "2026-05-31T13:30:00.000Z",
+      "end": "2026-05-31T14:00:00.000Z",
+      "startStr": "9:30 AM",
+      "endStr": "10:00 AM",
+      "location": "https://meet.google.com/abc-defg-hij",
+      "guestCount": 2,
+      "guests": [
+        { "email": "alex@example.com", "name": "Alex Rivera", "status": "Going" },
+        { "email": "jordan@example.com", "name": "", "status": "Invited" }
+      ],
+      "guestEmails": ["alex@example.com", "jordan@example.com"],
+      "myStatus": "Owner",
+      "description": "Review backlog and plan the sprint.",
+      "id": "3p4q5r6s7t8u9v0w1x2y3z4a5b@google.com"
+    }
+  ]
+}

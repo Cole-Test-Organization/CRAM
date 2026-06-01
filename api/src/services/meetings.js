@@ -380,7 +380,11 @@ export class MeetingsService {
 
   // Given a list of email strings (raw or RFC-5322), return what we already
   // know about each one and how the GUI/agent should treat them in the
-  // from-emails meeting flow. No writes — pure resolution. Output:
+  // from-emails meeting flow. No writes — pure resolution. Lookups are
+  // deliberately SLIM (identity-only contact + account rows, no linked-record
+  // fan-out): this is a staging probe, and embedding full account subtrees
+  // here — then duplicating them per attendee via account_match — used to blow
+  // out agent context windows on large accounts. Output:
   //   {
   //     attendees: [{ email, domain, name_guess, kind, contact, account_match }],
   //     accounts:  [{ domain, account, attendee_count, suggested_name }],
@@ -402,7 +406,7 @@ export class MeetingsService {
 
     for (const p of parsed) {
       const isInternal = !!(p.domain && internalDomains.has(p.domain));
-      const contact = await this.contactsService.getByEmail(userId, p.email);
+      const contact = await this.contactsService.getByEmailBrief(userId, p.email);
       attendees.push({
         email: p.email,
         domain: p.domain,
@@ -417,7 +421,7 @@ export class MeetingsService {
 
     const accounts = [];
     for (const [domain, count] of domainAttendeeCount.entries()) {
-      const account = await this.accountsService.getByDomain(userId, domain);
+      const account = await this.accountsService.getByDomainBrief(userId, domain);
       accounts.push({
         domain,
         account: account || null,
@@ -428,8 +432,10 @@ export class MeetingsService {
     accounts.sort((a, b) => b.attendee_count - a.attendee_count || a.domain.localeCompare(b.domain));
     const primary = accounts[0]?.domain || null;
 
-    // Attach the matched account to each external attendee so the GUI doesn't
-    // have to cross-reference.
+    // Attach the matched (slim) account to each external attendee so the GUI
+    // doesn't have to cross-reference. These are identity-only objects, so the
+    // per-attendee duplication is cheap — unlike the old full-subtree account
+    // object, which was serialized once per attendee.
     for (const a of attendees) {
       if (a.kind !== 'account' || !a.domain) { a.account_match = null; continue; }
       const candidate = accounts.find(c => c.domain === a.domain);
