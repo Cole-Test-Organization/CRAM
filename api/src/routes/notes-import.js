@@ -60,7 +60,7 @@ export default async function notesImportRoutes(fastify, { notesImportService })
   fastify.post('/notes-import/upload-zip', {
     bodyLimit: BODY_LIMIT,
     schema: {
-      description: 'Import notes from an uploaded .zip. Send the raw archive as application/octet-stream. The server extracts text entries (.md/.markdown/.txt/.org/.rst; binaries, dotfiles, and __MACOSX junk are ignored) into the same files[] list as POST /api/notes-import and enqueues the job. Returns { jobId, file_count }. Poll GET /api/notes-import/jobs/:jobId.',
+      description: 'Import notes from an uploaded .zip. Send the raw archive as application/octet-stream. The server extracts text entries (.md/.markdown/.txt/.org/.rst; binaries, dotfiles, and __MACOSX junk are ignored) into the same files[] list as POST /api/notes-import and enqueues the job. Returns { jobId, file_count }. Poll GET /api/notes-import/jobs/:jobId. Exporting from Google Drive? A raw folder download is all .docx/.pdf, which get skipped — run Google Takeout with Documents set to Plain Text (.txt), or download docs individually as Markdown (.md), before zipping.',
       tags: ['notes-import'],
       consumes: ['application/octet-stream'],
     },

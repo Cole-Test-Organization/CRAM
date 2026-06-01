@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { MeetingFormModal } from '../components/FormModals';
 import Button from '../components/Button';
 import ListRows from '../components/ListRows';
+import TodayTimeline from '../components/TodayTimeline';
 import SelectionToolbar from '../components/SelectionToolbar';
 import { createSelection } from '../components/createSelection';
 import { buildMeetingsExport } from '../lib/meetingExport';
@@ -71,6 +72,10 @@ export default function MeetingsList(props: Props = {}) {
           <Button variant="primary" size={isEmbedded() ? 'sm' : 'md'} onClick={() => setModalOpen(true)}>+ New Meeting</Button>
         </div>
       </div>
+
+      <Show when={!isEmbedded()}>
+        <TodayTimeline meetings={() => meetings() || []} getHref={(m: any) => `/meetings/${m.id}`} />
+      </Show>
 
       <div class="mb-5">
         <div class="flex items-center bg-base-950 border-2 border-base-500 px-3 py-2 gap-2 focus-within:border-surf-300 transition-colors">

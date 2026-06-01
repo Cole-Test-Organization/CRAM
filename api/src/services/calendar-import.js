@@ -23,6 +23,10 @@
 //        domain at all, it's an INTERNAL note (account_id NULL, internal=true).
 //     →  write the meeting via meetingsService.create, prepending the calendar
 //        description (HTML → markdown) under a heading so the user can review it.
+//        The event's start/end (full ISO instants the export already sends) are
+//        persisted as meetings.starts_at/ends_at to drive the Today timeline, and
+//        its `location` (Meet/Zoom URL or room) as meetings.location for the
+//        timeline's "Join" button; `date` (above) stays the grouping/display day.
 //
 // Account resolution honours the "separate creation from assignment" model the
 // import-triage refactor built: an unknown customer domain auto-creates an
@@ -33,7 +37,10 @@
 // event id (stable across daily runs, including recurring-instance ids), and
 // meetings has unique indexes on (account_id, filename) and
 // (user_id, filename WHERE account_id IS NULL), so re-sending a day trips a
-// 23505 we catch and report as "skipped" rather than duplicating.
+// 23505 we catch and report as "skipped" rather than duplicating. On that skip
+// we still backfill starts_at/ends_at onto the existing row when it lacks them
+// (COALESCE — never overwrites), so re-running today's import lights up the
+// Today timeline for rows imported before time-of-day capture existed.
 
 import { parseEmailList, normalizeEmail } from "./_email.js";
 import {
@@ -192,6 +199,18 @@ export function localDate(startIso, timezone) {
         // Bad timezone string → fall back to the UTC date.
         return startIso.slice(0, 10);
     }
+}
+
+// Validate an ISO 8601 timestamp from the calendar export (event start/end). The
+// export sends both as full UTC instants (e.g. "2026-05-31T13:30:00.000Z"); we
+// persist them verbatim as timestamptz so the GUI renders them in the viewer's
+// local zone and can place the event on the Today timeline. Returns the original
+// string when it parses, else null — a bad/blank value just means "no time of
+// day", never a hard failure.
+export function parseTimestamp(iso) {
+    if (typeof iso !== "string" || !iso.trim()) return null;
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? null : iso;
 }
 
 export class CalendarImportService {
@@ -366,6 +385,22 @@ export class CalendarImportService {
                 : null);
         if (!date) return { title, outcome: "skipped", reason: "no_date" };
 
+        // Keep the precise instants too (the export already sends both as ISO
+        // UTC). `date` above stays the grouping/display day; these power the
+        // Today timeline and the "happening now" highlight. Drop a non-sensical
+        // end (<= start) rather than store an inverted block.
+        const startsAt = parseTimestamp(meeting.start);
+        let endsAt = parseTimestamp(meeting.end);
+        if (startsAt && endsAt && new Date(endsAt) <= new Date(startsAt))
+            endsAt = null;
+        // The export puts the conferencing URL (Meet/Zoom/Teams) — or a room /
+        // address for in-person — in `location`. Kept verbatim; the GUI decides
+        // whether it's a join link or plain text.
+        const location =
+            typeof meeting.location === "string" && meeting.location.trim()
+                ? meeting.location.trim()
+                : null;
+
         // Parse + classify attendees. buildAttendees prefers the structured guests[]
         // (real display name + RSVP status per guest) and falls back to the flat
         // guestEmails[] for older exports; both are deduped by email.
@@ -510,6 +545,9 @@ export class CalendarImportService {
         try {
             const row = await this.meetingsService.create(userId, accountId, {
                 date,
+                starts_at: startsAt,
+                ends_at: endsAt,
+                location,
                 title,
                 filename,
                 body,
@@ -532,11 +570,33 @@ export class CalendarImportService {
             };
         } catch (err) {
             if (err.code === "23505") {
+                // A meeting from this event already exists (matched on the stable
+                // event-id filename). Don't duplicate — but DO backfill start/end
+                // times if we now have them and the stored row predates time
+                // capture. backfillTimes COALESCE-fills blanks only, so it never
+                // clobbers a time the user edited. This is what lets a re-run of
+                // today's import light up the Today timeline for rows imported
+                // earlier today (before this row existed).
+                let backfilled = false;
+                if (startsAt || endsAt || location) {
+                    try {
+                        const updated = await this.meetingsService.backfillCalendarFields(
+                            userId,
+                            filename,
+                            { starts_at: startsAt, ends_at: endsAt, location },
+                        );
+                        backfilled = !!updated;
+                    } catch {
+                        // Best-effort — a failed backfill must not turn a clean
+                        // skip into a hard error for the whole event.
+                    }
+                }
                 return {
                     title,
                     outcome: "skipped",
                     reason: "duplicate",
                     note: "A meeting from this calendar event already exists (matched on event id) — left as-is.",
+                    backfilled,
                     accounts_created: accountsCreated,
                     contacts_created: contactsCreated,
                 };

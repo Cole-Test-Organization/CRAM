@@ -5,6 +5,8 @@ import { ContactFormModal } from '../components/FormModals';
 import Button from '../components/Button';
 import NotesPanel from '../components/NotesPanel';
 import BackLink from '../components/BackLink';
+import { attendeeStatusClass, attendeeStatusLabel } from '../lib/attendeeStatus';
+import type { ContactMeeting } from '../lib/types';
 
 type EnrichmentJob = {
   jobId: string;
@@ -198,6 +200,48 @@ export default function ContactDetail() {
               <Show when={c().notes}><div class="text-[13px] text-base-50 mt-3 whitespace-pre-wrap">{c().notes}</div></Show>
               <Show when={!c().title && !c().email && !c().phone && !c().linkedin && !c().notes}>
                 <span class="text-base-300 text-[13px] italic">No details yet. Click Edit to add them.</span>
+              </Show>
+            </div>
+
+            <div class="panel panel-accent p-5 mt-5">
+              <h3 class="text-[11px] font-bold uppercase tracking-widest text-surf-300 mb-3">
+                Meetings ({c().meetings?.length || 0})
+              </h3>
+              <Show
+                when={c().meetings?.length}
+                fallback={<span class="text-base-300 text-[13px] italic">No meetings recorded yet.</span>}
+              >
+                <div class="flex flex-col gap-2">
+                  <For each={c().meetings}>
+                    {(mtg: ContactMeeting) => (
+                      <A
+                        href={`/meetings/${mtg.id}`}
+                        class="border-2 border-base-700 bg-base-950 px-3 py-2.5 flex items-center gap-x-3 gap-y-1.5 flex-wrap hover:border-surf-300 hover:shadow-[2px_2px_0_0_var(--color-surf-300)] transition-all"
+                      >
+                        {/* Title takes the full row on mobile so the meta below wraps
+                            under it; shares the line on desktop (md:min-w-0). */}
+                        <span class="flex-1 min-w-full md:min-w-0 text-sm font-semibold text-base-50 flex items-center gap-2 flex-wrap">
+                          <Show when={mtg.internal}>
+                            <span class="bg-base-950 border-2 border-surf-300 text-surf-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none shrink-0">Internal</span>
+                          </Show>
+                          {/* No truncate: let long titles wrap within the column (mobile)
+                              rather than force horizontal page overflow. Matches MeetingsList. */}
+                          <span class="break-words">{mtg.title || '(no title)'}</span>
+                        </span>
+                        {/* Meta — shrink-0 so a long title can't squeeze these to 0 width. */}
+                        <Show when={mtg.status}>
+                          <span class={`shrink-0 text-[10px] leading-none px-1.5 py-0.5 border ${attendeeStatusClass(mtg.status!)}`}>
+                            {attendeeStatusLabel(mtg.status!)}
+                          </span>
+                        </Show>
+                        <Show when={!mtg.internal && mtg.account_name}>
+                          <span class="shrink-0 text-[11px] uppercase tracking-wider text-base-400">{mtg.account_name}</span>
+                        </Show>
+                        <span class="shrink-0 text-[12px] text-base-300 uppercase tracking-wider tabular-nums">{mtg.date}</span>
+                      </A>
+                    )}
+                  </For>
+                </div>
               </Show>
             </div>
 

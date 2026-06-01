@@ -7,6 +7,7 @@ import Button from '../components/Button';
 import BackLink from '../components/BackLink';
 import ExportActions from '../components/ExportActions';
 import { buildMeetingsExport } from '../lib/meetingExport';
+import { attendeeStatusClass, attendeeStatusLabel } from '../lib/attendeeStatus';
 
 type EnrichmentJob = {
   jobId: string;
@@ -19,22 +20,6 @@ type EnrichmentJob = {
   createdAt: string;
   completedAt: string | null;
 };
-
-// Per-meeting attendance/RSVP badge (from meeting_attendees.status). Reuses the
-// existing palette: going/owner = surf (present), declined = scarlet, maybe =
-// amber, invited/other = muted base.
-const ATTENDEE_STATUS_LABEL: Record<string, string> = {
-  going: 'Going', declined: 'Declined', maybe: 'Maybe', invited: 'Invited', owner: 'Owner',
-};
-function attendeeStatusClass(status: string): string {
-  switch (status) {
-    case 'going':
-    case 'owner': return 'border-surf-300 text-surf-300';
-    case 'declined': return 'border-scarlet-400 text-scarlet-400';
-    case 'maybe': return 'border-amber-300 text-amber-300';
-    default: return 'border-base-500 text-base-300';
-  }
-}
 
 export default function MeetingView() {
   const params = useParams<{ id: string }>();
@@ -133,7 +118,7 @@ export default function MeetingView() {
                         <span>{c.full_name || c.email}</span>
                         <Show when={c.status}>
                           <span class={`text-[10px] leading-none px-1 py-0.5 border ${attendeeStatusClass(c.status)}`}>
-                            {ATTENDEE_STATUS_LABEL[c.status] || c.status}
+                            {attendeeStatusLabel(c.status)}
                           </span>
                         </Show>
                       </A>

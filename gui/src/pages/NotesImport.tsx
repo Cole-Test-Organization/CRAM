@@ -205,6 +205,12 @@ export default function NotesImport() {
             Upload a zipped notes folder. The server unpacks the text entries (binaries, images, and
             <code> __MACOSX</code> junk are ignored) and runs the same pipeline.
           </p>
+          <p class="text-base-400 text-[11px] mb-4">
+            <span class="text-papaya-300 font-semibold">From Google Drive?</span> A raw folder download is
+            all <code>.docx</code>/<code>.pdf</code> and imports nothing — export with{' '}
+            <span class="text-base-300 font-semibold">Google Takeout → Documents → Plain Text (.txt)</span>,
+            or download individual docs as Markdown.
+          </p>
           <input
             ref={zipInput}
             type="file"

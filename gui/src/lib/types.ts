@@ -153,6 +153,15 @@ export interface MeetingSummary {
   id: number;
   account_id: number | null;
   date: string;
+  // Precise event start/end as ISO 8601 timestamps. Null for notes-import rows
+  // and hand-entered meetings with no time of day; the calendar import sets them
+  // from the event's start/end. Used by the Today timeline.
+  starts_at: string | null;
+  ends_at: string | null;
+  // Meeting location — for virtual meetings the conferencing URL (rendered as a
+  // "Join" link on the Today timeline), for in-person a room/address. Null when
+  // unknown; the calendar import sets it from the event location.
+  location: string | null;
   title: string | null;
   filename: string;
   attendees: string | null;
@@ -192,6 +201,20 @@ export interface Meeting extends MeetingSummary {
   account_name: string | null;
   contacts?: MeetingAttendee[];
   unlinked_attendees?: UnlinkedAttendee[];
+}
+
+// A meeting in a contact's history (GET /api/contacts/:id → meetings[]), with
+// this contact's per-meeting RSVP status.
+export interface ContactMeeting {
+  id: number;
+  date: string;
+  title: string | null;
+  internal: boolean;
+  needs_review: boolean;
+  account_id: number | null;
+  account_slug: string | null;
+  account_name: string | null;
+  status: AttendeeStatus | null;
 }
 
 export interface ProductCategory {

@@ -4,7 +4,7 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-06-01T00:19:41.701Z
+- **Generated:** 2026-06-01T15:47:19.272Z
 - **Tables:** 23
 - **Enums:** 0
 - **Views:** 0
@@ -424,6 +424,9 @@
 | `internal` | `boolean` | NO | `false` |  |
 | `needs_review` | `boolean` | NO | `false` |  |
 | `search_vector` | `tsvector` | YES | `to_tsvector('english'::regconfig, ((COALESCE(title, ''::text) \|\| ' '::text) \|\| COALESCE(body, ''::text)))` |  |
+| `starts_at` | `timestamp with time zone` | YES | — |  |
+| `ends_at` | `timestamp with time zone` | YES | — |  |
+| `location` | `text` | YES | — |  |
 
 **Primary key:** `id`
 
@@ -439,6 +442,7 @@
 - `idx_meetings_internal` — `CREATE INDEX idx_meetings_internal ON public.meetings USING btree (internal) WHERE (internal = true)`
 - `idx_meetings_needs_review` — `CREATE INDEX idx_meetings_needs_review ON public.meetings USING btree (needs_review) WHERE (needs_review = true)`
 - `idx_meetings_search` — `CREATE INDEX idx_meetings_search ON public.meetings USING gin (search_vector)`
+- `idx_meetings_starts_at` — `CREATE INDEX idx_meetings_starts_at ON public.meetings USING btree (starts_at) WHERE (starts_at IS NOT NULL)`
 - `idx_meetings_user` — `CREATE INDEX idx_meetings_user ON public.meetings USING btree (user_id)`
 - `meetings_account_filename_uniq` *(unique)* — `CREATE UNIQUE INDEX meetings_account_filename_uniq ON public.meetings USING btree (account_id, filename) WHERE (account_id IS NOT NULL)`
 - `meetings_internal_filename_uniq` *(unique)* — `CREATE UNIQUE INDEX meetings_internal_filename_uniq ON public.meetings USING btree (user_id, filename) WHERE (account_id IS NULL)`

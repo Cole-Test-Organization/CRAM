@@ -4,7 +4,7 @@ import { normalizeDomain, suggestAccountName } from './_domain.js';
 import { parseEmailList } from './_email.js';
 import { badRequest, notFound, conflict } from '../lib/http-error.js';
 
-const MEETING_COLS = 'id, account_id, date, title, filename, body, internal, needs_review, created_at, updated_at';
+const MEETING_COLS = 'id, account_id, date, starts_at, ends_at, location, title, filename, body, internal, needs_review, created_at, updated_at';
 
 export class MeetingsService {
   constructor({ contactsService = null, accountsService = null, contactEnrichmentService = null, internalDomainsService = null } = {}) {
@@ -26,7 +26,7 @@ export class MeetingsService {
 
       params.push(limit, offset);
       const meetings = (await client.query(`
-        SELECT m.id, m.account_id, m.date, m.title, m.filename, m.internal, m.needs_review,
+        SELECT m.id, m.account_id, m.date, m.starts_at, m.ends_at, m.location, m.title, m.filename, m.internal, m.needs_review,
                m.created_at, m.updated_at,
                a.slug AS account_slug, a.name AS account_name
         FROM meetings m
@@ -141,12 +141,15 @@ export class MeetingsService {
       }
 
       const res = await client.query(
-        `INSERT INTO meetings (user_id, account_id, date, title, filename, body, internal, needs_review)
-         VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO meetings (user_id, account_id, date, starts_at, ends_at, location, title, filename, body, internal, needs_review)
+         VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING id`,
         [
           internal ? null : accountId,
           data.date,
+          data.starts_at || null,
+          data.ends_at || null,
+          data.location || null,
           data.title || null,
           filename,
           data.body,
@@ -189,15 +192,24 @@ export class MeetingsService {
         ? deriveFilename(nextDate, nextTitle, data.filename)
         : existing.filename;
       const nextNeedsReview = data.needs_review !== undefined ? !!data.needs_review : existing.needs_review;
+      // starts_at/ends_at: undefined = leave as-is; null = explicitly clear; a
+      // value = set. Lets the meeting form both set and unset a time of day
+      // without disturbing the other fields.
+      const nextStartsAt = data.starts_at !== undefined ? data.starts_at : existing.starts_at;
+      const nextEndsAt = data.ends_at !== undefined ? data.ends_at : existing.ends_at;
+      const nextLocation = data.location !== undefined ? data.location : existing.location;
 
       await client.query(
         `UPDATE meetings SET
-           date = $2, title = $3, filename = $4,
-           body = $5, needs_review = $6
+           date = $2, starts_at = $3, ends_at = $4, location = $5, title = $6, filename = $7,
+           body = $8, needs_review = $9
          WHERE id = $1`,
         [
           id,
           nextDate,
+          nextStartsAt,
+          nextEndsAt,
+          nextLocation,
           nextTitle,
           nextFilename,
           data.body || existing.body,
@@ -229,6 +241,33 @@ export class MeetingsService {
       if (!existing) return null;
       await client.query('DELETE FROM meetings WHERE id = $1', [id]);
       return existing;
+    });
+  }
+
+  // Fill calendar-sourced fields (start/end timestamps, location) on an EXISTING
+  // meeting without disturbing anything else — COALESCE means we only populate
+  // columns that are currently NULL, never overwriting a value already set.
+  // Matched by the stable calendar-derived `filename` (RLS already scopes to this
+  // user, so a `cal-<eventId>` filename is unique per event). This is how the
+  // idempotent calendar re-import backfills onto rows imported before time/
+  // location capture existed: re-sending a day collides on the filename unique
+  // index (the import reports it "skipped"), and this method lets those
+  // skipped-but-stale rows still pick up their times and join link. Returns the
+  // updated row, or null if nothing matched / nothing left to fill.
+  async backfillCalendarFields(userId, filename, { starts_at = null, ends_at = null, location = null } = {}) {
+    if (!filename || (!starts_at && !ends_at && !location)) return null;
+    return withUser(userId, async (client) => {
+      const res = await client.query(
+        `UPDATE meetings
+            SET starts_at = COALESCE(starts_at, $2),
+                ends_at   = COALESCE(ends_at,   $3),
+                location  = COALESCE(location,  $4)
+          WHERE filename = $1
+            AND (starts_at IS NULL OR ends_at IS NULL OR location IS NULL)
+          RETURNING id, starts_at, ends_at, location`,
+        [filename, starts_at, ends_at, location]
+      );
+      return res.rows[0] || null;
     });
   }
 
@@ -495,6 +534,9 @@ export class MeetingsService {
     // 3) Create the meeting.
     const meeting = await this.create(userId, accountId, {
       date: payload.date,
+      starts_at: payload.starts_at || null,
+      ends_at: payload.ends_at || null,
+      location: payload.location || null,
       title: payload.title || null,
       attendees: payload.attendees_text || null,
       body: payload.body,

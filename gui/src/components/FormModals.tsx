@@ -305,11 +305,33 @@ type EmailResolveResult = {
   primary_domain: string | null;
 };
 
+// Combine a YYYY-MM-DD date and an HH:MM local time into an ISO instant, or null
+// if either is missing. Interpreted in the browser's local zone — i.e. the time
+// the user sees on their own machine clock (the Today timeline renders it back
+// the same way).
+function combineLocalDateTime(dateStr: string, timeStr: string): string | null {
+  if (!dateStr || !timeStr) return null;
+  const [y, mo, d] = dateStr.split('-').map(Number);
+  const [h, mi] = timeStr.split(':').map(Number);
+  if ([y, mo, d, h, mi].some((n) => Number.isNaN(n))) return null;
+  return new Date(y, mo - 1, d, h, mi).toISOString();
+}
+// An ISO instant → local HH:MM for an <input type="time">, or '' when absent/bad.
+function isoToLocalTime(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 export function MeetingFormModal(props: MeetingModalProps) {
   // Manual-mode state (existing fields)
   const [account, setAccount] = createSignal<AccountLite | null>(null);
   const [internal, setInternal] = createSignal(false);
   const [date, setDate] = createSignal(new Date().toISOString().slice(0, 10));
+  const [startTime, setStartTime] = createSignal('');
+  const [endTime, setEndTime] = createSignal('');
+  const [meetingLocation, setMeetingLocation] = createSignal('');
   const [title, setTitle] = createSignal('');
   const [attendeesText, setAttendeesText] = createSignal('');
   const [contactIds, setContactIds] = createSignal<number[]>([]);
@@ -332,6 +354,9 @@ export function MeetingFormModal(props: MeetingModalProps) {
     if (props.open) {
       const e = props.existing;
       setDate(e?.date || new Date().toISOString().slice(0, 10));
+      setStartTime(isoToLocalTime(e?.starts_at));
+      setEndTime(isoToLocalTime(e?.ends_at));
+      setMeetingLocation(e?.location || '');
       setTitle(e?.title || '');
       setAttendeesText(e?.attendees || '');
       setBody(e?.body || '');
@@ -432,6 +457,16 @@ export function MeetingFormModal(props: MeetingModalProps) {
 
     setSaving(true);
     setError('');
+    // Optional time-of-day, combined with the date in the browser's local zone.
+    // Empty clears the time (null); a value sets it. The inputs are hidden in
+    // from-emails mode, so both stay '' there and no time is sent.
+    const startsAt = combineLocalDateTime(date(), startTime());
+    const endsAt = combineLocalDateTime(date(), endTime());
+    if (startsAt && endsAt && new Date(endsAt) <= new Date(startsAt)) {
+      setError('End time must be after the start time.');
+      setSaving(false);
+      return;
+    }
     try {
       let meeting: any;
 
@@ -439,6 +474,9 @@ export function MeetingFormModal(props: MeetingModalProps) {
         // Edit always uses manual update path.
         meeting = await api.updateMeeting(props.existing.id, {
           date: date(),
+          starts_at: startsAt,
+          ends_at: endsAt,
+          location: meetingLocation().trim() || null,
           title: title().trim() || undefined,
           attendees: attendeesText().trim() || undefined,
           body: body(),
@@ -501,6 +539,9 @@ export function MeetingFormModal(props: MeetingModalProps) {
           account_id: internal() ? undefined : account()!.id,
           internal: internal() || undefined,
           date: date(),
+          starts_at: startsAt,
+          ends_at: endsAt,
+          location: meetingLocation().trim() || null,
           title: title().trim() || undefined,
           attendees: attendeesText().trim() || undefined,
           contact_ids: contactIds(),
@@ -745,6 +786,24 @@ export function MeetingFormModal(props: MeetingModalProps) {
           </FormField>
         </div>
       </FormRow>
+
+      <Show when={!showFromEmails()}>
+        <FormRow>
+          <div class="flex-1 min-w-[140px]">
+            <FormField label="Start time" hint="Optional — shows this meeting on the Today timeline">
+              <input type="time" class={formInputClass} value={startTime()} onInput={(e) => setStartTime(e.currentTarget.value)} />
+            </FormField>
+          </div>
+          <div class="flex-1 min-w-[140px]">
+            <FormField label="End time">
+              <input type="time" class={formInputClass} value={endTime()} onInput={(e) => setEndTime(e.currentTarget.value)} />
+            </FormField>
+          </div>
+        </FormRow>
+        <FormField label="Location / meeting link" hint="Optional — a Meet/Zoom/Teams URL becomes a Join button on the Today timeline">
+          <input class={formInputClass} placeholder="https://meet.google.com/… or a room" value={meetingLocation()} onInput={(e) => setMeetingLocation(e.currentTarget.value)} />
+        </FormField>
+      </Show>
 
       <Show when={!showFromEmails()}>
         <FormField

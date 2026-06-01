@@ -50,7 +50,7 @@ export default function ImportExport() {
   };
 
   const selectAll = () => setSelected(new Set(filtered().map((a: any) => a.slug)));
-  const clearAll = () => setSelected(new Set());
+  const clearAll = () => setSelected(new Set<string>());
 
   const doExport = async () => {
     const slugs = [...selected()];

@@ -151,7 +151,7 @@ export default async function contactRoutes(fastify, { contactsService, accounts
   // Get single contact
   fastify.get('/contacts/:id', {
     schema: {
-      description: 'Get a single contact by ID (includes linked accounts).',
+      description: 'Get a single contact by ID. Includes `accounts` (linked accounts) and `meetings` — the meetings this contact attended, newest first, each with the contact\'s per-meeting RSVP/attendance `status` (going/declined/maybe/invited/owner, or null).',
       tags: ['contacts'],
       params: { type: 'object', properties: { id: { type: 'integer' } } },
     },

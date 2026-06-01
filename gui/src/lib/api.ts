@@ -206,7 +206,7 @@ export const api = {
   getMeeting: (id: number) =>
     get<any>(`/meetings/${id}`),
 
-  createMeeting: (data: { account_id?: number; internal?: boolean; date: string; title?: string; attendees?: string; contact_ids?: number[]; body: string }) =>
+  createMeeting: (data: { account_id?: number; internal?: boolean; date: string; starts_at?: string | null; ends_at?: string | null; location?: string | null; title?: string; attendees?: string; contact_ids?: number[]; body: string }) =>
     post<any>(`/meetings`, data),
 
   updateMeeting: (id: number, data: any) =>

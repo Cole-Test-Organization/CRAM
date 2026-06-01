@@ -116,7 +116,16 @@ export class ContactsService {
   }
 
   async getById(userId, id) {
-    return withUser(userId, (client) => this._fetchWithAccounts(client, id));
+    return withUser(userId, async (client) => {
+      const contact = await this._fetchWithAccounts(client, id);
+      if (!contact) return null;
+      // Attach the contact's meeting history (with their per-meeting RSVP) for
+      // the contact-detail view. Only on getById — the explicit detail fetch —
+      // so the high-traffic write/resolve paths (findOrCreate, link, enrich)
+      // that route through _fetchWithAccounts don't pay for this extra query.
+      contact.meetings = await this._fetchMeetings(client, id);
+      return contact;
+    });
   }
 
   async getByEmail(userId, email) {
@@ -252,6 +261,25 @@ export class ContactsService {
     `, [id])).rows;
 
     return { ...contact, accounts };
+  }
+
+  // The meetings this contact attended (was linked to), newest first, each
+  // carrying the contact's per-meeting RSVP/attendance `status` from the
+  // meeting_attendees join row (going/declined/maybe/invited/owner, or null when
+  // unknown — e.g. notes-import or legacy events). Powers the contact-detail
+  // "meeting history" view. Internal-only notes (account_id NULL) come back with
+  // null account fields; RLS scopes this to the current user's meetings.
+  async _fetchMeetings(client, contactId) {
+    return (await client.query(`
+      SELECT m.id, m.date, m.title, m.internal, m.needs_review,
+             m.account_id, a.slug AS account_slug, a.name AS account_name,
+             ma.status
+      FROM meeting_attendees ma
+      JOIN meetings m ON m.id = ma.meeting_id
+      LEFT JOIN accounts a ON a.id = m.account_id
+      WHERE ma.contact_id = $1
+      ORDER BY m.date DESC, m.id DESC
+    `, [contactId])).rows;
   }
 
   // Resolve the (kind, full_name, email) identity from raw input. The one hard
