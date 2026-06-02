@@ -4,7 +4,7 @@
 // (todoist/src/index.js prints JSON results via `console.log` on stdout — the
 // call-notes workflow and other automations parse that contract).
 //
-// When todoist is invoked as a library from api/src/services/todoist.js, this
+// When todoist is invoked as a library from api/src/services/todoist/todoist.js, this
 // logger writes to the API process's stderr — Docker captures it into the
 // container log buffer. Each line is JSON in production with
 // `service=todoist`, so it's easy to filter when downstream consumers parse

@@ -1053,14 +1053,12 @@ export function registerTools(server, services, resolveUserId) {
 
   server.tool(
     'backup',
-    'Database backups (pg_dump custom format). Backups are instance-wide, not per-user — a single dump captures every tenant\'s data, including every settings table (app_settings, user_agent_settings, user_internal_domains, user_memories, user_theme_settings, themes). Files land in the bind-mounted target directory (default /backups; the host mount is configured via BACKUP_HOST_DIR in the operator\'s .env). Actions: get_settings, update_settings (PATCH the enabled / cron / retention_count / target_dir fields; saving reschedules the cron job in-process), list (newest first, with filename / size / created_at), run (trigger a dump now), import_from_path (register an externally-produced dump that\'s already on the API container\'s filesystem — validated by PGDMP magic header and renamed to crm-imported-<timestamp>.dump), restore (DESTRUCTIVE — pg_restore --clean --if-exists drops and recreates every object; only call when intentionally rolling back), delete (remove a dump file). Binary uploads from the user\'s machine go through the HTTP route POST /api/backup/import (octet-stream body) — not exposed over MCP.',
+    'Database backups (pg_dump custom format). Backups are instance-wide, not per-user — a single dump captures every tenant\'s data, including every settings table (app_settings, user_agent_settings, user_internal_domains, user_memories, user_theme_settings, themes). Files land in the bind-mounted target directory (default /backups; the host mount is configured via BACKUP_HOST_DIR in the operator\'s .env). Actions: get_settings, update_settings (PATCH the retention_count / target_dir fields), list (newest first, with filename / size / created_at), run (trigger a dump now), import_from_path (register an externally-produced dump that\'s already on the API container\'s filesystem — validated by PGDMP magic header and renamed to crm-imported-<timestamp>.dump), restore (DESTRUCTIVE — pg_restore --clean --if-exists drops and recreates every object; only call when intentionally rolling back), delete (remove a dump file). Binary uploads from the user\'s machine go through the HTTP route POST /api/backup/import (octet-stream body) — not exposed over MCP.',
     {
       action: z.enum(['get_settings', 'update_settings', 'list', 'run', 'import_from_path', 'restore', 'delete']),
       filename: z.string().optional().describe('Backup filename (for restore / delete)'),
       path: z.string().optional().describe('Absolute path on the API container\'s filesystem (for import_from_path)'),
       settings: z.object({
-        enabled: z.boolean().optional(),
-        cron: z.string().optional().describe('Standard 5-field cron expression (minute hour dom month dow)'),
         retention_count: z.number().int().min(0).optional().describe('Number of dumps to keep (0 = keep all)'),
         target_dir: z.string().optional().describe('Absolute path inside the container where dumps are written (default /backups — must be inside the bind-mount)'),
       }).optional().describe('Settings patch (for update_settings)'),
@@ -1070,7 +1068,7 @@ export function registerTools(server, services, resolveUserId) {
         case 'get_settings':
           return callService(() => backupService.getSettings());
         case 'update_settings':
-          if (!settings) return errorResponse('update_settings requires settings — a partial config object. Fields: enabled (bool), cron (5-field expression), retention_count (int, 0=keep all), target_dir (absolute path inside the container).');
+          if (!settings) return errorResponse('update_settings requires settings — a partial config object. Fields: retention_count (int, 0=keep all), target_dir (absolute path inside the container).');
           return callService(() => backupService.updateSettings(settings));
         case 'list':
           return callService(() => backupService.listBackups());

@@ -601,10 +601,10 @@ export const api = {
   deleteMemory: (id: number) =>
     del<{ deleted: boolean; id: number }>(`/memories/${id}`),
 
-  // Backups (instance-wide pg_dump scheduling and admin).
+  // Backups (instance-wide pg_dump, on-demand).
   getBackupSettings: () =>
-    get<{ enabled: boolean; cron: string; retention_count: number; target_dir: string }>('/backup/settings'),
-  updateBackupSettings: (patch: { enabled?: boolean; cron?: string; retention_count?: number; target_dir?: string }) =>
+    get<{ retention_count: number; target_dir: string }>('/backup/settings'),
+  updateBackupSettings: (patch: { retention_count?: number; target_dir?: string }) =>
     put<any>('/backup/settings', patch),
   listBackups: () =>
     get<{ target_dir: string; backups: Array<{ filename: string; size_bytes: number; created_at: string }> }>('/backup'),

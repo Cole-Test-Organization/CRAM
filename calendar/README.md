@@ -16,8 +16,8 @@ Google Calendar
    └─ Apps Script: postMeetingsToEndpoint()   ← this module
         └─ POST https://calendar.justcole.com  (Cloudflare Access)
              └─ Cloudflare tunnel → origin
-                  └─ POST /api/calendar-import  ← api/src/routes/calendar-import.js
-                       └─ CalendarImportService  ← api/src/services/calendar-import.js
+                  └─ POST /api/calendar-import  ← api/src/routes/calendar-import/calendar-import.js
+                       └─ CalendarImportService  ← api/src/services/calendar-import/calendar-import.js
 ```
 
 The endpoint is **deterministic / machine-to-machine** (no LLM, not agent- or
@@ -76,5 +76,5 @@ re-sending a day is a no-op.
 - All-day events and organizer-only holds are skipped by the importer unless
   `CALENDAR_IMPORT_ALL_DAY` / `CALENDAR_IMPORT_SOLO` are enabled on the API.
 
-See `api/src/routes/calendar-import.js` (swagger schema) and
-`api/src/services/calendar-import.js` for the full classification rules.
+See `api/src/routes/calendar-import/calendar-import.js` (swagger schema) and
+`api/src/services/calendar-import/calendar-import.js` for the full classification rules.

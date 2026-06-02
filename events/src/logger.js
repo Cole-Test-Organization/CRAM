@@ -2,9 +2,9 @@
 //
 // Writes to stderr so stdout stays reserved for the CLI return value
 // (`scrape --no-write` prints the scraped events as JSON on stdout). When the
-// scraper is spawned from api/src/scheduler.js with `stdio: ['ignore',
-// 'inherit', 'inherit']`, this stderr stream is inherited by the API
-// container's stderr — Docker captures it into the container log buffer.
+// scraper is spawned as a subprocess with `stdio: ['ignore', 'inherit',
+// 'inherit']`, this stderr stream is inherited by the parent's stderr —
+// Docker captures it into the container log buffer.
 // Each line is JSON in production with `service=events`, so it's easy to
 // filter when downstream consumers parse the stream.
 

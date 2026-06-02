@@ -6,8 +6,8 @@
 // in dev for terminal readability.
 //
 // `logger` is the default API instance (service=api). Other entry points that
-// run as their own process inside the same container (MCP server, scheduler
-// children) should call `createLogger({ service: 'foo' })` so log lines can
+// run as their own process inside the same container (e.g. the MCP server)
+// should call `createLogger({ service: 'foo' })` so log lines can
 // be filtered by service.
 //
 // Inside Fastify route handlers, prefer `req.log` over importing this directly

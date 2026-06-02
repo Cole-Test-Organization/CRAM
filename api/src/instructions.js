@@ -154,7 +154,7 @@ const REFS = {
   'notes.update': { http: 'PATCH /api/notes/:id',                                   mcp: { tool: 'notes', action: 'update' } },
   'notes.delete': { http: 'DELETE /api/notes/:id',                                  mcp: { tool: 'notes', action: 'delete' } },
 
-  // backup (instance-wide pg_dump scheduling and admin)
+  // backup (instance-wide pg_dump backups and admin)
   'backup.get_settings':    { http: 'GET /api/backup/settings',           mcp: { tool: 'backup', action: 'get_settings' } },
   'backup.update_settings': { http: 'PUT /api/backup/settings',           mcp: { tool: 'backup', action: 'update_settings' } },
   'backup.list':            { http: 'GET /api/backup',                    mcp: { tool: 'backup', action: 'list' } },

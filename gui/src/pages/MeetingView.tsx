@@ -28,8 +28,14 @@ export default function MeetingView() {
   const [meeting, { refetch }] = createResource(() => Number(params.id), (id) => api.getMeeting(id));
   const [editOpen, setEditOpen] = createSignal(false);
 
-  // Triage panel state — for a parked note (needs_review): assign it to an
-  // account, or confirm it's internal and clear the flag.
+  // Triage panel state (needs_review). The panel takes one of two shapes
+  // depending on whether the note already has an account:
+  //   • account-less (agent-parked note): pick an account to assign, or confirm
+  //     it's internal — assignTarget/assignAccount drive this.
+  //   • already on an auto-created account (calendar import flagged it for
+  //     confirmation): confirm that account or move it. assign-account would 409
+  //     here since the note is already linked, so we never offer it.
+  // assigning/assignError are shared by both shapes (busy state + error line).
   const [assignTarget, setAssignTarget] = createSignal<{ id: number; name: string; slug: string } | null>(null);
   const [assigning, setAssigning] = createSignal(false);
   const [assignError, setAssignError] = createSignal('');
@@ -60,7 +66,10 @@ export default function MeetingView() {
     }
   };
 
-  const keepInternal = async () => {
+  // Dismiss the needs_review flag without changing the account or internal
+  // state. Used both to confirm an auto-created account is correct and to keep
+  // an account-less note as internal — both just settle the triage question.
+  const clearReview = async () => {
     const m = meeting();
     if (!m) return;
     setAssigning(true);
@@ -203,21 +212,50 @@ export default function MeetingView() {
                 <div class="flex items-center gap-2 mb-2">
                   <span class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">Needs review</span>
                 </div>
-                <h3 class="text-[14px] font-bold text-base-50 mb-1">This note isn't assigned to an account.</h3>
-                <p class="text-base-300 text-[12px] mb-3">
-                  The importer couldn't confidently place it. Assign the account it belongs to, or confirm it's an internal note and dismiss the flag.
-                </p>
-                <div class="flex flex-col gap-2 md:flex-row md:items-center">
-                  <div class="flex-1 min-w-0">
-                    <AccountPicker value={assignTarget()} onChange={setAssignTarget} placeholder="Search for an account..." />
+
+                <Show
+                  when={m().account_id}
+                  fallback={
+                    // Account-less parked note: genuinely unassigned, so assigning
+                    // is the right action (the importer/agent couldn't place it).
+                    <>
+                      <h3 class="text-[14px] font-bold text-base-50 mb-1">This note isn't assigned to an account.</h3>
+                      <p class="text-base-300 text-[12px] mb-3">
+                        The importer couldn't confidently place it. Assign the account it belongs to, or confirm it's an internal note and dismiss the flag.
+                      </p>
+                      <div class="flex flex-col gap-2 md:flex-row md:items-center">
+                        <div class="flex-1 min-w-0">
+                          <AccountPicker value={assignTarget()} onChange={setAssignTarget} placeholder="Search for an account..." />
+                        </div>
+                        <Button variant="primary" size="sm" disabled={!assignTarget() || assigning()} onClick={assignAccount}>
+                          {assigning() ? 'Assigning…' : 'Assign account'}
+                        </Button>
+                        <Button variant="ghost" size="sm" disabled={assigning()} onClick={clearReview}>
+                          Keep as internal
+                        </Button>
+                      </div>
+                    </>
+                  }
+                >
+                  {/* Already linked to an auto-created account (calendar import). It's
+                      NOT unassigned — offer Confirm (clear the flag) or Move (reassign),
+                      never Assign, which would 409 against an already-linked note. */}
+                  <h3 class="text-[14px] font-bold text-base-50 mb-1">
+                    Auto-created account: <span class="text-amber-300">{m().account_name}</span>
+                  </h3>
+                  <p class="text-base-300 text-[12px] mb-3">
+                    The importer created this account from the attendees' email domain and linked the note to it. Confirm it's the right account, or move it to a different one.
+                  </p>
+                  <div class="flex flex-col gap-2 md:flex-row md:items-center">
+                    <Button variant="primary" size="sm" disabled={assigning()} onClick={clearReview}>
+                      {assigning() ? 'Confirming…' : 'Confirm account'}
+                    </Button>
+                    <Button variant="ghost" size="sm" disabled={assigning()} onClick={() => { setMoveOpen(true); setMoveError(''); }}>
+                      Move to a different account
+                    </Button>
                   </div>
-                  <Button variant="primary" size="sm" disabled={!assignTarget() || assigning()} onClick={assignAccount}>
-                    {assigning() ? 'Assigning…' : 'Assign account'}
-                  </Button>
-                  <Button variant="ghost" size="sm" disabled={assigning()} onClick={keepInternal}>
-                    Keep as internal
-                  </Button>
-                </div>
+                </Show>
+
                 <Show when={assignError()}>
                   <div class="text-[11px] text-scarlet-400 mt-2 font-semibold">{assignError()}</div>
                 </Show>

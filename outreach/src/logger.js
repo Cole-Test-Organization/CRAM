@@ -1,10 +1,10 @@
 // Pino logger for the outreach service.
 //
 // Writes to stderr so stdout stays reserved for CLI return values
-// (outreach/src/index.js prints JSON results via `console.log` on stdout — the
-// scheduler and the in-process API caller depend on that contract).
+// (outreach/src/index.js prints JSON results via `console.log` on stdout — CLI
+// consumers that parse the output depend on that contract).
 //
-// When outreach is invoked as a library (api/src/services/outreach.js imports
+// When outreach is invoked as a library (api/src/services/outreach/outreach.js imports
 // researchPerson/researchCompany/researchIndustry directly), this logger
 // writes to the API process's stderr — Docker captures it into the container
 // log buffer. Each line is JSON in production with `service=outreach`, so

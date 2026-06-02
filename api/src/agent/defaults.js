@@ -12,7 +12,7 @@
 //
 // The default *model* is deliberately NOT an env knob: when a user hasn't
 // chosen one, it's resolved from whatever the configured server actually has
-// installed (see getEffective in services/agent-settings.js), with
+// installed (see getEffective in services/agent/agent-settings.js), with
 // FALLBACK_MODEL below as the last resort if the server can't be reached.
 
 import { getConfig } from '../config.js';

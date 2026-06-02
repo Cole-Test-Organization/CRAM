@@ -1,5 +1,4 @@
 import {
-    createEffect,
     createResource,
     createSignal,
     For,
@@ -26,22 +25,6 @@ export default function BackupSettings(props: Props) {
     const [list, { refetch: refetchList }] = createResource(() =>
         api.listBackups(),
     );
-
-    // Working copy of the editable fields. Initialized once settings resolve.
-    const [enabled, setEnabled] = createSignal(false);
-    const [cronExpr, setCronExpr] = createSignal("0 2 * * *");
-    const [retention, setRetention] = createSignal(30);
-    const [targetDir, setTargetDir] = createSignal("/backups");
-
-    // Sync working copy whenever settings load/reload.
-    createEffect(() => {
-        const s = settings();
-        if (!s) return;
-        setEnabled(s.enabled);
-        setCronExpr(s.cron);
-        setRetention(s.retention_count);
-        setTargetDir(s.target_dir);
-    });
 
     const [running, setRunning] = createSignal(false);
     const [restoring, setRestoring] = createSignal<string | null>(null);
@@ -235,7 +218,7 @@ export default function BackupSettings(props: Props) {
                                 including all settings tables
                             </strong>{" "}
                             (agent config, internal domains, memories, themes,
-                            backup schedule).
+                            backup config).
                         </p>
                     </div>
                 </Show>

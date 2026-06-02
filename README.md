@@ -132,12 +132,9 @@ Skip the prompt (or set `TODOIST_ENABLED=false` in `.env`) to disable the integr
 
 ### Events scraper
 
-The events module runs on a schedule and pulls in-person events from configured sources. The bundled source scrapes the public Palo Alto Networks event calendar — no setup required, it just works.
+The events module pulls in-person events from configured sources. The bundled source scrapes the public Palo Alto Networks event calendar — no setup required, it just works.
 
-In `.env`:
-
-- `EVENTS_SCRAPE_CRON` — schedule (standard 5-field cron, default `0 6 * * *` = daily at 06:00 local).
-- `DISABLE_SCHEDULER=1` — turn the scheduled scrape off entirely.
+Run a scrape on demand with `node events/src/index.js scrape` (add `--api-url <url>` to point it at a non-default API). Wire it to an external scheduler (host cron, systemd timer) if you want it to run recurring.
 
 To add new sources, drop a scraper file into `events/src/scrapers/` and register it.
 

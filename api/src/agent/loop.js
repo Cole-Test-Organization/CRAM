@@ -1,11 +1,11 @@
 // Agent orchestration loop. Replaces what `spawn('claude', ...)` was doing
-// in api/src/routes/agent.js before the rewrite: own the conversation, call
+// in api/src/routes/agent/agent.js before the rewrite: own the conversation, call
 // the LLM, dispatch tool calls through MCP, loop until the model stops asking
 // for tools, persist the result.
 //
 // Emits Server-Sent Events via the provided `send` callback. Event shape
 // matches what the GUI's Agent.tsx already consumes — keep symmetric with
-// `messagesToEvents` in services/agentSessions.js.
+// `messagesToEvents` in services/agent/agent-sessions.js.
 
 import {
     createSession,
@@ -13,11 +13,11 @@ import {
     saveMessages,
     deriveTitle,
     NUDGE_NOTICE,
-} from "../services/agentSessions.js";
+} from "../services/agent/agent-sessions.js";
 import { buildMcpSession } from "./mcp-client.js";
 import { getProvider, listProviders } from "./providers/index.js";
 import { FALLBACK_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
-import { AgentSettingsService } from "../services/agent-settings.js";
+import { AgentSettingsService } from "../services/agent/agent-settings.js";
 import { logger } from "../lib/logger.js";
 
 const MAX_ITERATIONS = 25;

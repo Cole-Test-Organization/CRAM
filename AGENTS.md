@@ -14,13 +14,15 @@ The API is exposed through **four parallel surfaces** that must stay aligned. An
 
 | # | File | What it is |
 |---|---|---|
-| 1 | `api/src/routes/<resource>.js` | HTTP route (Fastify handler, swagger schema) |
+| 1 | `api/src/routes/<resource>/*.js` | HTTP route (Fastify handler, swagger schema) |
 | 2 | `api/src/mcp/tools.js` | MCP tool registration (same operation, action-dispatched) |
 | 3 | `api/src/mcp/server.js` | Standalone MCP server process — builds the `services` bag passed to `registerTools` for external (HTTP) MCP clients |
 | 4 | `api/src/agent/mcp-client.js` | In-process MCP server/client pair used by the in-app agent loop — builds its **own** `services` bag passed to the same `registerTools`. **Easy to forget — if you add a service here, the in-app agent can't see it.** |
 | 5 | `api/src/instructions.js` | Agent-facing workflow doc — served over HTTP at `/api/agent` and delivered to MCP clients automatically in the initialize handshake (`InitializeResult.instructions`) |
 
-Shared business logic lives in `api/src/services/<resource>.js` — both the HTTP route and MCP tool should call the service, not reimplement logic.
+Shared business logic lives in `api/src/services/<resource>/*.js` — both the HTTP route and MCP tool should call the service, not reimplement logic.
+
+**Folder layout.** `routes/` and `services/` are grouped by top-level resource and mirror each other (`accounts/`, `contacts/`, `vendors/`, `notes/`, …); a resource folder can hold more than one file (e.g. `routes/accounts/` has `accounts.js` + `account-details.js`). Cross-cutting service helpers (`_domain`, `_slug`, `_json`, `_email`, `_enrich`, `_fuzzy-match`, `_html`, `_llm`) live in `services/_shared/`. Folder location never changes a route's URL — Fastify builds paths from the literal strings in each handler plus the `/api` prefix registered in `index.js`.
 
 **HTTP and MCP must be at full parity.** Every service operation reachable via the HTTP API must also be reachable via the MCP tool (and vice versa). It is not enough that both surfaces share a service — both must actually *expose* every operation the service offers. If you add a new service method, add it to both surfaces in the same change. If you find an existing service method that's only wired up on one surface, treat that as a parity bug and fix it. Symptom: an agent asks the MCP client to do something the HTTP API can already do (e.g., filter accounts by status) and gets told it's not possible.
 
@@ -45,7 +47,7 @@ Schemas (request/response shapes, validation) come from the OpenAPI spec (HTTP) 
 
 **Exception — deterministic HTTP-only endpoints.** A surface that is *only ever* machine-to-machine and deterministic — never invoked by the in-app agent or an external MCP client — may live as **service + HTTP route only**, and is deliberately excluded from the MCP tool (`api/src/mcp/tools.js`), both `services` bags (`api/src/mcp/server.js`, `api/src/agent/mcp-client.js`), and `api/src/instructions.js` / `REFS`. Keep these out of the four-surface parity check. Current exceptions:
 
-- **`calendar-import`** (`POST /api/calendar-import` → `api/src/services/calendar-import.js` + `api/src/routes/calendar-import.js`) — the daily Google Calendar ingestion a Google Apps Script forwards through a Cloudflare tunnel (the Apps Script exporter source lives in `calendar/`). It's deterministic (no LLM) and consumed by the tunnel, not the agent, so it has **no** `calendar_import` MCP tool, is **not** in either `services` bag, and has **no** `instructions.js` entry. If it ever needs to be agent-callable, wire all four surfaces at that point.
+- **`calendar-import`** (`POST /api/calendar-import` → `api/src/services/calendar-import/calendar-import.js` + `api/src/routes/calendar-import/calendar-import.js`) — the daily Google Calendar ingestion a Google Apps Script forwards through a Cloudflare tunnel (the Apps Script exporter source lives in `calendar/`). It's deterministic (no LLM) and consumed by the tunnel, not the agent, so it has **no** `calendar_import` MCP tool, is **not** in either `services` bag, and has **no** `instructions.js` entry. If it ever needs to be agent-callable, wire all four surfaces at that point.
 
 ### Keep api/SCHEMA.md in sync with the database — MANDATORY
 
