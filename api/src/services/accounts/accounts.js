@@ -77,7 +77,9 @@ export class AccountsService {
 
       const rows = (await client.query(
         `SELECT ${ACCOUNT_COLS.split(',').map(c => `a.${c.trim()}`).join(', ')},
-                (SELECT COUNT(*)::int FROM account_contacts WHERE account_id = a.id) AS contact_count,
+                (SELECT COUNT(*)::int FROM account_contacts ac
+                   JOIN contacts c ON c.id = ac.contact_id
+                  WHERE ac.account_id = a.id AND c.kind <> 'internal') AS contact_count,
                 (SELECT COUNT(*)::int FROM meetings WHERE account_id = a.id) AS meeting_count
          FROM accounts a
          ${whereClause}
@@ -277,11 +279,27 @@ export class AccountsService {
     )).rows[0];
     if (!row) return null;
 
+    // Two faces of account_contacts, split by the contact's kind:
+    //   contacts — external people AT the account (kind account/partner)
+    //   team     — the user's own teammates (kind=internal) SUPPORTING the
+    //              account. Same join table; the kind discriminates. Keeping
+    //              them apart means teammates never show up as customer contacts
+    //              (or inflate the contact count) but are still visible as the
+    //              supporting SE team on the account overview.
     const contacts = (await client.query(
       `SELECT c.id, c.full_name, c.company, c.title, c.email, c.phone, c.linkedin, c.notes, c.kind, c.created_at, c.updated_at
        FROM contacts c
        JOIN account_contacts ac ON ac.contact_id = c.id
-       WHERE ac.account_id = $1
+       WHERE ac.account_id = $1 AND c.kind <> 'internal'
+       ORDER BY c.full_name`,
+      [row.id]
+    )).rows;
+
+    const team = (await client.query(
+      `SELECT c.id, c.full_name, c.company, c.title, c.email, c.phone, c.linkedin, c.notes, c.kind, c.created_at, c.updated_at
+       FROM contacts c
+       JOIN account_contacts ac ON ac.contact_id = c.id
+       WHERE ac.account_id = $1 AND c.kind = 'internal'
        ORDER BY c.full_name`,
       [row.id]
     )).rows;
@@ -313,7 +331,7 @@ export class AccountsService {
       [row.id]
     )).rows;
 
-    return { ...row, contacts, meetings, partners, opportunities };
+    return { ...row, contacts, team, meetings, partners, opportunities };
   }
 
   async create(userId, data) {
@@ -483,7 +501,9 @@ export class AccountsService {
     return withUser(userId, async (client) => {
       return (await client.query(
         `SELECT a.id, a.slug, a.name, a.status, a.last_contact,
-                (SELECT COUNT(*)::int FROM account_contacts WHERE account_id = a.id) AS contact_count
+                (SELECT COUNT(*)::int FROM account_contacts ac
+                   JOIN contacts c ON c.id = ac.contact_id
+                  WHERE ac.account_id = a.id AND c.kind <> 'internal') AS contact_count
          FROM account_partners ap
          JOIN accounts a ON a.id = ap.partner_account_id
          WHERE ap.customer_account_id = $1

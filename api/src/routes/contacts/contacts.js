@@ -237,7 +237,7 @@ export default async function contactRoutes(fastify, { contactsService, accounts
   // Create contact (standalone)
   fastify.post('/contacts', {
     schema: {
-      description: 'Create a new standalone contact (useful for kind=internal, no account linkage). Runs the same dedupe core as find-or-create and returns 409 with the existing row if a match is found — prefer POST /contacts/find-or-create to upsert/enrich idempotently. Supply at least one of email or full_name.',
+      description: 'Create a new standalone contact (useful for kind=internal, with no account link yet — link later via POST /contacts/:id/accounts/:accountId to record which accounts a teammate supports). Runs the same dedupe core as find-or-create and returns 409 with the existing row if a match is found — prefer POST /contacts/find-or-create to upsert/enrich idempotently. Supply at least one of email or full_name.',
       tags: ['contacts'],
       body: {
         type: 'object',

@@ -264,7 +264,7 @@ export default async function accountRoutes(fastify, { accountsService }) {
   // Partial update (merge)
   fastify.patch('/accounts/:id', {
     schema: {
-      description: 'Partial update. Only provided fields are updated. Open threads and domains are fully replaced. Technical environment (firewalls, EDRs, employee count, …) lives on the separate /accounts/:id/details endpoint — do not pass it here. Manage partners via /accounts/:id/partners and internal team via contacts with kind=internal.',
+      description: 'Partial update. Only provided fields are updated. Open threads and domains are fully replaced. Technical environment (firewalls, EDRs, employee count, …) lives on the separate /accounts/:id/details endpoint — do not pass it here. Manage partners via /accounts/:id/partners; manage the supporting team by linking kind=internal contacts to the account (they come back in the account\'s `team` array, not as an account field).',
       tags: ['accounts'],
       params: { type: 'object', properties: { id: { type: 'integer' } } },
       body: {

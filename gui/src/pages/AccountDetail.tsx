@@ -1,12 +1,11 @@
-import { createResource, createSignal, For, Show } from 'solid-js';
-import { A, useParams, useNavigate } from '@solidjs/router';
+import { createResource, createSignal, Show } from 'solid-js';
+import { useParams, useNavigate } from '@solidjs/router';
 import { api } from '../lib/api';
 import { createAutoSave } from '../lib/editing';
 import { AccountFormModal } from '../components/FormModals';
-import AccountPicker from '../components/AccountPicker';
 import Button from '../components/Button';
-import EditableMarkdown from '../components/EditableMarkdown';
 import SaveIndicator from '../components/SaveIndicator';
+import OverviewPanel from '../components/accounts/OverviewPanel';
 import TechnicalProfilePanel from '../components/accounts/TechnicalProfilePanel';
 import NotesPanel from '../components/NotesPanel';
 import BackLink from '../components/BackLink';
@@ -38,8 +37,6 @@ export default function AccountDetail() {
   /* Subtle inline-edit field — CSS class .press-field handles hover/focus,
      with mobile iOS-zoom-preventing 16px font-size baked in. */
   const fieldClass = "press-field";
-  /* Tiny X remove button — CSS class .btn-x with responsive touch sizing. */
-  const btnX = "btn-x";
 
   const tabClass = (active: boolean) =>
     `px-4 py-2 text-[11px] cursor-pointer border-b-2 transition-colors duration-150 uppercase tracking-widest font-bold ${
@@ -53,43 +50,8 @@ export default function AccountDetail() {
       <Show when={data()} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
         {(account) => {
           const acct = account();
-          const domains = typeof acct.domains === 'string' ? JSON.parse(acct.domains || '[]') : (acct.domains || []);
-          const partners = Array.isArray(acct.partners) ? acct.partners : [];
-
-          const [localDomains, setLocalDomains] = createSignal<string[]>([...domains]);
-          const [localPartners, setLocalPartners] = createSignal<any[]>([...partners]);
-          const [addingPartner, setAddingPartner] = createSignal(false);
-          const [partnerPick, setPartnerPick] = createSignal<{ id: number; name: string; slug: string } | null>(null);
-          const [partnerError, setPartnerError] = createSignal('');
           const [editingName, setEditingName] = createSignal(false);
           const [nameVal, setNameVal] = createSignal(acct.name);
-
-          const addPartner = async () => {
-            const p = partnerPick();
-            if (!p) return;
-            if (p.id === acct.id) {
-              setPartnerError('An account cannot be its own partner');
-              return;
-            }
-            if (localPartners().some((lp: any) => lp.id === p.id)) {
-              setPartnerError('Already linked');
-              return;
-            }
-            try {
-              const updated = await api.addPartner(acct.id, p.id);
-              setLocalPartners(updated);
-              setPartnerPick(null);
-              setAddingPartner(false);
-              setPartnerError('');
-            } catch (err: any) {
-              setPartnerError(err?.message || 'Failed to link partner');
-            }
-          };
-
-          const removePartner = async (partnerId: number) => {
-            const updated = await api.removePartner(acct.id, partnerId);
-            setLocalPartners(updated);
-          };
 
           return (
             <>
@@ -171,98 +133,11 @@ export default function AccountDetail() {
               </div>
 
               {/* === OVERVIEW TAB === */}
-              <Show when={tab() === 'overview'}>
-                <div class="panel panel-accent p-5">
-                  <h3 class="text-[13px] font-bold uppercase tracking-widest text-surf-300 font-[family-name:var(--font-display)]">Relationship Summary</h3>
-                  <EditableMarkdown
-                    content={acct.relationship_summary || ''}
-                    onSave={(val) => accountSaver.save({ relationship_summary: val })}
-                    status={accountSaver.status()}
-                  />
-                </div>
-
-                <div class="panel panel-accent p-5 mt-4">
-                  <div class="flex justify-between items-center mb-3">
-                    <h3 class="text-[13px] font-bold uppercase tracking-widest text-surf-300 font-[family-name:var(--font-display)]">Domains</h3>
-                    <Button variant="primary" size="sm" onClick={() => {
-                      const updated = [...localDomains(), ''];
-                      setLocalDomains(updated);
-                    }}>+ Add</Button>
-                  </div>
-                  <For each={localDomains()} fallback={<span class="text-base-300 text-[13px]">No domains. Click + Add to associate email/web domains with this account.</span>}>
-                    {(d: string, i) => (
-                      <div class="flex gap-2 items-center mt-2">
-                        <input
-                          class={`${fieldClass} flex-1`}
-                          placeholder="acme.com"
-                          value={d}
-                          onInput={(e) => {
-                            const updated = [...localDomains()];
-                            updated[i()] = e.currentTarget.value;
-                            setLocalDomains(updated);
-                          }}
-                          onBlur={() => accountSaver.saveNow({ domains: localDomains() })}
-                        />
-                        <button class={btnX} onClick={() => {
-                          const updated = localDomains().filter((_, j: number) => j !== i());
-                          setLocalDomains(updated);
-                          accountSaver.saveNow({ domains: updated });
-                        }}>×</button>
-                      </div>
-                    )}
-                  </For>
-                </div>
-
-                <div class="panel panel-accent p-5 mt-4">
-                  <div class="flex justify-between items-center mb-3">
-                    <h3 class="text-[13px] font-bold uppercase tracking-widest text-surf-300 font-[family-name:var(--font-display)]">Channel Partners</h3>
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={() => {
-                        setAddingPartner(!addingPartner());
-                        setPartnerError('');
-                      }}
-                    >
-                      {addingPartner() ? 'Cancel' : '+ Add'}
-                    </Button>
-                  </div>
-                  <Show when={addingPartner()}>
-                    <div class="mb-3 flex flex-col gap-2">
-                      <AccountPicker
-                        value={partnerPick()}
-                        onChange={setPartnerPick}
-                        placeholder="Search or create a partner account..."
-                      />
-                      <Show when={partnerError()}>
-                        <div class="text-[11px] text-scarlet-400 font-semibold">{partnerError()}</div>
-                      </Show>
-                      <div class="flex gap-2 justify-end">
-                        <Button variant="primary" size="sm" onClick={addPartner} disabled={!partnerPick()}>
-                          Link Partner
-                        </Button>
-                      </div>
-                    </div>
-                  </Show>
-                  <For each={localPartners()} fallback={<span class="text-base-300 text-[13px]">No channel partners linked. Click + Add to link an existing partner account or create a new one.</span>}>
-                    {(p: any) => (
-                      <div class="flex items-center gap-2 border-b border-base-700 last:border-b-0">
-                        <A href={`/accounts/${p.slug}`} class="flex-1 min-w-0 press-row gap-3 flex-wrap">
-                          <span class="flex-1 min-w-[60%] md:min-w-0 text-base-50 font-semibold text-sm">{p.name}</span>
-                          <Show when={p.status}>
-                            <span class="text-base-400 text-[11px] uppercase tracking-wider">{p.status}</span>
-                          </Show>
-                          <Show when={typeof p.contact_count === 'number'}>
-                            <span class="text-surf-300 text-[11px] uppercase tracking-wider">{p.contact_count} contact{p.contact_count === 1 ? '' : 's'}</span>
-                          </Show>
-                        </A>
-                        <button class={`${btnX} mr-2 md:mr-3 shrink-0`} onClick={() => removePartner(p.id)} title="Unlink partner">×</button>
-                      </div>
-                    )}
-                  </For>
-                </div>
-
-              </Show>
+              {/* Mounted unconditionally and gated by `active` (not wrapped in a
+                  <Show> like the other tabs) so its inline-edit state for
+                  domains / partners / supporting team survives tab switches —
+                  the panel hides its own content when inactive. */}
+              <OverviewPanel account={acct} saver={accountSaver} active={tab() === 'overview'} />
 
               {/* === PROFILE TAB === */}
               <Show when={tab() === 'profile'}>

@@ -73,7 +73,7 @@ export class ExportService {
       SELECT c.id, c.full_name, c.company, c.title, c.email, c.phone, c.linkedin, c.notes, c.kind
       FROM contacts c
       JOIN account_contacts ac ON ac.contact_id = c.id
-      WHERE ac.account_id = $1 ORDER BY c.full_name
+      WHERE ac.account_id = $1 AND c.kind <> 'internal' ORDER BY c.full_name
     `, [acct.id])).rows;
     const meetings = (await client.query(
       `SELECT id, account_id, date, title, filename, body, created_at, updated_at,

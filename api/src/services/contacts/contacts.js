@@ -28,7 +28,7 @@ function normalizeKind(kind) {
   // new canonical 'account' kind.
   if (kind === 'customer') return 'account';
   if (!VALID_KINDS.has(kind)) {
-    throw badRequest(`Invalid kind: "${kind}". Must be one of: "account" (works at a non-partner account — link to that account), "partner" (channel/reseller rep — link to a partner account), "internal" (teammate at your own company — no account link). Default is "account" if omitted.`);
+    throw badRequest(`Invalid kind: "${kind}". Must be one of: "account" (works at a non-partner account — link to that account), "partner" (channel/reseller rep — link to a partner account), "internal" (teammate at your own company — link to the accounts they support to record the supporting team). Default is "account" if omitted.`);
   }
   return kind;
 }
@@ -117,13 +117,17 @@ export class ContactsService {
     });
   }
 
+  // The account's external (customer/partner) contacts — the Contacts tab.
+  // kind='internal' teammates linked to an account are its *supporting team*,
+  // not contacts at the account, so they're excluded here and surfaced
+  // separately via the account's `team` array (AccountsService._fetchWithChildren).
   async getByAccount(userId, accountId) {
     return withUser(userId, async (client) => {
       const result = await client.query(`
         SELECT ${CONTACT_COLS.split(',').map(c => `c.${c.trim()}`).join(', ')}
         FROM contacts c
         JOIN account_contacts ac ON ac.contact_id = c.id
-        WHERE ac.account_id = $1
+        WHERE ac.account_id = $1 AND c.kind <> 'internal'
         ORDER BY c.full_name
       `, [accountId]);
       return result.rows;
@@ -776,14 +780,19 @@ export class ContactsService {
           throw badRequest('contact.full_name is required when contact.mode="new" (the person\'s display name). Optional: contact.email, contact.kind ("account" default | "partner" | "internal"), contact.research (true to enqueue background enrichment).');
         }
         const kind = c.kind || 'account';
-        const linkAccountId = kind === 'internal' ? null : accountId;
-        // findOrCreate, not create: a "new" attendee that turns out to already
-        // exist should link/enrich idempotently, not 409 the whole write.
+        // Link EVERY attendee to this account — including kind='internal'
+        // teammates. An internal contact stays flagged internal (so it's never
+        // mistaken for a customer contact) but the account_contacts link records
+        // it as part of the account's supporting team. So when a batch mixes,
+        // say, 7 google.com attendees with 3 of your own teammates, all 10 map
+        // to the Google account: the 7 as customer contacts, the 3 as the
+        // supporting team. findOrCreate, not create: a "new" attendee that turns
+        // out to already exist should link/enrich idempotently, not 409 the write.
         const { contact } = await this.findOrCreate(userId, {
           full_name: c.full_name,
           email: c.email || null,
           kind,
-        }, linkAccountId);
+        }, accountId);
         contactIds.push(contact.id);
         if (c.research) enrichTargets.push({ contactId: contact.id, name: contact.full_name });
       } else {

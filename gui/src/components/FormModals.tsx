@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createResource, For, Show } from 'solid-js';
+import { createSignal, createEffect, createMemo, createResource, onCleanup, untrack, For, Show } from 'solid-js';
 import Modal, { modalBtn } from './Modal';
 import FormField, { FormRow, formInputClass, formTextareaClass, formSelectClass } from './FormField';
 import AccountPicker from './AccountPicker';
@@ -350,6 +350,41 @@ export function MeetingFormModal(props: MeetingModalProps) {
   const [newAccountName, setNewAccountName] = createSignal('');
   const [decisions, setDecisions] = createSignal<Record<string, EmailAttendeeDecision>>({});
 
+  // ---- Unsaved-changes guard (warn-only; no autosave / no draft) ----
+  // Serialize the editable fields and compare against a baseline captured when
+  // the modal opens. `dirty()` flips true once anything the user typed or
+  // picked diverges from that baseline. Nothing is persisted — this only powers
+  // the confirm-on-close prompt and the beforeunload warning below.
+  const serialize = () => JSON.stringify({
+    date: date(),
+    startTime: startTime(),
+    endTime: endTime(),
+    location: meetingLocation(),
+    title: title(),
+    attendeesText: attendeesText(),
+    body: body(),
+    internal: internal(),
+    accountId: account()?.id ?? null,
+    contactIds: contactIds(),
+    emailsText: emailsText(),
+    newAccountName: newAccountName(),
+    decisions: decisions(),
+  });
+  const [baseline, setBaseline] = createSignal('');
+  // createMemo so the beforeunload effect only re-runs when the boolean flips,
+  // not on every keystroke (serialize() changes constantly while typing).
+  const dirty = createMemo(() => serialize() !== baseline());
+
+  // Guarded close for every in-app dismissal: backdrop click, Escape, and the ×
+  // button all route through Modal's onClose, and the Cancel button points here
+  // too. A successful save closes via props.onClose() directly, bypassing this.
+  // Mid-save we veto — the save closes the modal itself when it lands.
+  const requestClose = () => {
+    if (saving()) return;
+    if (dirty() && !confirm('You have unsaved changes — discard them?')) return;
+    props.onClose();
+  };
+
   createEffect(() => {
     if (props.open) {
       const e = props.existing;
@@ -378,6 +413,12 @@ export function MeetingFormModal(props: MeetingModalProps) {
       setPrimaryDomain(null);
       setNewAccountName('');
       setDecisions({});
+      // Snapshot the freshly-initialized state so `dirty()` starts at false.
+      // untrack() is critical: serialize() reads every form signal, and without
+      // it this effect would subscribe to all of them and re-run (resetting the
+      // whole form) on every keystroke/selection. We only want it keyed on
+      // props.open.
+      setBaseline(untrack(serialize));
     }
   });
 
@@ -397,6 +438,17 @@ export function MeetingFormModal(props: MeetingModalProps) {
   });
   createEffect(() => {
     if (internal()) setMode('manual');
+  });
+
+  // Native browser "Leave site? Changes may not be saved" prompt for the one
+  // close path the in-app guard can't intercept: a real page unload (refresh,
+  // tab/window close). Registered only while the modal is open AND dirty, and
+  // torn down the moment either becomes false.
+  createEffect(() => {
+    if (!props.open || !dirty()) return;
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    onCleanup(() => window.removeEventListener('beforeunload', handler));
   });
 
   const showModeToggle = () => !props.existing && !props.fixedAccountId && !internal();
@@ -505,10 +557,11 @@ export function MeetingFormModal(props: MeetingModalProps) {
             return {
               mode: 'existing' as const,
               contact_id: source.contact.id,
-              // Only link to the chosen external account when the attendee
-              // isn't internal — otherwise we'd attach a teammate to a
-              // customer account.
-              link_to_account: source.kind !== 'internal',
+              // Link every included attendee to the chosen account — internal
+              // teammates included. A teammate stays kind=internal but the link
+              // records them as part of the account's supporting team (surfaced
+              // separately from customer contacts on the account overview).
+              link_to_account: true,
             };
           }
           return {
@@ -548,6 +601,8 @@ export function MeetingFormModal(props: MeetingModalProps) {
           body: body(),
         });
       }
+      // Saved — re-baseline so the close below doesn't trip the unsaved guard.
+      setBaseline(serialize());
       props.onSaved?.(meeting);
       props.onClose();
     } catch (err: any) {
@@ -560,12 +615,12 @@ export function MeetingFormModal(props: MeetingModalProps) {
   return (
     <Modal
       open={props.open}
-      onClose={props.onClose}
+      onClose={requestClose}
       title={props.existing ? (props.existing.internal ? 'Edit Internal Meeting' : 'Edit Meeting') : (internal() ? 'New Internal Meeting' : 'New Meeting')}
       size="lg"
       footer={
         <>
-          <button class={modalBtn.secondary} onClick={props.onClose} disabled={saving()}>Cancel</button>
+          <button class={modalBtn.secondary} onClick={requestClose} disabled={saving()}>Cancel</button>
           <button class={modalBtn.primary} onClick={submit} disabled={saving()}>
             {saving() ? 'Saving...' : (props.existing ? 'Save' : 'Create')}
           </button>

@@ -9,6 +9,17 @@ async function get(path) {
   return { status: res.status, body };
 }
 
+async function put(path, payload) {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  let body = null;
+  try { body = await res.json(); } catch { /* empty body is fine */ }
+  return { status: res.status, body };
+}
+
 describe('Health', () => {
   it('GET /health returns counts', async () => {
     const { status, body } = await get('/health');
@@ -43,7 +54,9 @@ describe('Accounts', () => {
   it('GET /accounts?status=partner returns only partners', async () => {
     const { status, body } = await get('/accounts?status=partner');
     assert.equal(status, 200);
-    assert.ok(body.total > 0, 'should have partners');
+    assert.ok(Array.isArray(body.accounts), 'should return an accounts array');
+    // Don't assume partners exist in every dataset — verify the filter is exact
+    // (vacuously true when there are none; the partition test below covers counts).
     for (const acct of body.accounts) {
       assert.equal(acct.status, 'partner', `${acct.name} has status "${acct.status}" not "partner"`);
     }
@@ -93,12 +106,16 @@ describe('Meetings', () => {
       );
     }
 
-    // Verify each meeting has account info
+    // Verify meeting shape. Only account-bound meetings carry account info;
+    // internal notes (internal=true) and account-less parked notes legitimately
+    // have no account_id, and therefore no account_name/account_slug.
     for (const m of body) {
       assert.ok(m.id, 'meeting should have id');
       assert.ok(m.date, 'meeting should have date');
-      assert.ok(m.account_name, `meeting ${m.id} missing account_name`);
-      assert.ok(m.account_slug, `meeting ${m.id} missing account_slug`);
+      if (m.account_id) {
+        assert.ok(m.account_name, `meeting ${m.id} has account_id but missing account_name`);
+        assert.ok(m.account_slug, `meeting ${m.id} has account_id but missing account_slug`);
+      }
     }
   });
 
@@ -123,6 +140,24 @@ describe('Meetings', () => {
   it('GET /meetings/999999 returns 404', async () => {
     const { status } = await get('/meetings/999999');
     assert.equal(status, 404);
+  });
+
+  // Regression: the route schema once typed starts_at/ends_at as string-only, so
+  // the GUI sending null (meaning "no time" / "clear it") was rejected with a 400
+  // "must match format date-time". The service treats null as clear, so null must
+  // validate. We PUT to a nonexistent id: if null passes validation it reaches
+  // the service and 404s; if the schema still rejects null it 400s before that.
+  it('PUT /meetings/:id accepts null starts_at/ends_at/location (clear time)', async () => {
+    const { status } = await put('/meetings/999999', { starts_at: null, ends_at: null, location: null });
+    assert.notEqual(status, 400, 'null start/end/location must pass schema validation (regression)');
+    assert.equal(status, 404, 'should reach the service and 404 on a nonexistent id');
+  });
+
+  // Guards the other side of that fix: relaxing null must NOT have disabled the
+  // date-time format check — a malformed timestamp should still be rejected.
+  it('PUT /meetings/:id still rejects a malformed starts_at', async () => {
+    const { status } = await put('/meetings/999999', { starts_at: 'not-a-timestamp' });
+    assert.equal(status, 400, 'a non-ISO starts_at must still fail format validation');
   });
 });
 
@@ -153,10 +188,13 @@ describe('Search', () => {
 });
 
 describe('Internal', () => {
-  it('GET /internal returns internal notes', async () => {
-    const { status, body } = await get('/internal');
+  it('GET /meetings?internal=true returns only internal notes', async () => {
+    const { status, body } = await get('/meetings?internal=true');
     assert.equal(status, 200);
     assert.ok(Array.isArray(body));
+    for (const m of body) {
+      assert.equal(m.internal, true, `meeting ${m.id} returned by internal=true but internal=${m.internal}`);
+    }
     console.log('  internal notes:', body.length);
   });
 });

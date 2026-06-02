@@ -89,6 +89,16 @@ const contactEnrichmentService = new ContactEnrichmentService({
   agentSettingsService,
 });
 const internalDomainsService = new InternalDomainsService();
+// Wire ContactsService's post-construction deps (same as the MCP service bags in
+// mcp/server.js and agent/mcp-client.js). They can't be constructor args because
+// contactEnrichmentService itself depends on contactsService — a construction
+// cycle — so they're attached after the fact. Without this the from-emails
+// staging methods (resolveEmails / importFromEmails, used by the GUI's
+// from-emails flow and POST /api/{contacts,meetings}/from-emails) throw
+// "requires accountsService".
+contactsService.accountsService = accountsService;
+contactsService.internalDomainsService = internalDomainsService;
+contactsService.contactEnrichmentService = contactEnrichmentService;
 const meetingsService = new MeetingsService({
   contactsService,
   accountsService,

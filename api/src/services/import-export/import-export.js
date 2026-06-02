@@ -139,12 +139,18 @@ export class ImportExportService {
   }
 
   async _exportContactsForAccount(client, accountId) {
+    // Exclude kind='internal' teammates: they're the account's *supporting team*
+    // (your own people), not the account's contacts. Like the meeting
+    // attendee_refs below, they're deliberately left out of the portable bundle
+    // so importing into another tenant doesn't spawn unrelated "filler" people —
+    // and the importer (_upsertContacts) force-tags every bundled contact as
+    // kind='account' anyway, which would mis-classify a teammate.
     const rows = (await client.query(
       `SELECT c.full_name, c.company, c.title, c.email, c.phone, c.linkedin,
               c.notes, c.kind, c.location_raw, c.city, c.state, c.country
        FROM contacts c
        JOIN account_contacts ac ON ac.contact_id = c.id
-       WHERE ac.account_id = $1
+       WHERE ac.account_id = $1 AND c.kind <> 'internal'
        ORDER BY c.full_name`,
       [accountId]
     )).rows;
@@ -173,7 +179,7 @@ export class ImportExportService {
          FROM meeting_attendees ma
          JOIN contacts c ON c.id = ma.contact_id
          JOIN account_contacts ac ON ac.contact_id = c.id AND ac.account_id = $2
-         WHERE ma.meeting_id = $1`,
+         WHERE ma.meeting_id = $1 AND c.kind <> 'internal'`,
         [m.id, accountId]
       )).rows;
       m.attendee_refs = attendees;
