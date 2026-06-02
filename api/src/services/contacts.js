@@ -517,6 +517,41 @@ export class ContactsService {
     });
   }
 
+  // Atomically move a contact's account link — link toAccountId and unlink
+  // fromAccountId in a single transaction. The "fix a bad import" primitive:
+  // doing link + unlink as one step means a failure can't leave the contact
+  // double-linked or, worse, orphaned. The destination is linked FIRST, so the
+  // contact is never transiently unlinked from everything. fromAccountId is
+  // optional (omit to just add a link); a fromAccountId equal to toAccountId is
+  // ignored so the just-added link isn't immediately removed. Links are
+  // many-to-many, so this moves only the ONE link you name — any other accounts
+  // the contact is linked to are left in place. Returns the contact with its
+  // linked accounts, or null if the contact doesn't exist.
+  async reassignAccount(userId, contactId, fromAccountId, toAccountId) {
+    if (!toAccountId) {
+      throw badRequest('reassignAccount requires a destination account (toAccountId).');
+    }
+    return withUser(userId, async (client) => {
+      const contact = (await client.query('SELECT id FROM contacts WHERE id = $1', [contactId])).rows[0];
+      if (!contact) return null;
+      const acct = (await client.query('SELECT id FROM accounts WHERE id = $1', [toAccountId])).rows[0];
+      if (!acct) {
+        throw notFound(`Account not found: id=${toAccountId} (the account to move this contact to).`);
+      }
+      await client.query(
+        'INSERT INTO account_contacts (account_id, contact_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [toAccountId, contactId]
+      );
+      if (fromAccountId && String(fromAccountId) !== String(toAccountId)) {
+        await client.query(
+          'DELETE FROM account_contacts WHERE account_id = $1 AND contact_id = $2',
+          [fromAccountId, contactId]
+        );
+      }
+      return this._fetchWithAccounts(client, contactId);
+    });
+  }
+
   async update(userId, id, data) {
     return withUser(userId, async (client) => {
       const existing = (await client.query('SELECT id, kind FROM contacts WHERE id = $1', [id])).rows[0];

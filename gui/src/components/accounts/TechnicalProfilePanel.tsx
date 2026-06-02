@@ -1,9 +1,11 @@
 import { createSignal, createResource, createMemo, For, Show, batch } from 'solid-js';
 import { api } from '../../lib/api';
-import { createAutoSave, type SaveStatus } from '../../lib/editing';
+import { createAutoSave } from '../../lib/editing';
 import type { AccountDetails, AccountDetailsVendorCategory, VendorProduct } from '../../lib/types';
 import VendorProductPicker from './VendorProductPicker';
 import VendorHeatmap from './VendorHeatmap';
+import SaveIndicator from '../SaveIndicator';
+import EditableMarkdown from '../EditableMarkdown';
 
 type VendorRow = { category: AccountDetailsVendorCategory; idsField: keyof AccountDetails; productsField: keyof AccountDetails; label: string };
 
@@ -34,20 +36,6 @@ const VENDOR_ROWS: VendorRow[] = [
 ];
 
 const FIELD_CLASS = 'press-field';
-
-function SaveIndicator(props: { status: SaveStatus }) {
-  return (
-    <Show when={props.status !== 'idle'}>
-      <span class={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 border-2 ${
-        props.status === 'saving' ? 'text-amber-300 border-amber-500/50 bg-amber-500/10' :
-        props.status === 'saved' ? 'text-surf-300 border-surf-500/50 bg-surf-500/10' :
-        'text-scarlet-300 border-scarlet-500/50 bg-scarlet-500/10'
-      }`}>
-        {props.status === 'saving' ? 'Saving...' : props.status === 'saved' ? 'Saved' : 'Error'}
-      </span>
-    </Show>
-  );
-}
 
 // Empty profile shape used when an account hasn't had its details populated
 // yet. Mirrors the columns in the migration; the API will create the row on
@@ -276,12 +264,12 @@ export default function TechnicalProfilePanel(props: { accountId: number }) {
           {/* ── Notes & verification ─────────────────────────────────── */}
           <div class="panel panel-accent p-5">
             <h3 class="text-[13px] font-bold uppercase tracking-widest text-surf-300 font-[family-name:var(--font-display)] mb-3">Technical Notes</h3>
-            <textarea
-              class="input-vintage font-mono text-[12px] leading-relaxed w-full"
+            <EditableMarkdown
+              content={d().technical_notes || ''}
+              onSave={(val) => patchField('technical_notes', (val || null) as any)}
+              status={saver.status()}
               rows={8}
               placeholder="Free-form technical prose. Things like 'Cisco FTD used as VPN only', 'SSL decryption deferred — firewalls sized for it', 'Firemon rebuild in progress, Oct renewal'. Don't put people/politics here — that's `relationship_summary` on the account."
-              value={d().technical_notes || ''}
-              onInput={(e) => patchField('technical_notes', (e.currentTarget.value || null) as any)}
             />
             <div class="mt-3">
               <label class="block">

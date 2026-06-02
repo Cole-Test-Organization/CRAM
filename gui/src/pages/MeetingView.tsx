@@ -3,6 +3,7 @@ import { A, useParams, useNavigate } from '@solidjs/router';
 import { api } from '../lib/api';
 import MarkdownRenderer from '../components/MarkdownRenderer';
 import { MeetingFormModal } from '../components/FormModals';
+import AccountPicker from '../components/AccountPicker';
 import Button from '../components/Button';
 import BackLink from '../components/BackLink';
 import ExportActions from '../components/ExportActions';
@@ -26,6 +27,94 @@ export default function MeetingView() {
   const navigate = useNavigate();
   const [meeting, { refetch }] = createResource(() => Number(params.id), (id) => api.getMeeting(id));
   const [editOpen, setEditOpen] = createSignal(false);
+
+  // Triage panel state — for a parked note (needs_review): assign it to an
+  // account, or confirm it's internal and clear the flag.
+  const [assignTarget, setAssignTarget] = createSignal<{ id: number; name: string; slug: string } | null>(null);
+  const [assigning, setAssigning] = createSignal(false);
+  const [assignError, setAssignError] = createSignal('');
+
+  // Move/reassign panel state — for a meeting that's ALREADY on an account (or
+  // internal) but landed on the wrong one (bad import): move it to another
+  // account, or strip the account and make it internal. Distinct from the
+  // parked-note triage above, which only assigns account-less notes.
+  const [moveOpen, setMoveOpen] = createSignal(false);
+  const [moveTarget, setMoveTarget] = createSignal<{ id: number; name: string; slug: string } | null>(null);
+  const [moving, setMoving] = createSignal(false);
+  const [moveError, setMoveError] = createSignal('');
+
+  const assignAccount = async () => {
+    const m = meeting();
+    const target = assignTarget();
+    if (!m || !target) return;
+    setAssigning(true);
+    setAssignError('');
+    try {
+      await api.assignMeetingAccount(m.id, target.id);
+      setAssignTarget(null);
+      refetch();
+    } catch (err: any) {
+      setAssignError(err?.message || 'Failed to assign account');
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  const keepInternal = async () => {
+    const m = meeting();
+    if (!m) return;
+    setAssigning(true);
+    setAssignError('');
+    try {
+      await api.updateMeeting(m.id, { needs_review: false });
+      refetch();
+    } catch (err: any) {
+      setAssignError(err?.message || 'Failed to update note');
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  // Move the meeting to a different account (works even when it already has
+  // one). Attendees stay attached — who was in the room is independent of the
+  // account.
+  const moveToAccount = async () => {
+    const m = meeting();
+    const target = moveTarget();
+    if (!m || !target) return;
+    setMoving(true);
+    setMoveError('');
+    try {
+      await api.reassignMeetingAccount(m.id, { account_id: target.id });
+      setMoveOpen(false);
+      setMoveTarget(null);
+      refetch();
+    } catch (err: any) {
+      setMoveError(err?.message || 'Failed to move meeting');
+    } finally {
+      setMoving(false);
+    }
+  };
+
+  // Strip the account and convert the meeting to an account-less internal note
+  // (e.g. an internal note that got mis-imported onto an account).
+  const makeInternal = async () => {
+    const m = meeting();
+    if (!m) return;
+    if (!confirm('Convert this meeting to an internal note (remove its account)?')) return;
+    setMoving(true);
+    setMoveError('');
+    try {
+      await api.reassignMeetingAccount(m.id, { internal: true });
+      setMoveOpen(false);
+      setMoveTarget(null);
+      refetch();
+    } catch (err: any) {
+      setMoveError(err?.message || 'Failed to convert meeting');
+    } finally {
+      setMoving(false);
+    }
+  };
 
   // Attendee-research progress panel. Polls every 5s while any job is still
   // in flight, then stops and refetches the meeting once everything has
@@ -103,10 +192,62 @@ export default function MeetingView() {
               </div>
               <div class="flex gap-3 items-center flex-wrap">
                 <ExportActions ids={() => [m().id]} build={buildMeetingsExport} />
+                <Button variant="ghost" size="sm" onClick={() => { setMoveOpen((v) => !v); setMoveError(''); }}>Move</Button>
                 <Button variant="ghost" size="sm" onClick={() => setEditOpen(true)}>Edit</Button>
                 <Button variant="danger" size="sm" onClick={deleteMeeting}>Delete</Button>
               </div>
             </div>
+
+            <Show when={m().needs_review}>
+              <div class="panel p-5 mb-4 border-2 border-amber-300 bg-amber-300/5">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">Needs review</span>
+                </div>
+                <h3 class="text-[14px] font-bold text-base-50 mb-1">This note isn't assigned to an account.</h3>
+                <p class="text-base-300 text-[12px] mb-3">
+                  The importer couldn't confidently place it. Assign the account it belongs to, or confirm it's an internal note and dismiss the flag.
+                </p>
+                <div class="flex flex-col gap-2 md:flex-row md:items-center">
+                  <div class="flex-1 min-w-0">
+                    <AccountPicker value={assignTarget()} onChange={setAssignTarget} placeholder="Search for an account..." />
+                  </div>
+                  <Button variant="primary" size="sm" disabled={!assignTarget() || assigning()} onClick={assignAccount}>
+                    {assigning() ? 'Assigning…' : 'Assign account'}
+                  </Button>
+                  <Button variant="ghost" size="sm" disabled={assigning()} onClick={keepInternal}>
+                    Keep as internal
+                  </Button>
+                </div>
+                <Show when={assignError()}>
+                  <div class="text-[11px] text-scarlet-400 mt-2 font-semibold">{assignError()}</div>
+                </Show>
+              </div>
+            </Show>
+
+            <Show when={moveOpen()}>
+              <div class="panel p-5 mb-4 border-2 border-surf-300 bg-surf-300/5">
+                <h3 class="text-[14px] font-bold text-base-50 mb-1">Move this meeting</h3>
+                <p class="text-base-300 text-[12px] mb-3">
+                  Reassign this note to a different account{!m().internal ? ', or strip the account and make it an internal note' : ''}. Attendees stay attached.
+                </p>
+                <div class="flex flex-col gap-2 md:flex-row md:items-center">
+                  <div class="flex-1 min-w-0">
+                    <AccountPicker value={moveTarget()} onChange={setMoveTarget} placeholder="Move to account..." />
+                  </div>
+                  <Button variant="primary" size="sm" disabled={!moveTarget() || moving()} onClick={moveToAccount}>
+                    {moving() ? 'Moving…' : 'Move here'}
+                  </Button>
+                  <Show when={!m().internal}>
+                    <Button variant="ghost" size="sm" disabled={moving()} onClick={makeInternal}>
+                      Make internal
+                    </Button>
+                  </Show>
+                </div>
+                <Show when={moveError()}>
+                  <div class="text-[11px] text-scarlet-400 mt-2 font-semibold">{moveError()}</div>
+                </Show>
+              </div>
+            </Show>
 
             <Show when={m().contacts?.length}>
               <div class="panel panel-accent p-5 mb-4">

@@ -166,6 +166,38 @@ export default async function meetingRoutes(fastify, { meetingsService, accounts
     }
   });
 
+  // Reassign a meeting to a DIFFERENT account, or convert it to an internal
+  // note (fix a bad import). Unlike assign-account, this works on a meeting that
+  // already has an account.
+  fastify.post('/meetings/:id/reassign-account', {
+    schema: {
+      description: 'Move a meeting to a different account, or convert it to an internal note (fix a bad import). Unlike POST /meetings/:id/assign-account (triage — account-less notes only, 409 if already assigned), this works on a meeting that ALREADY has an account. Pass account_id to move it to that account (sets internal=false); pass internal=true (and omit account_id) to strip the account and make it an account-less internal note. Clears needs_review either way. Attendees are left untouched. Returns 409 if the destination already has a meeting with the same filename.',
+      tags: ['meetings'],
+      params: { type: 'object', properties: { id: { type: 'integer' } } },
+      body: {
+        type: 'object',
+        properties: {
+          account_id: { type: 'integer', description: 'Destination account to move this meeting to. Mutually exclusive with internal=true.' },
+          internal: { type: 'boolean', description: 'Set true (and omit account_id) to convert the meeting to an account-less internal note.' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { account_id, internal } = request.body || {};
+    if (!account_id && !internal) {
+      reply.code(400);
+      return { error: 'Provide account_id (move to that account) or internal=true (make it an account-less internal note).' };
+    }
+    try {
+      const meeting = await meetingsService.reassignAccount(request.userId, request.params.id, { accountId: account_id, internal: !!internal });
+      if (!meeting) { reply.code(404); return { error: 'Meeting not found' }; }
+      return meeting;
+    } catch (err) {
+      if (err.statusCode) { reply.code(err.statusCode); return { error: err.message }; }
+      throw err;
+    }
+  });
+
   // Triage: link an unlinked attendee row to an existing contact. If that
   // contact is already an attendee on the meeting, the unlinked row is dropped
   // (dedupe) rather than creating a duplicate link.

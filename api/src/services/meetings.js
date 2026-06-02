@@ -325,8 +325,11 @@ export class MeetingsService {
   }
 
   // Triage: attach a parked (account-less, needs_review) note to an account.
-  // The one path allowed to set account_id after creation — flips the note from
-  // internal to a real account meeting and clears the review flag.
+  // One of two paths allowed to set account_id after creation (the other is
+  // reassignAccount) — flips the note from internal to a real account meeting
+  // and clears the review flag. Deliberately guarded to account-less notes: an
+  // agent placing parked notes must not clobber an existing assignment. To move
+  // a meeting that ALREADY has an account, use reassignAccount.
   async assignAccount(userId, id, accountId) {
     return withUser(userId, async (client) => {
       const m = (await client.query('SELECT id, account_id FROM meetings WHERE id = $1', [id])).rows[0];
@@ -342,6 +345,53 @@ export class MeetingsService {
         'UPDATE meetings SET account_id = $2, internal = false, needs_review = false WHERE id = $1',
         [id, accountId]
       );
+      return this._fetchFull(client, id);
+    });
+  }
+
+  // Reassign a meeting to a DIFFERENT account, or convert it to an internal
+  // note — the "fix a bad import" path. Unlike assignAccount (triage, which only
+  // touches account-less notes and 409s once a meeting has an account), this
+  // works regardless of the meeting's current account: pass accountId to move it
+  // there (internal=false), or internal=true to strip the account entirely and
+  // make it an account-less internal note. Either way needs_review is cleared —
+  // a deliberate move settles the triage question. Attendees are left untouched:
+  // who was in the room is independent of which account owns the note. The
+  // unique (account_id, filename) / (user_id, filename) partial indexes can
+  // still collide if the destination already holds a same-named note — that's
+  // surfaced as a 409 rather than a raw DB error.
+  async reassignAccount(userId, id, { accountId = null, internal = false } = {}) {
+    const toInternal = !!internal;
+    if (toInternal && accountId) {
+      throw badRequest('Pass either account_id (move to that account) or internal=true (make it an account-less internal note) — not both.');
+    }
+    if (!toInternal && !accountId) {
+      throw badRequest('reassign requires account_id (the account to move this meeting to) or internal=true (to convert it to an account-less internal note).');
+    }
+    return withUser(userId, async (client) => {
+      const m = (await client.query('SELECT id, account_id, filename FROM meetings WHERE id = $1', [id])).rows[0];
+      if (!m) return null;
+      if (!toInternal) {
+        const acct = (await client.query('SELECT id FROM accounts WHERE id = $1', [accountId])).rows[0];
+        if (!acct) {
+          throw notFound(`Account not found: id=${accountId}.`);
+        }
+      }
+      try {
+        await client.query(
+          'UPDATE meetings SET account_id = $2, internal = $3, needs_review = false WHERE id = $1',
+          [id, toInternal ? null : accountId, toInternal]
+        );
+      } catch (err) {
+        if (err.code === '23505') {
+          throw conflict(
+            toInternal
+              ? `You already have an internal note with the filename "${m.filename}". Rename one before converting this meeting to internal.`
+              : `That account already has a meeting with the filename "${m.filename}". Rename one before moving this meeting there.`
+          );
+        }
+        throw err;
+      }
       return this._fetchFull(client, id);
     });
   }

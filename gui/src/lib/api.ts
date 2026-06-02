@@ -141,6 +141,20 @@ export const api = {
   deleteContact: (id: number) =>
     del(`/contacts/${id}`),
 
+  // Account-link management (contacts are many-to-many with accounts).
+  linkContactAccount: (id: number, accountId: number) =>
+    post<any>(`/contacts/${id}/accounts/${accountId}`, {}),
+
+  unlinkContactAccount: (id: number, accountId: number) =>
+    del<any>(`/contacts/${id}/accounts/${accountId}`),
+
+  // Atomically move a contact's account link: link to_account_id and unlink
+  // from_account_id (optional) in one step — fixes a contact imported onto the
+  // wrong account without a transient orphaned state. Only moves the one named
+  // link; other links are preserved.
+  reassignContactAccount: (id: number, opts: { to_account_id: number; from_account_id?: number }) =>
+    post<any>(`/contacts/${id}/reassign-account`, opts),
+
   researchContact: (id: number) =>
     post<{ jobId: string; contactId: number; name: string; accountName: string | null }>(
       `/contacts/${id}/research`,
@@ -214,6 +228,18 @@ export const api = {
 
   deleteMeeting: (id: number) =>
     del(`/meetings/${id}`),
+
+  // Triage: attach a parked (account-less, needs_review) note to an account.
+  // Flips internal→false, sets account_id, and clears the review flag.
+  assignMeetingAccount: (id: number, accountId: number) =>
+    post<any>(`/meetings/${id}/assign-account`, { account_id: accountId }),
+
+  // Move a meeting to a different account, or convert it to an internal note
+  // (fix a bad import). Pass account_id to move it there; pass internal=true
+  // (and omit account_id) to strip the account. Works on a meeting that already
+  // has an account — unlike assignMeetingAccount, which is account-less only.
+  reassignMeetingAccount: (id: number, opts: { account_id?: number; internal?: boolean }) =>
+    post<any>(`/meetings/${id}/reassign-account`, opts),
 
   // From-emails flow: resolve a list of attendee emails into known contacts +
   // account candidates, then submit the user's choices to create the meeting

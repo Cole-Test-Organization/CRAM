@@ -3,6 +3,7 @@ import { A, useParams, useNavigate } from '@solidjs/router';
 import { api } from '../lib/api';
 import { ContactFormModal } from '../components/FormModals';
 import Button from '../components/Button';
+import AccountPicker from '../components/AccountPicker';
 import NotesPanel from '../components/NotesPanel';
 import BackLink from '../components/BackLink';
 import { attendeeStatusClass, attendeeStatusLabel } from '../lib/attendeeStatus';
@@ -28,6 +29,13 @@ export default function ContactDetail() {
   const [enrichJobs, setEnrichJobs] = createSignal<EnrichmentJob[]>([]);
   const [researchError, setResearchError] = createSignal<string | null>(null);
   const [starting, setStarting] = createSignal(false);
+
+  // Account-link management — contacts are many-to-many with accounts, so a
+  // bad import is fixed by unlinking the wrong account and/or linking the right
+  // one. Both reuse the existing link/unlink endpoints.
+  const [linkTarget, setLinkTarget] = createSignal<{ id: number; name: string; slug: string } | null>(null);
+  const [linking, setLinking] = createSignal(false);
+  const [linkError, setLinkError] = createSignal('');
 
   // Same polling pattern as MeetingView — poll every 5s while any job is in
   // flight, then refetch the contact once everything settles so the patched
@@ -94,6 +102,38 @@ export default function ContactDetail() {
     if (!confirm(`Delete contact "${c.full_name}"?`)) return;
     await api.deleteContact(c.id);
     navigate('/contacts');
+  };
+
+  const linkAccount = async () => {
+    const c = contact();
+    const target = linkTarget();
+    if (!c || !target) return;
+    setLinking(true);
+    setLinkError('');
+    try {
+      await api.linkContactAccount(c.id, target.id);
+      setLinkTarget(null);
+      refetch();
+    } catch (err: any) {
+      setLinkError(err?.message || 'Failed to link account');
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  const unlinkAccount = async (accountId: number) => {
+    const c = contact();
+    if (!c) return;
+    setLinking(true);
+    setLinkError('');
+    try {
+      await api.unlinkContactAccount(c.id, accountId);
+      refetch();
+    } catch (err: any) {
+      setLinkError(err?.message || 'Failed to unlink account');
+    } finally {
+      setLinking(false);
+    }
   };
 
   return (
@@ -200,6 +240,38 @@ export default function ContactDetail() {
               <Show when={c().notes}><div class="text-[13px] text-base-50 mt-3 whitespace-pre-wrap">{c().notes}</div></Show>
               <Show when={!c().title && !c().email && !c().phone && !c().linkedin && !c().notes}>
                 <span class="text-base-300 text-[13px] italic">No details yet. Click Edit to add them.</span>
+              </Show>
+            </div>
+
+            <div class="panel panel-accent p-5 mt-5">
+              <h3 class="text-[11px] font-bold uppercase tracking-widest text-surf-300 mb-3">
+                Accounts ({c().accounts?.length || 0})
+              </h3>
+              <Show
+                when={c().accounts?.length}
+                fallback={<span class="text-base-300 text-[13px] italic">Not linked to any account.</span>}
+              >
+                <div class="flex gap-2 flex-wrap mb-3">
+                  <For each={c().accounts}>
+                    {(acct: any) => (
+                      <span class="inline-flex items-center gap-1.5 bg-base-950 border-2 border-base-500 px-2.5 py-1 text-[12px] text-base-50 font-semibold uppercase tracking-wider">
+                        <A href={`/accounts/${acct.slug}`} class="hover:text-surf-300">{acct.name}</A>
+                        <button type="button" class="btn-x" title={`Unlink ${acct.name}`} disabled={linking()} onClick={() => unlinkAccount(acct.id)}>×</button>
+                      </span>
+                    )}
+                  </For>
+                </div>
+              </Show>
+              <div class="flex flex-col gap-2 md:flex-row md:items-center">
+                <div class="flex-1 min-w-0">
+                  <AccountPicker value={linkTarget()} onChange={setLinkTarget} placeholder="Link to an account..." />
+                </div>
+                <Button variant="primary" size="sm" disabled={!linkTarget() || linking()} onClick={linkAccount}>
+                  {linking() ? 'Linking…' : 'Link account'}
+                </Button>
+              </div>
+              <Show when={linkError()}>
+                <div class="text-[11px] text-scarlet-400 mt-2 font-semibold">{linkError()}</div>
               </Show>
             </div>
 

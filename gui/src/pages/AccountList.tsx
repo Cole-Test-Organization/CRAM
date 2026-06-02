@@ -6,6 +6,7 @@ import Button from '../components/Button';
 
 export default function AccountList(props: { type?: 'account' | 'partner' }) {
   const [filter, setFilter] = createSignal('');
+  const [reviewOnly, setReviewOnly] = createSignal(false);
   const [modalOpen, setModalOpen] = createSignal(false);
   const navigate = useNavigate();
 
@@ -22,10 +23,14 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
 
   const filtered = () => {
     const q = filter().toLowerCase();
-    const accounts = data()?.accounts || [];
+    let accounts = data()?.accounts || [];
+    if (reviewOnly()) accounts = accounts.filter((a: any) => a.needs_review);
     if (!q) return accounts;
     return accounts.filter((a: any) => a.name.toLowerCase().includes(q) || a.slug.includes(q));
   };
+
+  // Accounts flagged for review (e.g. auto-created by the notes importer).
+  const reviewCount = () => (data()?.accounts || []).filter((a: any) => a.needs_review).length;
 
   const favorites = () => filtered().filter((a: any) => a.favorite);
   const regulars = () => filtered().filter((a: any) => !a.favorite);
@@ -60,6 +65,20 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
     }
   };
 
+  // Clear the review flag once an auto-created account has been eyeballed.
+  // Optimistic: drop the badge immediately, revert on error.
+  const verify = async (acct: any) => {
+    const current = data();
+    if (!current) return;
+    const updated = current.accounts.map((a: any) => (a.id === acct.id ? { ...a, needs_review: false } : a));
+    mutate({ ...current, accounts: updated });
+    try {
+      await api.patchAccount(acct.id, { needs_review: false });
+    } catch {
+      mutate(current);
+    }
+  };
+
   return (
     <div>
       <div class="flex flex-col gap-3 mb-6 md:flex-row md:justify-between md:items-center">
@@ -70,7 +89,7 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
         </div>
       </div>
 
-      <div class="flex gap-3 mb-5">
+      <div class="flex flex-col gap-3 mb-5 md:flex-row md:items-center">
         <div class="flex items-center bg-base-950 border-2 border-base-500 px-3 py-2 gap-2 flex-1 focus-within:border-surf-300 transition-colors">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-surf-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
           <input
@@ -81,6 +100,12 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
             class="flex-1 bg-transparent border-none outline-none text-base-50 text-sm placeholder:text-base-400"
           />
         </div>
+        <Show when={reviewCount() || reviewOnly()}>
+          <label class="flex items-center gap-2 cursor-pointer text-[11px] uppercase tracking-wider font-semibold text-amber-300 shrink-0 px-1" title="Show only accounts flagged for review">
+            <input type="checkbox" class="accent-amber-300 w-4 h-4 cursor-pointer" checked={reviewOnly()} onChange={(e) => setReviewOnly(e.currentTarget.checked)} />
+            Needs review{reviewCount() ? ` (${reviewCount()})` : ''}
+          </label>
+        </Show>
       </div>
 
       <div class="panel panel-accent">
@@ -94,7 +119,7 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
                 Favorites
               </div>
               <For each={favorites()}>
-                {(acct) => <AccountRow acct={acct} onToggleFavorite={toggleFavorite} />}
+                {(acct) => <AccountRow acct={acct} onToggleFavorite={toggleFavorite} onVerify={verify} />}
               </For>
             </Show>
             <Show when={favorites().length && regulars().length}>
@@ -103,7 +128,7 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
               </div>
             </Show>
             <For each={regulars()}>
-              {(acct) => <AccountRow acct={acct} onToggleFavorite={toggleFavorite} />}
+              {(acct) => <AccountRow acct={acct} onToggleFavorite={toggleFavorite} onVerify={verify} />}
             </For>
           </Show>
         </Show>
@@ -121,7 +146,7 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
   );
 }
 
-function AccountRow(props: { acct: any; onToggleFavorite: (acct: any) => void }) {
+function AccountRow(props: { acct: any; onToggleFavorite: (acct: any) => void; onVerify: (acct: any) => void }) {
   return (
     <div class="flex items-stretch border-b border-base-700 last:border-b-0">
       <button
@@ -136,9 +161,24 @@ function AccountRow(props: { acct: any; onToggleFavorite: (acct: any) => void })
         </svg>
       </button>
       <A href={`/accounts/${props.acct.slug}`} class="press-row gap-4 flex-wrap flex-1 min-w-0">
-        <span class="flex-1 min-w-[60%] md:min-w-0 font-semibold text-sm text-base-50">{props.acct.name}</span>
+        <span class="flex-1 min-w-[60%] md:min-w-0 font-semibold text-sm text-base-50 flex items-center gap-2 flex-wrap">
+          <Show when={props.acct.needs_review}>
+            <span class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">Review</span>
+          </Show>
+          <span>{props.acct.name}</span>
+        </span>
         <span class="text-base-300 text-[12px]">{props.acct.last_contact || '—'}</span>
       </A>
+      <Show when={props.acct.needs_review}>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); props.onVerify(props.acct); }}
+          class="shrink-0 px-3 flex items-center text-[11px] uppercase tracking-wider font-bold text-amber-300 hover:text-surf-300 transition-colors"
+          title="Mark as reviewed — clears the flag"
+        >
+          Verify
+        </button>
+      </Show>
     </div>
   );
 }

@@ -22,6 +22,7 @@ type Props = {
 
 export default function MeetingsList(props: Props = {}) {
   const [filter, setFilter] = createSignal('');
+  const [reviewOnly, setReviewOnly] = createSignal(false);
   const [modalOpen, setModalOpen] = createSignal(false);
   const navigate = useNavigate();
 
@@ -37,7 +38,8 @@ export default function MeetingsList(props: Props = {}) {
 
   const filtered = () => {
     const q = filter().toLowerCase();
-    const list = meetings() || [];
+    let list = meetings() || [];
+    if (reviewOnly()) list = list.filter((m: any) => m.needs_review);
     if (!q) return list;
     return list.filter((m: any) =>
       (m.title || m.filename || '').toLowerCase().includes(q) ||
@@ -47,6 +49,9 @@ export default function MeetingsList(props: Props = {}) {
       (m.internal && 'internal'.includes(q))
     );
   };
+
+  // Parked notes awaiting triage (account-less / imported, flagged needs_review).
+  const reviewCount = () => (meetings() || []).filter((m: any) => m.needs_review).length;
 
   const sel = createSelection(
     () => filtered().map((m: any) => m.id),
@@ -77,8 +82,8 @@ export default function MeetingsList(props: Props = {}) {
         <TodayTimeline meetings={() => meetings() || []} getHref={(m: any) => `/meetings/${m.id}`} />
       </Show>
 
-      <div class="mb-5">
-        <div class="flex items-center bg-base-950 border-2 border-base-500 px-3 py-2 gap-2 focus-within:border-surf-300 transition-colors">
+      <div class="mb-5 flex flex-col gap-3 md:flex-row md:items-center">
+        <div class="flex items-center bg-base-950 border-2 border-base-500 px-3 py-2 gap-2 focus-within:border-surf-300 transition-colors flex-1">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-surf-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
           <input
             type="text"
@@ -88,6 +93,12 @@ export default function MeetingsList(props: Props = {}) {
             class="flex-1 bg-transparent border-none outline-none text-base-50 text-sm placeholder:text-base-400"
           />
         </div>
+        <Show when={!isEmbedded() && (reviewCount() || reviewOnly())}>
+          <label class="flex items-center gap-2 cursor-pointer text-[11px] uppercase tracking-wider font-semibold text-amber-300 shrink-0 px-1" title="Show only parked notes awaiting an account">
+            <input type="checkbox" class="accent-amber-300 w-4 h-4 cursor-pointer" checked={reviewOnly()} onChange={(e) => setReviewOnly(e.currentTarget.checked)} />
+            Needs review{reviewCount() ? ` (${reviewCount()})` : ''}
+          </label>
+        </Show>
       </div>
 
       <SelectionToolbar selection={sel} buildExport={buildMeetingsExport} loading={() => meetings.loading} />
@@ -102,6 +113,9 @@ export default function MeetingsList(props: Props = {}) {
             <span class="flex-1 min-w-full md:min-w-0 font-semibold text-sm text-base-50 flex items-center gap-2 flex-wrap">
               <Show when={m.internal}>
                 <span class="bg-base-950 border-2 border-surf-300 text-surf-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">Internal</span>
+              </Show>
+              <Show when={m.needs_review}>
+                <span class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">Review</span>
               </Show>
               <span>{m.title || m.filename}</span>
             </span>

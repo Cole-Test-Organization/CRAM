@@ -349,6 +349,35 @@ export default async function contactRoutes(fastify, { contactsService, accounts
     return contactsService.unlinkAccount(request.userId, request.params.id, request.params.accountId);
   });
 
+  // Reassign a contact's account link — link to_account_id and unlink
+  // from_account_id atomically (fix a bad import).
+  fastify.post('/contacts/:id/reassign-account', {
+    schema: {
+      description: 'Atomically move a contact from one account to another: links to_account_id and unlinks from_account_id in a single step (fix a bad import). from_account_id is optional — omit it to only add the destination link. Contacts are many-to-many with accounts, so this moves only the one link named; any other account links are preserved. The destination is linked first, so a failure can\'t leave the contact orphaned or double-linked. Returns the contact with its updated accounts.',
+      tags: ['contacts'],
+      params: { type: 'object', properties: { id: { type: 'integer' } } },
+      body: {
+        type: 'object',
+        required: ['to_account_id'],
+        properties: {
+          to_account_id: { type: 'integer', description: 'Destination account to link the contact to.' },
+          from_account_id: { type: 'integer', description: 'Account to unlink (optional). Omit to only add the destination link.' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { to_account_id, from_account_id } = request.body || {};
+    if (!to_account_id) { reply.code(400); return { error: 'to_account_id is required' }; }
+    try {
+      const contact = await contactsService.reassignAccount(request.userId, request.params.id, from_account_id, to_account_id);
+      if (!contact) { reply.code(404); return { error: 'Contact not found' }; }
+      return contact;
+    } catch (err) {
+      if (err.statusCode) { reply.code(err.statusCode); return { error: err.message }; }
+      throw err;
+    }
+  });
+
   // Full update
   fastify.put('/contacts/:id', {
     schema: {

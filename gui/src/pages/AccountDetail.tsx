@@ -1,78 +1,18 @@
-import { createResource, createSignal, For, Show, createEffect } from 'solid-js';
+import { createResource, createSignal, For, Show } from 'solid-js';
 import { A, useParams, useNavigate } from '@solidjs/router';
 import { api } from '../lib/api';
-import MarkdownRenderer from '../components/MarkdownRenderer';
-import { createAutoSave, type SaveStatus } from '../lib/editing';
+import { createAutoSave } from '../lib/editing';
 import { AccountFormModal } from '../components/FormModals';
 import AccountPicker from '../components/AccountPicker';
 import Button from '../components/Button';
+import EditableMarkdown from '../components/EditableMarkdown';
+import SaveIndicator from '../components/SaveIndicator';
 import TechnicalProfilePanel from '../components/accounts/TechnicalProfilePanel';
 import NotesPanel from '../components/NotesPanel';
 import BackLink from '../components/BackLink';
 import MeetingsList from './MeetingsList';
 import ContactList from './ContactList';
 import OpportunitiesList from './OpportunitiesList';
-
-function SaveIndicator(props: { status: SaveStatus }) {
-  return (
-    <Show when={props.status !== 'idle'}>
-      <span class={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 border-2 ${
-        props.status === 'saving' ? 'text-amber-300 border-amber-500/50 bg-amber-500/10' :
-        props.status === 'saved' ? 'text-surf-300 border-surf-500/50 bg-surf-500/10' :
-        'text-scarlet-300 border-scarlet-500/50 bg-scarlet-500/10'
-      }`}>
-        {props.status === 'saving' ? 'Saving...' : props.status === 'saved' ? 'Saved' : 'Error'}
-      </span>
-    </Show>
-  );
-}
-
-function EditableMarkdown(props: { content: string; onSave: (val: string) => void; status: SaveStatus }) {
-  const [editing, setEditing] = createSignal(false);
-  const [value, setValue] = createSignal(props.content || '');
-  let textareaRef: HTMLTextAreaElement | undefined;
-
-  createEffect(() => setValue(props.content || ''));
-
-  return (
-    <div>
-      <div class="flex justify-between items-center mb-3">
-        <div />
-        <div class="flex items-center gap-2">
-          <SaveIndicator status={props.status} />
-          <Show when={editing()}>
-            <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>Done</Button>
-          </Show>
-        </div>
-      </div>
-      <Show when={editing()} fallback={
-        <div
-          class="mt-2 cursor-text p-3 -m-3 transition-colors duration-150 hover:bg-base-700/30"
-          onClick={() => {
-            setEditing(true);
-            requestAnimationFrame(() => textareaRef?.focus());
-          }}
-        >
-          <Show when={value()} fallback={<span class="text-base-300 text-[13px] italic">Click to add content...</span>}>
-            <MarkdownRenderer content={value()} />
-          </Show>
-        </div>
-      }>
-        <textarea
-          ref={textareaRef}
-          class="input-vintage font-mono text-[12px] leading-relaxed mt-2"
-          value={value()}
-          onInput={(e) => {
-            const v = e.currentTarget.value;
-            setValue(v);
-            props.onSave(v);
-          }}
-          rows={12}
-        />
-      </Show>
-    </div>
-  );
-}
 
 export default function AccountDetail() {
   const params = useParams<{ slug: string }>();
