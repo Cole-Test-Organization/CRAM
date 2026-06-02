@@ -1,10 +1,11 @@
-import { createSignal, createEffect, createMemo, createResource, onCleanup, untrack, For, Show } from 'solid-js';
+import { createSignal, createEffect, createResource, For, Show } from 'solid-js';
 import Modal, { modalBtn } from './Modal';
 import FormField, { FormRow, formInputClass, formTextareaClass, formSelectClass } from './FormField';
 import AccountPicker from './AccountPicker';
 import AttendeePicker from './AttendeePicker';
 import { api } from '../lib/api';
 import { STAGES, type OpportunityStage } from '../lib/stages';
+import { createUnsavedGuard } from '../lib/unsavedGuard';
 
 function slugify(name: string) {
   return name
@@ -351,10 +352,10 @@ export function MeetingFormModal(props: MeetingModalProps) {
   const [decisions, setDecisions] = createSignal<Record<string, EmailAttendeeDecision>>({});
 
   // ---- Unsaved-changes guard (warn-only; no autosave / no draft) ----
-  // Serialize the editable fields and compare against a baseline captured when
-  // the modal opens. `dirty()` flips true once anything the user typed or
-  // picked diverges from that baseline. Nothing is persisted — this only powers
-  // the confirm-on-close prompt and the beforeunload warning below.
+  // serialize() snapshots the editable fields into a comparable string; the
+  // reusable createUnsavedGuard primitive diffs it against a baseline to drive
+  // both the confirm-on-close prompt and the native refresh/close warning.
+  // Nothing is persisted.
   const serialize = () => JSON.stringify({
     date: date(),
     startTime: startTime(),
@@ -370,10 +371,10 @@ export function MeetingFormModal(props: MeetingModalProps) {
     newAccountName: newAccountName(),
     decisions: decisions(),
   });
-  const [baseline, setBaseline] = createSignal('');
-  // createMemo so the beforeunload effect only re-runs when the boolean flips,
-  // not on every keystroke (serialize() changes constantly while typing).
-  const dirty = createMemo(() => serialize() !== baseline());
+  // Dirty-tracking + close-confirm + beforeunload all live in the shared
+  // primitive, so the untrack footgun (see rebaseline) can't be reintroduced
+  // here. serialize() is the only form-specific piece.
+  const guard = createUnsavedGuard({ serialize, isOpen: () => props.open });
 
   // Guarded close for every in-app dismissal: backdrop click, Escape, and the ×
   // button all route through Modal's onClose, and the Cancel button points here
@@ -381,8 +382,7 @@ export function MeetingFormModal(props: MeetingModalProps) {
   // Mid-save we veto — the save closes the modal itself when it lands.
   const requestClose = () => {
     if (saving()) return;
-    if (dirty() && !confirm('You have unsaved changes — discard them?')) return;
-    props.onClose();
+    guard.guardedClose(props.onClose);
   };
 
   createEffect(() => {
@@ -413,12 +413,10 @@ export function MeetingFormModal(props: MeetingModalProps) {
       setPrimaryDomain(null);
       setNewAccountName('');
       setDecisions({});
-      // Snapshot the freshly-initialized state so `dirty()` starts at false.
-      // untrack() is critical: serialize() reads every form signal, and without
-      // it this effect would subscribe to all of them and re-run (resetting the
-      // whole form) on every keystroke/selection. We only want it keyed on
-      // props.open.
-      setBaseline(untrack(serialize));
+      // Re-baseline once the form is populated so dirty() starts false.
+      // rebaseline() bakes in untrack(), so this can't subscribe the effect to
+      // the form signals (which would reset the form on every edit).
+      guard.rebaseline();
     }
   });
 
@@ -438,17 +436,6 @@ export function MeetingFormModal(props: MeetingModalProps) {
   });
   createEffect(() => {
     if (internal()) setMode('manual');
-  });
-
-  // Native browser "Leave site? Changes may not be saved" prompt for the one
-  // close path the in-app guard can't intercept: a real page unload (refresh,
-  // tab/window close). Registered only while the modal is open AND dirty, and
-  // torn down the moment either becomes false.
-  createEffect(() => {
-    if (!props.open || !dirty()) return;
-    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
-    window.addEventListener('beforeunload', handler);
-    onCleanup(() => window.removeEventListener('beforeunload', handler));
   });
 
   const showModeToggle = () => !props.existing && !props.fixedAccountId && !internal();
@@ -602,7 +589,7 @@ export function MeetingFormModal(props: MeetingModalProps) {
         });
       }
       // Saved — re-baseline so the close below doesn't trip the unsaved guard.
-      setBaseline(serialize());
+      guard.rebaseline();
       props.onSaved?.(meeting);
       props.onClose();
     } catch (err: any) {
