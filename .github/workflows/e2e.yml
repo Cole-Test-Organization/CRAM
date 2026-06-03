@@ -1,0 +1,89 @@
+name: E2E
+
+# Real-browser Playwright (Phase 4) over the live, seeded stack. Deliberately
+# NOT run on every push (TEST-SPEC.md §2 "never gate every push on the full E2E
+# suite"; §7 "run pre-merge/nightly"). It runs:
+#   • nightly on a schedule,
+#   • on manual dispatch, and
+#   • on any PR that carries the `e2e` label — an opt-in pre-merge gate for risky
+#     PRs, so day-to-day PRs stay fast.
+on:
+  schedule:
+    - cron: '0 7 * * *'   # 07:00 UTC nightly
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+# A newer push to the same ref cancels the in-flight run.
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: E2E (Playwright, live seeded stack)
+    runs-on: ubuntu-latest
+
+    # Gate: schedule / manual always run; a PR runs ONLY when it carries the
+    # `e2e` label. An unlabeled PR (or a push to main) skips this job entirely.
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'e2e'))
+
+    # Ephemeral, throwaway Postgres for this run only (TEST-SPEC.md §6) — fresh
+    # container ⇒ deterministic seed.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: crm
+          POSTGRES_PASSWORD: devpassword
+          POSTGRES_DB: crm
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U crm -d crm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # The orchestrator boots the API on the runner and points it here.
+      DATABASE_URL: postgres://crm:devpassword@localhost:5432/crm
+      TEST_API_PORT: 3201
+      # outreach (imported by the API) pulls puppeteer; tests never launch its
+      # browser, so skip the Chromium download at install time. Playwright's own
+      # Chromium is installed explicitly below.
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            api/package-lock.json
+            outreach/package-lock.json
+            gui/package-lock.json
+            e2e/package-lock.json
+      # Boot deps (api + outreach), GUI build deps (gui), and the E2E runner (e2e).
+      - run: npm --prefix api ci
+      - run: npm --prefix outreach ci
+      - run: npm --prefix gui ci
+      - run: npm --prefix e2e ci
+      # Chromium + its OS libraries on the runner.
+      - run: ./e2e/node_modules/.bin/playwright install --with-deps chromium
+      - name: build GUI → migrate → boot API → seed → playwright
+        run: node dev/scripts/run-e2e-tests.js
+      # Always upload the HTML report (incl. failure traces/screenshots) so a red
+      # run is debuggable from the Actions UI.
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7

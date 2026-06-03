@@ -180,6 +180,7 @@ export default function AccountPicker(props: AccountPickerProps) {
                   {(acct: any) => (
                     <button
                       type="button"
+                      data-testid="account-option"
                       class="press-row w-full text-left border-b border-base-700 last:border-b-0"
                       onClick={() => select(acct)}
                     >

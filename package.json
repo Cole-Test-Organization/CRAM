@@ -9,6 +9,7 @@
     "test:gui": "npm --prefix gui test",
     "test": "npm run typecheck && npm run test:gui",
     "test:api": "bash dev/scripts/test-api.sh",
+    "test:e2e": "bash dev/scripts/test-e2e.sh",
     "test:all": "npm test && npm run test:api",
     "prepare": "husky"
   },

@@ -150,7 +150,7 @@ export default function AttendeePicker(props: AttendeePickerProps) {
                       </div>
                       <For each={list()}>
                         {(c) => (
-                          <label class="flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer border-b border-base-700 last:border-b-0 transition-colors duration-150 hover:bg-base-800">
+                          <label data-testid="attendee-option" class="flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer border-b border-base-700 last:border-b-0 transition-colors duration-150 hover:bg-base-800">
                             <input
                               type="checkbox"
                               class="accent-surf-400 w-4 h-4 cursor-pointer"

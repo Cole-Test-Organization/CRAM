@@ -13,7 +13,7 @@
     "db:migrate:create": "node-pg-migrate --migrations-dir migrations create",
     "db:schema": "node ../dev/scripts/dump-schema.js",
     "db:clear": "node ../dev/scripts/clear-db.js",
-    "test": "node --test test/endpoints.test.js"
+    "test": "node --test --test-concurrency=1 'test/*.test.js'"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",

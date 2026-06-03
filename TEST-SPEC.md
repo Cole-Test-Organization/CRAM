@@ -2,7 +2,7 @@
 
 Testing strategy and roadmap for the SE Operating System. **Living document** — update it as phases land and decisions change.
 
-_Last updated: 2026-06-02._
+_Last updated: 2026-06-03._
 
 ---
 
@@ -44,11 +44,11 @@ Two axes, often conflated: **scope** (how much is exercised) and **purpose** (e.
 
 | Layer | Tooling | Location | Hermetic? | Catches |
 |---|---|---|---|---|
-| **Static** | `tsc --noEmit` | `gui/`, `api/` | yes | Type errors, undefined refs. Not behavioral. |
+| **Static** | `tsc --noEmit` | `gui/` | yes | Type errors, undefined refs. Not behavioral. (`api/` is plain JS/ESM — no `tsconfig`, not typechecked.) |
 | **Unit** | Vitest + Solid `createRoot` (no DOM) | colocated `*.test.ts` | yes | One isolated unit's logic/reactivity (e.g. the `unsavedGuard` primitive). |
 | **Component / integration (FE)** | Vitest + `@solidjs/testing-library` + **jsdom**, API **mocked** | colocated `*.test.tsx` | yes | Component behavior, reactivity, wiring. The bug-catching workhorse. |
 | **Integration (BE)** | Node `node --test` + `fetch` vs a **live** API | `api/test/*.test.js` | **needs a DB** (see §6) | Real routes, validation, contracts, cross-resource rules. |
-| **E2E** | Playwright (real browser, full stack, no mocks) | `e2e/` (future) | needs live stack + seed | Critical user journeys end-to-end. |
+| **E2E** | Playwright (real browser, full stack, no mocks) | `e2e/` | needs live stack + seed | Critical user journeys end-to-end. |
 | **Manual / exploratory** | `curl`, container logs, red→green flips | ad hoc | n/a | Root-causing, one-off confirmation, proving a test has teeth. A technique, not a deliverable. |
 
 **jsdom is not a browser.** It gives `document`/`window`/`HTMLElement` as in-memory JS objects in Node, with **no rendering engine** (no layout, no paint). So component tests answer "does it *behave* correctly?" — not "does it *look* right." Visual/layout correctness is E2E's job.
@@ -73,7 +73,11 @@ npm test          # hermetic gate: tsc (gui) + gui vitest. Fast, no DB.
 npm run test:api  # API integration: brings up an ISOLATED throwaway Postgres, migrates +
                   #   seeds it, boots the API, runs api/test, tears it down. Needs Docker.
                   #   Never touches your dev data. (CI runs the same orchestration.)
-npm run test:all  # both of the above
+npm run test:e2e  # E2E: same isolated-DB harness, but BUILDS the GUI, serves it from the
+                  #   real API on one origin, seeds, then runs Playwright (Chromium). Needs
+                  #   Docker + the Playwright browser. Heavy — nightly/on-demand, not in
+                  #   test:all. (CI runs the same orchestration.)
+npm run test:all  # the hermetic + API suites (NOT e2e — that's nightly/label-gated)
 
 # Lower-level targets the root scripts fan out to:
 npm --prefix gui test           # frontend: vitest run (unit + component), hermetic
@@ -82,31 +86,38 @@ npm --prefix gui run typecheck  # tsc --noEmit
 npm --prefix api test           # backend: node --test against an ALREADY-RUNNING API (API_URL=…)
 ```
 
-`npm test` is intentionally the **hermetic subset** (no DB, safe to run anywhere); the API suite is `npm run test:api` and gates every PR in CI. The orchestration shared by local + CI lives in `dev/scripts/run-api-tests.js` (migrate → boot → seed → test → teardown); `dev/scripts/test-api.sh` wraps it locally with the `db-test` compose service.
+`npm test` is intentionally the **hermetic subset** (no DB, safe to run anywhere); the API suite is `npm run test:api` and gates every PR in CI. The orchestration shared by local + CI lives in `dev/scripts/run-api-tests.js` (migrate → boot → seed → test → teardown); `dev/scripts/test-api.sh` wraps it locally with the `db-test` compose service. The **E2E** suite mirrors this exactly — `dev/scripts/run-e2e-tests.js` (build GUI → migrate → boot → seed → **playwright** → teardown) + `dev/scripts/test-e2e.sh` — but is **not** on the every-PR path: its `.github/workflows/e2e.yml` runs nightly, on manual dispatch, and on PRs carrying the `e2e` label.
 
 ---
 
-## 5. Current state (as of 2026-06-02)
+## 5. Current state (as of 2026-06-03)
 
 **Exists:**
 - Frontend harness: `gui/vitest.config.ts` (Solid + jsdom), `gui/vitest.setup.ts` (auto-cleanup). Scripts `test` / `test:watch` / `typecheck`.
-- `gui/src/components/FormModals.test.tsx` — 2 component regression tests (notes persist; selected attendee persists).
+- `gui/src/components/FormModals.test.tsx` — component tests for all 8 form modals: the 2 original meeting reactivity regressions, plus input-persists / validation / correct-`api.*`-on-submit for the rest, plus the unsaved-guard wiring. **(Expanded in Phase 2.)**
 - `gui/src/lib/unsavedGuard.ts` + `unsavedGuard.test.ts` — extracted primitive, 3 unit tests (incl. the `untrack`-is-untracked guarantee).
-- `api/test/endpoints.test.js` — 17 tests (mostly smoke GETs) + 2 null-times regression tests. Runs via `node --test` against a live API (`API_URL`).
+- `api/test/*.test.js` — **backend integration suite (Phase 3): 104 tests / 17 files**, run serially (`node --test --test-concurrency=1 'test/*.test.js'`) against a live, seeded API (`API_URL`). Per-resource CRUD + validation + contracts, cross-resource invariants, an in-process HTTP↔MCP parity/wiring check (`mcp.test.js`), and validation-only smoke for the LLM/external resources (`external-smoke.test.js`). Shared HTTP client + exact seed-count constants live in `api/test/helpers.js`. (`endpoints.test.js` was split into these; the null-times regression now lives in `meetings.test.js`.)
 - `tsc --noEmit` passes for `gui`.
 - Seed/reset tooling: `dev/scripts/seed-dev-data.js`, `dev/scripts/clear-db.js`, and a `seed` profile in `docker-compose.yml`.
 - **(Phase 1)** Root runner — `package.json` with `test` (hermetic), `test:api`, `test:all`.
 - **(Phase 1)** CI — `.github/workflows/ci.yml`: a hermetic job (tsc + vitest) and an api-integration job (ephemeral Postgres → migrate → seed → boot → `api/test`), both gating PRs + pushes to `main`.
 - **(Phase 1)** Isolated test DB — `db-test` (tmpfs Postgres, port 55433) under a `test` compose profile; orchestrated by `dev/scripts/run-api-tests.js` (shared by local + CI) and `dev/scripts/test-api.sh`.
 - **(Phase 1)** Husky pre-push hook (`.husky/pre-push`) running the hermetic subset.
+- **(Phase 2)** Component/unit tests for the stateful FE — `AccountPicker`, `AttendeePicker`, `EditableMarkdown`, `NotesPanel`, `SaveIndicator`, `createSelection` (colocated `*.test.tsx` / `*.test.ts`), plus the expanded `FormModals.test.tsx`. Full FE suite: **44 tests / 8 files**.
+- **(Phase 3)** Backend coverage — `api/test` deepened from smoke GETs to **104 tests / 17 files**: write paths + validation + contracts for every deterministic resource (accounts, account-details, contacts, meetings, opportunities, products, product-categories, vendors, vendor-products, notes, memories, events, themes, search, import-export); cross-resource invariants (contact-delete cascade, `reassign_account`, `internal_domains` guard); HTTP↔MCP parity + in-process services-bag wiring (`mcp.test.js`); and validation-only smoke for the LLM/external/side-effecting resources (`external-smoke.test.js`). Loosened assertions re-tightened to exact seed counts (15 accounts / 32 contacts / 10 opps / 34 meetings / 10 details / 7 partnerships; 24 products / 5 categories / 5 themes / 75 vendors / 180 vendor-products).
+
+- **(Phase 4)** E2E — `e2e/` Playwright suite (Chromium, serial `workers:1`) driving the **real GUI against a live, seeded API on one origin** (the API serves the built GUI; no Vite/proxy): **6 tests / 4 journey files + `helpers.ts`** — manual meeting → notes → save (incl. an Edit→Save that re-guards the null-times contract end-to-end), from-emails resolve → create, account creation (+ a validation block), internal-note triage (assign-account + keep-internal). DOM/role-based selectors, **no visual-regression**. Two `data-testid`s added (AccountPicker + AttendeePicker option rows). Orchestrated by `dev/scripts/run-e2e-tests.js` + `dev/scripts/test-e2e.sh`; run via `npm run test:e2e`.
 
 **Missing (the gaps this roadmap closes):**
-- ❌ Backend coverage is shallow (smoke GETs); writes, validation, and cross-resource rules are mostly untested across the ~20 route resources. *(Phase 3 — now builds on the Phase 1 test DB.)*
-- ❌ No E2E. *(Phase 4.)*
+- ✅ Nothing outstanding — all four phases have shipped. Optional follow-ups remain in §9 (ESLint on the static base; cross-browser / mobile-viewport E2E).
 
 **Resolved by Phase 1:** ~~no CI / root runner / git hooks~~; ~~API tests not hermetic~~ (they now run against a fresh, isolated, seeded DB); ~~no dedicated test database~~.
 
 **Resolved by Phase 2:** ~~frontend coverage stops at two regression tests~~ — every stateful component (7 form modals, both pickers, `EditableMarkdown`, `NotesPanel`, `SaveIndicator`, `createSelection`) now has smoke + key-behavior tests, and `unsavedGuard` is wired into the multi-field modals. Frontend suite is **44 tests across 8 files**.
+
+**Resolved by Phase 3:** ~~backend coverage is shallow (smoke GETs)~~ — write paths, validation, contracts, and cross-resource invariants now cover every deterministic resource, with HTTP↔MCP parity/wiring and validation smoke for the un-hermetic ones; the null-times regression was proven to have teeth and loosened assertions re-tightened to exact seed counts. Backend suite: **104 tests across 17 files**, green via `npm run test:api` + CI.
+
+**Resolved by Phase 4:** ~~no E2E~~ — a thin Playwright cap now covers the 4 critical journeys end-to-end against the live seeded stack, asserted at the DOM level (no screenshots). The manual-meeting Edit→Save step was proven to have teeth (reverting the meetings PUT schema to string-only `starts_at` turns exactly that journey red). Suite: **6 tests / 4 files**, green via `npm run test:e2e` + the nightly/`e2e`-label-gated CI job.
 
 ---
 
@@ -114,8 +125,8 @@ npm --prefix api test           # backend: node --test against an ALREADY-RUNNIN
 
 **Decision: integration/E2E tests run against a _live instance with deterministic seed data_, not mocks — and the test database is part of the CI/CD pipeline from Phase 1.**
 
-- **Dedicated test DB**, separate from dev/prod (e.g. a `crm_test` database or a `test` compose profile), so runs never clobber real data and always start from a known state.
-- **Reset + seed before the suite**, reusing the existing tooling: `clear-db.js` then `seed-dev-data.js` (pointed at the test DB via `DATABASE_URL`). The same seed data the dev environment uses becomes the fixture set.
+- **Dedicated test DB**, separate from dev/prod — built as the `test` compose profile's `db-test` (tmpfs Postgres, port 55433) locally and an ephemeral `postgres:16` service in CI, so runs never clobber real data and always start from a known state.
+- **Fresh DB per run, then seed** — each run gets a brand-new empty database, so `migrate → seed-dev-data.js` is the whole pipeline (no `clear-db.js` step — there's nothing to clear). The same seed data the dev environment uses becomes the fixture set.
 - **Boot the real API** (real Fastify + real Postgres, no mocks) against the test DB; run `api/test` (and later Playwright) against it; tear down.
 - **CI/CD pipeline** (Phase 1): stand up Postgres → run migrations (`node-pg-migrate`) → seed → boot the API → run the suite → tear down. Per-run ephemeral so it's deterministic and isolated.
 
@@ -146,25 +157,26 @@ Apply the `FormModals.test.tsx` pattern to the stateful components. No new infra
 - [x] Wired the `unsavedGuard` into the multi-field modals (Account, Contact, Opportunity, Vendor, VendorProduct): confirm-on-dirty-close + a regression test. The trivial Product / ProductCategory modals are intentionally left unguarded.
 - **Exit:** ✅ every stateful component has smoke + key-behavior coverage. Frontend suite: **44 tests / 8 files**, hermetic, green via `npm test` + CI. The reactivity-regression tests were proven to have teeth (a re-subscription probe turns them red).
 
-### Phase 3 — Backend coverage expansion · effort: **L**
-Deepen `api/test` from smoke GETs to real coverage, against the Phase 1 test DB. Tighten assertions to the known seed.
+### Phase 3 — Backend coverage expansion · effort: **L** · ✅ **DONE (2026-06-03)**
+Deepened `api/test` from smoke GETs to real coverage against the Phase 1 test DB. **104 tests / 17 files**, serial (`--test-concurrency=1`), with self-cleaning writes (namespaced `zzz-test-…` rows deleted in `t.after`) so the exact seed counts hold regardless of file order.
 
-- [ ] Write paths (POST/PUT/DELETE) for each of the ~20 resources.
-- [ ] Validation/contract tests (the null-times pattern) — null/omit/format semantics, required fields, enums.
-- [ ] Cross-resource invariants: cascade-on-contact-delete, `reassign_account`, merge behavior, `internal_domains` self-account guard.
-- [ ] HTTP ↔ MCP parity checks (every service op reachable on both surfaces).
-- [ ] Re-tighten loosened assertions to exact seeded counts.
-- **Exit:** backend writes + validation + key invariants covered, green in CI.
+- [x] Write paths (POST/PUT/PATCH/DELETE) for every deterministic resource (accounts, account-details, contacts, meetings, opportunities, products, product-categories, vendors, vendor-products, notes, memories, events, themes, import-export).
+- [x] Validation/contract tests (the null-times pattern) — null/omit/format semantics, required fields, enums, status codes (201/400/404/409).
+- [x] Cross-resource invariants: contact-delete cascade (links drop, meeting + account survive), `reassign_account` (in-place link move, others preserved), `internal_domains` self-account guard. *(No literal merge endpoint exists — `find_or_create` dedupe + reassign is the "merge" path; both covered.)*
+- [x] HTTP ↔ MCP parity + wiring — `mcp.test.js` builds the in-process MCP client (`buildMcpSession`), asserts the exact tool set + key action enums, drives every tool's read action so a service missing from the in-process bag is caught (the `Cannot read properties of undefined` class), and confirms the accounts status filter is reachable over MCP.
+- [x] Re-tighten loosened assertions to exact seeded counts — `seed-invariants.test.js`.
+- [x] LLM/external/side-effecting resources (agent, outreach, notes-import, backup, export) smoke-tested at the validation/shape boundary only — no real model / LinkedIn / file calls (`external-smoke.test.js`).
+- **Exit:** ✅ **104/104 green** against the fresh seeded test DB; the null-times regression proven to have teeth (reverting the schema to string-only turns exactly that test red).
 
-### Phase 4 — E2E · effort: **M** (last)
-A thin Playwright layer over the live seeded stack. Reuses the Phase 1 seed for fixtures.
+### Phase 4 — E2E · effort: **M** (last) · ✅ **DONE (2026-06-03)**
+A thin Playwright layer over the live seeded stack. Reuses the Phase 1 seed for fixtures. Assertions are **DOM/role-based** (`getByRole` / `getByText` / `getByPlaceholder` / `getByTestId`, driven with `.click()` / `.fill()`) — the same query style as the Phase 2 component tests, just in a real browser against the real API. **No pixel / visual-regression diffing** (`toHaveScreenshot` is deliberately out of scope — that's the brittle, flaky kind; failure traces/screenshots are kept for debugging only). Where there's no natural role/label to grab, a small `data-testid` was added (only two: AccountPicker + AttendeePicker option rows).
 
-- [ ] Playwright setup + auth handling (Supabase session).
-- [ ] 3–5 critical journeys: login → create meeting (manual) → type notes → save; from-emails flow; account creation; internal-note triage.
-- [ ] Run pre-merge/nightly, not on every push.
-- **Exit:** critical paths covered end-to-end in a real browser.
+- [x] Playwright setup — **no auth/login step needed**: the app has no authentication (every request resolves to the migration-seeded default user, see `api/src/auth.js`), so a test just loads the app and is already "signed in". The suite lives in `e2e/` (own package: `@playwright/test`, Chromium, serial `workers:1`); the GUI is **built and served by the real API on one origin** (`@fastify/static` + SPA fallback in `api/src/index.js`), so there's no Vite/proxy in the loop. Orchestrated by `dev/scripts/run-e2e-tests.js` (build → migrate → boot → seed → playwright → teardown), wrapped locally by `dev/scripts/test-e2e.sh` (the `db-test` tmpfs Postgres) — the same caller-owns-the-DB contract as `run-api-tests.js`.
+- [x] 4 critical journeys: create meeting (manual) → type notes → save (+ an Edit→Save round that re-guards the null-times contract end-to-end); from-emails resolve → create; account creation (+ a validation-block case); internal-note triage (assign-account + keep-internal). Triage fixtures are arranged via the API (`POST /api/meetings {internal,needs_review}`) then driven in the browser. **6 tests / 4 files** (`e2e/tests/*.spec.ts`) + `helpers.ts`.
+- [x] Run pre-merge/nightly, not on every push — `.github/workflows/e2e.yml` runs nightly (cron) + on manual dispatch + on any PR labeled `e2e` (an opt-in pre-merge gate for risky PRs). An unlabeled PR / a bare push never triggers it, so day-to-day PRs stay fast.
+- **Exit:** ✅ **6/6 green** via `npm run test:e2e` (build GUI → fresh seeded test DB → real API+GUI on one origin → Playwright). DOM-level assertions, no screenshots. The manual-meeting Edit→Save journey was proven to have teeth (reverting the meetings PUT `starts_at` to string-only turns exactly that journey red, leaving the other 5 green).
 
-**Dependencies:** Phase 1 unblocks/protects everything → Phase 2 starts immediately after (no new infra) → Phase 3 builds on Phase 1's DB → Phase 4 last (reuses the seed harness).
+**Dependencies:** Phase 1 unblocked/protected everything → Phase 2 followed (no new infra) → Phase 3 built on Phase 1's DB → Phase 4 (E2E) reused the same seed harness. **All four phases shipped.**
 
 ---
 
@@ -179,13 +191,16 @@ A thin Playwright layer over the live seeded stack. Reuses the Phase 1 seed for 
 | FE test stack | Vitest + `@solidjs/testing-library` + jsdom | Vite-native (reuses `vite-plugin-solid`); already used in the sibling `full-automation/browser` project. |
 | Shared form logic | Extracted `lib/unsavedGuard.ts` primitive | Encapsulates the `untrack` footgun once; tested in isolation. |
 | E2E tool | **Playwright** (over Puppeteer/Cypress) | Purpose-built for testing, cross-browser, auto-waiting; free/open (Apache-2.0). |
+| E2E stack under test | **Build the GUI + serve it from the real API on one origin**, against an isolated tmpfs Postgres (the `test:api` harness shape + a `vite build`) | Hermetic, deterministic, prod-like (no Vite/proxy); reuses the Phase 1 seed and the caller-owns-DB orchestration. |
+| E2E CI cadence | **Nightly + manual dispatch + opt-in `e2e` PR label** | Honors "never gate every push" while keeping a pre-merge gate available for risky PRs; real-browser flake stays off day-to-day PRs. |
 
 ---
 
 ## 9. Open questions / TODO
 
 - [x] **CI platform** — ✅ **GitHub Actions** (`.github/workflows/ci.yml`); the repo's origin is on GitHub.
-- [x] **Test DB shape** — ✅ **dedicated isolated Postgres**, not the dev DB: a `test` compose profile (`db-test`, tmpfs, port 55433) locally and an ephemeral `postgres:16` service in CI. **Per-run reset by recreation** (a fresh empty DB each run), not per-test transactions — simplest, and the seed is the deterministic fixture set. Note auth needs no Supabase: `getCurrentUserId` resolves to the migration-seeded default user (`api/src/auth.js`), so the pipeline is just migrate → seed → test.
-- [ ] **Playwright auth** — how to establish a session deterministically (seeded test user + token, or a login step). *(Phase 4. Today auth is stubbed to the default user, so a real session story is only needed once auth lands.)*
-- [ ] **Coverage priorities** — rank components (Phase 2) and resources (Phase 3) by risk before backfilling.
+- [x] **Test DB shape** — ✅ **dedicated isolated Postgres**, not the dev DB: a `test` compose profile (`db-test`, tmpfs, port 55433) locally and an ephemeral `postgres:16` service in CI. **Per-run reset by recreation** (a fresh empty DB each run), not per-test transactions — simplest, and the seed is the deterministic fixture set. Note there's **no authentication** in the app yet — `api/src/auth.js` resolves every request to the migration-seeded default user (a placeholder until real auth lands), so the pipeline is just migrate → seed → test, with no login/session story to stand up.
+- [x] **Playwright auth** — ✅ **N/A for now**: the app has no authentication (every request runs as the migration-seeded default user — `api/src/auth.js`), so E2E needs no login or session handling; Playwright just loads the app. A real session story only becomes a question if/when auth is actually built.
+- [x] **Coverage priorities (Phase 3)** — ✅ resolved by covering every deterministic resource fully (CRUD + validation + invariants) and smoke-testing the LLM/external/side-effecting ones (agent, outreach, notes-import, backup, export) at the validation boundary only. See `external-smoke.test.js`.
 - [ ] **Lint** — add ESLint (`eslint-plugin-solid`) to the static base? (Note: it would *not* have caught the reactivity bug — it targets under-reactivity, not over-subscription.) *(Not in Phase 1; still open.)*
+- [ ] **Cross-browser / mobile-viewport E2E** — the Phase 4 cap is Chromium-desktop only (deliberately thin). Adding a Firefox/WebKit project or a 375px mobile project is a future expansion if a real cross-browser / mobile journey bug warrants it. *(Not in Phase 4.)*
