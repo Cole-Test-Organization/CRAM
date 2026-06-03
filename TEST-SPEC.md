@@ -64,34 +64,49 @@ Two axes, often conflated: **scope** (how much is exercised) and **purpose** (e.
 - **Flush async reactivity** before asserting in FE tests (`await new Promise(r => setTimeout(r, 0))`) — the buggy reset happened asynchronously, so asserting too early would let a broken version pass.
 - **Prove regression tests have teeth.** When adding a regression test, confirm it fails against the pre-fix code (revert the fix, watch it go red), then restore.
 
-### Running tests today
+### Running tests
 
 ```bash
-npm --prefix gui test          # frontend: vitest run (unit + component), hermetic
+# From the repo root (the root runner — landed in Phase 1):
+npm test          # hermetic gate: tsc (gui) + gui vitest. Fast, no DB.
+                  #   ↑ also what the husky pre-push hook and CI's hermetic job run.
+npm run test:api  # API integration: brings up an ISOLATED throwaway Postgres, migrates +
+                  #   seeds it, boots the API, runs api/test, tears it down. Needs Docker.
+                  #   Never touches your dev data. (CI runs the same orchestration.)
+npm run test:all  # both of the above
+
+# Lower-level targets the root scripts fan out to:
+npm --prefix gui test           # frontend: vitest run (unit + component), hermetic
 npm --prefix gui run test:watch
-npm --prefix api test          # backend: node --test, needs the API + DB up (see §6)
+npm --prefix gui run typecheck  # tsc --noEmit
+npm --prefix api test           # backend: node --test against an ALREADY-RUNNING API (API_URL=…)
 ```
 
-A **root runner** (`npm test` at the repo root) that fans out to both is a Phase 1 deliverable.
+`npm test` is intentionally the **hermetic subset** (no DB, safe to run anywhere); the API suite is `npm run test:api` and gates every PR in CI. The orchestration shared by local + CI lives in `dev/scripts/run-api-tests.js` (migrate → boot → seed → test → teardown); `dev/scripts/test-api.sh` wraps it locally with the `db-test` compose service.
 
 ---
 
 ## 5. Current state (as of 2026-06-02)
 
 **Exists:**
-- Frontend harness: `gui/vitest.config.ts` (Solid + jsdom), `gui/vitest.setup.ts` (auto-cleanup). Scripts `test` / `test:watch`.
+- Frontend harness: `gui/vitest.config.ts` (Solid + jsdom), `gui/vitest.setup.ts` (auto-cleanup). Scripts `test` / `test:watch` / `typecheck`.
 - `gui/src/components/FormModals.test.tsx` — 2 component regression tests (notes persist; selected attendee persists).
 - `gui/src/lib/unsavedGuard.ts` + `unsavedGuard.test.ts` — extracted primitive, 3 unit tests (incl. the `untrack`-is-untracked guarantee).
-- `api/test/endpoints.test.js` — 17 tests (mostly smoke GETs) + 2 null-times regression tests. Runs via `node --test` against a live `localhost:3200`.
+- `api/test/endpoints.test.js` — 17 tests (mostly smoke GETs) + 2 null-times regression tests. Runs via `node --test` against a live API (`API_URL`).
 - `tsc --noEmit` passes for `gui`.
 - Seed/reset tooling: `dev/scripts/seed-dev-data.js`, `dev/scripts/clear-db.js`, and a `seed` profile in `docker-compose.yml`.
+- **(Phase 1)** Root runner — `package.json` with `test` (hermetic), `test:api`, `test:all`.
+- **(Phase 1)** CI — `.github/workflows/ci.yml`: a hermetic job (tsc + vitest) and an api-integration job (ephemeral Postgres → migrate → seed → boot → `api/test`), both gating PRs + pushes to `main`.
+- **(Phase 1)** Isolated test DB — `db-test` (tmpfs Postgres, port 55433) under a `test` compose profile; orchestrated by `dev/scripts/run-api-tests.js` (shared by local + CI) and `dev/scripts/test-api.sh`.
+- **(Phase 1)** Husky pre-push hook (`.husky/pre-push`) running the hermetic subset.
 
 **Missing (the gaps this roadmap closes):**
-- ❌ No CI (`.github/workflows` absent), no root test runner, no git hooks — **nothing gates tests**.
-- ❌ API tests are **not hermetic** — they run against whatever data is in the dev DB (this is why a partner test failed: none were seeded).
-- ❌ No dedicated **test database**.
-- ❌ Backend coverage is shallow (smoke GETs); writes, validation, and cross-resource rules are mostly untested across the ~20 route resources.
-- ❌ No E2E.
+- ❌ Backend coverage is shallow (smoke GETs); writes, validation, and cross-resource rules are mostly untested across the ~20 route resources. *(Phase 3 — now builds on the Phase 1 test DB.)*
+- ❌ No E2E. *(Phase 4.)*
+
+**Resolved by Phase 1:** ~~no CI / root runner / git hooks~~; ~~API tests not hermetic~~ (they now run against a fresh, isolated, seeded DB); ~~no dedicated test database~~.
+
+**Resolved by Phase 2:** ~~frontend coverage stops at two regression tests~~ — every stateful component (7 form modals, both pickers, `EditableMarkdown`, `NotesPanel`, `SaveIndicator`, `createSelection`) now has smoke + key-behavior tests, and `unsavedGuard` is wired into the multi-field modals. Frontend suite is **44 tests across 8 files**.
 
 ---
 
@@ -112,24 +127,24 @@ A **root runner** (`npm test` at the repo root) that fans out to both is a Phase
 
 Confirmed shape: **4 phases**, E2E last. Because we chose to **spin up the stack in CI now**, the test-database infrastructure lands in **Phase 1** (not deferred); Phase 3 is then pure backend coverage expansion on top of it.
 
-### Phase 1 — Gate + test database (foundation) · effort: **M**
+### Phase 1 — Gate + test database (foundation) · effort: **M** · ✅ **DONE (2026-06-02)**
 Make the existing suite run as one gated command, and stand up the seeded test DB in CI so API tests gate from day one.
 
-- [ ] Root test runner (root `package.json` or Makefile): one `npm test` → `tsc` + `gui` vitest + `api` tests.
-- [ ] CI workflow (assumed **GitHub Actions** — confirm) on PR/push:
-  - [ ] `tsc` + `gui` vitest (hermetic, fast).
-  - [ ] Stand up Postgres → migrate → seed (`clear-db.js` + `seed-dev-data.js`) → boot API → run `api/test` against the live seeded instance → tear down.
-- [ ] (Optional) pre-push hook (lefthook/husky) running the fast hermetic subset locally.
-- **Exit:** every PR gated; frontend + type layer green in CI; API suite green against a fresh seeded test DB.
+- [x] Root test runner (root `package.json`): `npm test` → `tsc` (gui) + `gui` vitest. **Decision:** `npm test` is the **hermetic** subset; the `api` suite is split into `npm run test:api` (+ CI) rather than folded into `npm test`, so the one-command gate is always fast and safe to run anywhere.
+- [x] CI workflow (**GitHub Actions** — confirmed) on PR/push — `.github/workflows/ci.yml`:
+  - [x] `tsc` + `gui` vitest (hermetic, fast) — the `hermetic` job.
+  - [x] Stand up Postgres → migrate → seed (`seed-dev-data.js`) → boot API → run `api/test` against the live seeded instance → tear down — the `api-integration` job. **Note:** `clear-db.js` isn't needed in the pipeline — each run gets a brand-new empty DB (tmpfs locally / ephemeral service in CI), so there's nothing to clear.
+- [x] Pre-push hook (**husky**) running the fast hermetic subset locally — `.husky/pre-push` runs `npm test`.
+- **Exit:** ✅ every PR gated; frontend + type layer green in CI; API suite green (17/17) against a fresh seeded test DB.
 
-### Phase 2 — Frontend coverage backfill · effort: **M** (incremental)
+### Phase 2 — Frontend coverage backfill · effort: **M** (incremental) · ✅ **DONE (2026-06-02)**
 Apply the `FormModals.test.tsx` pattern to the stateful components. No new infra.
 
-- [ ] Form modals: Account, Contact, Opportunity, Product, Vendor, VendorProduct (input persists, validation, submit calls the right API).
-- [ ] Pickers: `AccountPicker`, `AttendeePicker`.
-- [ ] Other stateful components: `EditableMarkdown`, `NotesPanel`, `SaveIndicator`, `createSelection`.
-- [ ] Wire the `unsavedGuard` into other modals where unsaved-loss matters (guard is already unit-tested).
-- **Exit:** every stateful component has smoke + key-behavior coverage.
+- [x] Form modals: Account, Contact, Opportunity, Product, **ProductCategory**, Vendor, VendorProduct (input persists, validation blocks the API, a valid submit calls the right `api.*` and closes) — all in `FormModals.test.tsx`.
+- [x] Pickers: `AccountPicker` (list / filter / pick → onChange / excludePartner / inline create) and `AttendeePicker` (account-gating, toggle → onChange, chip remove) — colocated `*.test.tsx`.
+- [x] Other stateful components: `EditableMarkdown`, `NotesPanel`, `SaveIndicator`, `createSelection` — colocated `*.test.tsx` / `*.test.ts`.
+- [x] Wired the `unsavedGuard` into the multi-field modals (Account, Contact, Opportunity, Vendor, VendorProduct): confirm-on-dirty-close + a regression test. The trivial Product / ProductCategory modals are intentionally left unguarded.
+- **Exit:** ✅ every stateful component has smoke + key-behavior coverage. Frontend suite: **44 tests / 8 files**, hermetic, green via `npm test` + CI. The reactivity-regression tests were proven to have teeth (a re-subscription probe turns them red).
 
 ### Phase 3 — Backend coverage expansion · effort: **L**
 Deepen `api/test` from smoke GETs to real coverage, against the Phase 1 test DB. Tighten assertions to the known seed.
@@ -169,8 +184,8 @@ A thin Playwright layer over the live seeded stack. Reuses the Phase 1 seed for 
 
 ## 9. Open questions / TODO
 
-- [ ] **CI platform** — assumed GitHub Actions; confirm the host (no CI exists today).
-- [ ] **Test DB shape** — dedicated `crm_test` database vs a `test` docker-compose profile; per-run reset vs per-test transactions.
-- [ ] **Playwright auth** — how to establish a Supabase test session deterministically (seeded test user + token, or a login step).
+- [x] **CI platform** — ✅ **GitHub Actions** (`.github/workflows/ci.yml`); the repo's origin is on GitHub.
+- [x] **Test DB shape** — ✅ **dedicated isolated Postgres**, not the dev DB: a `test` compose profile (`db-test`, tmpfs, port 55433) locally and an ephemeral `postgres:16` service in CI. **Per-run reset by recreation** (a fresh empty DB each run), not per-test transactions — simplest, and the seed is the deterministic fixture set. Note auth needs no Supabase: `getCurrentUserId` resolves to the migration-seeded default user (`api/src/auth.js`), so the pipeline is just migrate → seed → test.
+- [ ] **Playwright auth** — how to establish a session deterministically (seeded test user + token, or a login step). *(Phase 4. Today auth is stubbed to the default user, so a real session story is only needed once auth lands.)*
 - [ ] **Coverage priorities** — rank components (Phase 2) and resources (Phase 3) by risk before backfilling.
-- [ ] **Lint** — add ESLint (`eslint-plugin-solid`) to the static base? (Note: it would *not* have caught the reactivity bug — it targets under-reactivity, not over-subscription.)
+- [ ] **Lint** — add ESLint (`eslint-plugin-solid`) to the static base? (Note: it would *not* have caught the reactivity bug — it targets under-reactivity, not over-subscription.) *(Not in Phase 1; still open.)*

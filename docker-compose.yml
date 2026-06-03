@@ -169,5 +169,34 @@ services:
     restart: "no"
     profiles: ["seed"]
 
+  # ---- Isolated test database (opt-in, used by `npm run test:api`) ----
+  # A throwaway Postgres that exists only for the API integration suite. It is
+  # fully isolated from the dev/prod `db`: its own container, its own host port
+  # (TEST_POSTGRES_PORT, default 55433 — clear of the conventional 5433), and
+  # tmpfs storage (RAM-backed, never
+  # persisted) so every run starts from an empty database. `npm run test:api`
+  # brings it up, the orchestrator migrates + seeds it and runs api/test against
+  # a host-booted API, then the container is removed. CI uses a GitHub Actions
+  # `postgres:16` service for the same role instead of this container.
+  db-test:
+    image: postgres:16-alpine
+    container_name: cram-db-test
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpassword}
+      POSTGRES_DB: ${POSTGRES_DB:-crm}
+    ports:
+      - "127.0.0.1:${TEST_POSTGRES_PORT:-55433}:5432"
+    # RAM-backed data dir: fast, and guaranteed-fresh on every (re)create — there
+    # is no named volume to leak state between runs.
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crm} -d ${POSTGRES_DB:-crm}"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+    profiles: ["test"]
+
 volumes:
   postgres_data:

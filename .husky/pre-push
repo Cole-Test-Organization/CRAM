@@ -1,0 +1,4 @@
+# Hermetic gate before pushing: static (tsc) + frontend (vitest). No DB needed.
+# The API integration suite (npm run test:api) is intentionally NOT here — it
+# needs Docker/Postgres; CI runs it on every PR. See TEST-SPEC.md §4, §7.
+npm test

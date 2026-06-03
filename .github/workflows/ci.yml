@@ -1,0 +1,79 @@
+name: CI
+
+# Gates every PR and every push to main. Two independent jobs run in parallel:
+#   • hermetic        — static (tsc) + frontend component/unit (vitest). No DB.
+#   • api-integration — real Fastify API against a fresh, seeded Postgres.
+# See TEST-SPEC.md §6–7 for the strategy behind this.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same ref cancels the in-flight run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hermetic:
+    name: Static + frontend (tsc + vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+      - run: npm --prefix gui ci
+      - name: Typecheck (tsc --noEmit)
+        run: npm --prefix gui run typecheck
+      - name: Component + unit tests (vitest)
+        run: npm --prefix gui test
+
+  api-integration:
+    name: API integration (live seeded DB)
+    runs-on: ubuntu-latest
+
+    # Ephemeral, throwaway Postgres for this run only — the test database lives
+    # in the pipeline (TEST-SPEC.md §6). Fresh container ⇒ deterministic seed.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: crm
+          POSTGRES_PASSWORD: devpassword
+          POSTGRES_DB: crm
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U crm -d crm"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # The orchestrator boots the API on the runner and points it here.
+      DATABASE_URL: postgres://crm:devpassword@localhost:5432/crm
+      TEST_API_PORT: 3201
+      # outreach (imported by the API) pulls puppeteer; tests never launch a
+      # browser, so skip the ~100MB+ Chromium download at install time.
+      PUPPETEER_SKIP_DOWNLOAD: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            api/package-lock.json
+            outreach/package-lock.json
+      # Boot needs api/ deps (migrate + Fastify) and outreach/ deps (the API
+      # statically imports the outreach service). The orchestrator, seed, and
+      # node --test use only Node built-ins, so nothing else needs installing.
+      - run: npm --prefix api ci
+      - run: npm --prefix outreach ci
+      - name: migrate → boot API → seed → run api/test
+        run: node dev/scripts/run-api-tests.js

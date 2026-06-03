@@ -1,0 +1,18 @@
+{
+  "name": "se-operating-system",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Repo-root test runner + git hooks. Fans out to the gui/ and api/ subpackages; see TEST-SPEC.md.",
+  "scripts": {
+    "typecheck": "npm --prefix gui run typecheck",
+    "test:gui": "npm --prefix gui test",
+    "test": "npm run typecheck && npm run test:gui",
+    "test:api": "bash dev/scripts/test-api.sh",
+    "test:all": "npm test && npm run test:api",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}

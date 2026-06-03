@@ -37,6 +37,15 @@ export function AccountFormModal(props: AccountModalProps) {
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal('');
 
+  // Unsaved-changes guard (warn-only). serialize() snapshots the editable fields;
+  // the shared primitive diffs it against a baseline to confirm-on-close. See
+  // MeetingFormModal for the canonical wiring and the untrack rationale.
+  const serialize = () => JSON.stringify({
+    name: name(), slug: slug(), status: status(), lastContact: lastContact(),
+  });
+  const guard = createUnsavedGuard({ serialize, isOpen: () => props.open });
+  const requestClose = () => { if (saving()) return; guard.guardedClose(props.onClose); };
+
   createEffect(() => {
     if (props.open) {
       const e = props.existing;
@@ -46,6 +55,9 @@ export function AccountFormModal(props: AccountModalProps) {
       setStatus(e?.status === 'partner' ? 'partner' : 'account');
       setLastContact(e?.last_contact || '');
       setError('');
+      // Baseline once populated. rebaseline() bakes in untrack(), so this effect
+      // never subscribes to the form signals (the original reactivity footgun).
+      guard.rebaseline();
     }
   });
 
@@ -72,6 +84,7 @@ export function AccountFormModal(props: AccountModalProps) {
         if (lastContact()) payload.last_contact = lastContact();
         acct = await api.createAccount(payload);
       }
+      guard.rebaseline();
       props.onSaved?.(acct);
       props.onClose();
     } catch (err: any) {
@@ -85,11 +98,11 @@ export function AccountFormModal(props: AccountModalProps) {
   return (
     <Modal
       open={props.open}
-      onClose={props.onClose}
+      onClose={requestClose}
       title={props.existing ? 'Edit Account' : 'New Account'}
       footer={
         <>
-          <button class={modalBtn.secondary} onClick={props.onClose} disabled={saving()}>Cancel</button>
+          <button class={modalBtn.secondary} onClick={requestClose} disabled={saving()}>Cancel</button>
           <button class={modalBtn.primary} onClick={submit} disabled={saving()}>
             {saving() ? 'Saving...' : (props.existing ? 'Save' : 'Create')}
           </button>
@@ -167,6 +180,14 @@ export function ContactFormModal(props: ContactModalProps) {
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal('');
 
+  const serialize = () => JSON.stringify({
+    accountId: account()?.id ?? null,
+    fullName: fullName(), title: title(), email: email(),
+    phone: phone(), linkedin: linkedin(), notes: notes(),
+  });
+  const guard = createUnsavedGuard({ serialize, isOpen: () => props.open });
+  const requestClose = () => { if (saving()) return; guard.guardedClose(props.onClose); };
+
   createEffect(() => {
     if (props.open) {
       const e = props.existing;
@@ -182,6 +203,7 @@ export function ContactFormModal(props: ContactModalProps) {
       } else {
         setAccount(null);
       }
+      guard.rebaseline();
     }
   });
 
@@ -205,6 +227,7 @@ export function ContactFormModal(props: ContactModalProps) {
       } else {
         contact = await api.createContact(account()!.id, payload);
       }
+      guard.rebaseline();
       props.onSaved?.(contact);
       props.onClose();
     } catch (err: any) {
@@ -217,11 +240,11 @@ export function ContactFormModal(props: ContactModalProps) {
   return (
     <Modal
       open={props.open}
-      onClose={props.onClose}
+      onClose={requestClose}
       title={props.existing ? 'Edit Contact' : 'New Contact'}
       footer={
         <>
-          <button class={modalBtn.secondary} onClick={props.onClose} disabled={saving()}>Cancel</button>
+          <button class={modalBtn.secondary} onClick={requestClose} disabled={saving()}>Cancel</button>
           <button class={modalBtn.primary} onClick={submit} disabled={saving()}>
             {saving() ? 'Saving...' : (props.existing ? 'Save' : 'Create')}
           </button>
@@ -904,6 +927,14 @@ export function OpportunityFormModal(props: OpportunityModalProps) {
     return res.products;
   });
 
+  const serialize = () => JSON.stringify({
+    accountId: account()?.id ?? null,
+    name: name(), stage: stage(), oppLink: oppLink(), trrLink: trrLink(),
+    techValLink: techValLink(), notes: notes(), productIds: productIds(),
+  });
+  const guard = createUnsavedGuard({ serialize, isOpen: () => props.open });
+  const requestClose = () => { if (saving()) return; guard.guardedClose(props.onClose); };
+
   createEffect(() => {
     if (props.open) {
       const e = props.existing;
@@ -922,6 +953,7 @@ export function OpportunityFormModal(props: OpportunityModalProps) {
       } else {
         setAccount(null);
       }
+      guard.rebaseline();
     }
   });
 
@@ -952,6 +984,7 @@ export function OpportunityFormModal(props: OpportunityModalProps) {
         payload.account_id = account()!.id;
         opp = await api.createOpportunity(payload);
       }
+      guard.rebaseline();
       props.onSaved?.(opp);
       props.onClose();
     } catch (err: any) {
@@ -964,12 +997,12 @@ export function OpportunityFormModal(props: OpportunityModalProps) {
   return (
     <Modal
       open={props.open}
-      onClose={props.onClose}
+      onClose={requestClose}
       title={props.existing ? 'Edit Opportunity' : 'New Opportunity'}
       size="lg"
       footer={
         <>
-          <button class={modalBtn.secondary} onClick={props.onClose} disabled={saving()}>Cancel</button>
+          <button class={modalBtn.secondary} onClick={requestClose} disabled={saving()}>Cancel</button>
           <button class={modalBtn.primary} onClick={submit} disabled={saving()}>
             {saving() ? 'Saving...' : (props.existing ? 'Save' : 'Create')}
           </button>
@@ -1224,6 +1257,12 @@ export function VendorFormModal(props: VendorModalProps) {
   const [saving, setSaving] = createSignal(false);
   const [error, setError] = createSignal('');
 
+  const serialize = () => JSON.stringify({
+    name: name(), slug: slug(), website: website(), notes: notes(), needsReview: needsReview(),
+  });
+  const guard = createUnsavedGuard({ serialize, isOpen: () => props.open });
+  const requestClose = () => { if (saving()) return; guard.guardedClose(props.onClose); };
+
   createEffect(() => {
     if (props.open) {
       const e = props.existing;
@@ -1237,6 +1276,7 @@ export function VendorFormModal(props: VendorModalProps) {
       // sets it true. Existing rows keep their flag.
       setNeedsReview(e ? !!e.needs_review : false);
       setError('');
+      guard.rebaseline();
     }
   });
 
@@ -1271,6 +1311,7 @@ export function VendorFormModal(props: VendorModalProps) {
           vendor = result.vendor;
         }
       }
+      guard.rebaseline();
       props.onSaved?.(vendor);
       props.onClose();
     } catch (err: any) {
@@ -1284,11 +1325,11 @@ export function VendorFormModal(props: VendorModalProps) {
   return (
     <Modal
       open={props.open}
-      onClose={props.onClose}
+      onClose={requestClose}
       title={props.existing ? 'Edit Vendor' : 'New Vendor'}
       footer={
         <>
-          <button class={modalBtn.secondary} onClick={props.onClose} disabled={saving()}>Cancel</button>
+          <button class={modalBtn.secondary} onClick={requestClose} disabled={saving()}>Cancel</button>
           <button class={modalBtn.primary} onClick={submit} disabled={saving()}>
             {saving() ? 'Saving...' : (props.existing ? 'Save' : 'Create')}
           </button>
@@ -1380,6 +1421,13 @@ export function VendorProductFormModal(props: VendorProductModalProps) {
     return res.vendors;
   });
 
+  const serialize = () => JSON.stringify({
+    vendorMode: vendorMode(), vendorId: vendorId(), vendorName: vendorName(),
+    name: name(), slug: slug(), category: category(), notes: notes(), needsReview: needsReview(),
+  });
+  const guard = createUnsavedGuard({ serialize, isOpen: () => props.open });
+  const requestClose = () => { if (saving()) return; guard.guardedClose(props.onClose); };
+
   createEffect(() => {
     if (props.open) {
       const e = props.existing;
@@ -1393,6 +1441,7 @@ export function VendorProductFormModal(props: VendorProductModalProps) {
       setNotes(e?.notes || '');
       setNeedsReview(e ? !!e.needs_review : false);
       setError('');
+      guard.rebaseline();
     }
   });
 
@@ -1434,6 +1483,7 @@ export function VendorProductFormModal(props: VendorProductModalProps) {
           product = result.product;
         }
       }
+      guard.rebaseline();
       props.onSaved?.(product);
       props.onClose();
     } catch (err: any) {
@@ -1447,11 +1497,11 @@ export function VendorProductFormModal(props: VendorProductModalProps) {
   return (
     <Modal
       open={props.open}
-      onClose={props.onClose}
+      onClose={requestClose}
       title={props.existing ? 'Edit Vendor Product' : 'New Vendor Product'}
       footer={
         <>
-          <button class={modalBtn.secondary} onClick={props.onClose} disabled={saving()}>Cancel</button>
+          <button class={modalBtn.secondary} onClick={requestClose} disabled={saving()}>Cancel</button>
           <button class={modalBtn.primary} onClick={submit} disabled={saving()}>
             {saving() ? 'Saving...' : (props.existing ? 'Save' : 'Create')}
           </button>

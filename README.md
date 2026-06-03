@@ -150,6 +150,16 @@ Once running:
 - **API docs (Swagger UI)**: `http://<host>:3200/docs`
 - **MCP endpoint** — point Claude Desktop, Cursor, or any other MCP client at `http://<host>:3100/mcp`. The server delivers its full workflow doc and tool schemas on connect.
 
+## Testing
+
+```bash
+npm test          # hermetic gate: tsc (gui) + gui vitest — fast, no DB
+npm run test:api  # API integration vs a fresh, isolated, seeded Postgres (needs Docker)
+npm run test:all  # both
+```
+
+`npm test` runs on every push via a husky pre-push hook, and GitHub Actions runs both layers on every PR (`.github/workflows/ci.yml`). `npm run test:api` spins up a throwaway `db-test` Postgres, migrates + seeds it, boots the API, runs the suite, and tears it down — your dev data is never touched. See **[TEST-SPEC.md](TEST-SPEC.md)** for the full strategy and roadmap.
+
 ## License
 
 See [LICENSE](LICENSE).
