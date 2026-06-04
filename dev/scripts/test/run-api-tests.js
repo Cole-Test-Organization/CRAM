@@ -8,7 +8,7 @@
 // destroy). This script never provisions or wipes a database itself, so the exact
 // same orchestration runs in both places:
 //
-//   • Local : `npm run test:api` → dev/scripts/test-api.sh brings up the `db-test`
+//   • Local : `npm run test:api` → dev/scripts/test/test-api.sh brings up the `db-test`
 //             compose service (throwaway tmpfs Postgres on :55433), then runs this.
 //   • CI    : .github/workflows/ci.yml starts a `postgres:16` service on :5432,
 //             then runs this.
@@ -32,7 +32,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, '..', '..');
+const repoRoot = path.resolve(__dirname, '..', '..', '..');
 const apiDir = path.join(repoRoot, 'api');
 const seedScript = path.join(repoRoot, 'dev', 'scripts', 'seed-dev-data.js');
 

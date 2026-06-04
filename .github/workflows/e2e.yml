@@ -77,7 +77,7 @@ jobs:
       # Chromium + its OS libraries on the runner.
       - run: ./e2e/node_modules/.bin/playwright install --with-deps chromium
       - name: build GUI → migrate → boot API → seed → playwright
-        run: node dev/scripts/run-e2e-tests.js
+        run: node dev/scripts/test/run-e2e-tests.js
       # Always upload the HTML report (incl. failure traces/screenshots) so a red
       # run is debuggable from the Actions UI.
       - name: Upload Playwright report

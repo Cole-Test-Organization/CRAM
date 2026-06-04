@@ -12,7 +12,7 @@ is deliberately out of scope; failure traces/screenshots are kept only for debug
 npm run test:e2e
 ```
 
-That fans out to `dev/scripts/test-e2e.sh` → `dev/scripts/run-e2e-tests.js`, which:
+That fans out to `dev/scripts/test/test-e2e.sh` → `dev/scripts/test/run-e2e-tests.js`, which:
 
 1. **builds** the GUI (`vite build` → `api/public`),
 2. brings up an **isolated tmpfs Postgres** (`db-test`, :55433) and **migrates** it,

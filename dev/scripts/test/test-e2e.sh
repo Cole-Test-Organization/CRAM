@@ -9,7 +9,7 @@
 # build→migrate→boot→seed→playwright orchestration against it, then removes it.
 # Your dev database is never touched.
 #
-# CI does the identical orchestration (dev/scripts/run-e2e-tests.js) against a
+# CI does the identical orchestration (dev/scripts/test/run-e2e-tests.js) against a
 # GitHub Actions `postgres:16` service instead of this compose container.
 #
 # Requires Docker + Node. The host builds the GUI and boots the API directly, so
@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")/../.."   # repo root
+cd "$(dirname "$0")/../../.."   # repo root
 
 TEST_PG_PORT="${TEST_POSTGRES_PORT:-55433}"
 export DATABASE_URL="postgres://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-devpassword}@127.0.0.1:${TEST_PG_PORT}/${POSTGRES_DB:-crm}"
@@ -52,4 +52,4 @@ echo "▸ starting isolated test Postgres (db-test) on :${TEST_PG_PORT}…"
 # seed never trips its "refuse to seed on top of existing data" guard.
 docker compose --profile test up -d --wait --force-recreate db-test
 
-node dev/scripts/run-e2e-tests.js
+node dev/scripts/test/run-e2e-tests.js

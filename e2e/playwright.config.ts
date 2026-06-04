@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// The app under test is stood up and torn down by dev/scripts/run-e2e-tests.js
+// The app under test is stood up and torn down by dev/scripts/test/run-e2e-tests.js
 // (build GUI → migrate → seed → boot the REAL Fastify API serving the GUI + /api
 // on ONE origin). Playwright therefore does NOT own a `webServer` here — it just
 // drives the already-running, seeded stack at BASE_URL. See TEST-SPEC.md §6–7.

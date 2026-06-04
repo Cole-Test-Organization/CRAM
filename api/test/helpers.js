@@ -2,7 +2,7 @@
 //
 // Every test file imports from here. The suite runs SERIALLY
 // (`node --test --test-concurrency=1`) against ONE live, seeded API booted by
-// dev/scripts/run-api-tests.js. There is no per-test DB reset, so any test that
+// dev/scripts/test/run-api-tests.js. There is no per-test DB reset, so any test that
 // writes MUST clean up after itself — name throwaway rows with a `zzz-test-`
 // prefix (uniqueSlug/uniqueEmail/uniqueName) and register deleteAfter(t, …) so
 // the seeded counts in seed-invariants.test.js stay exact.

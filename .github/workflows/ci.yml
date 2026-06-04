@@ -76,4 +76,4 @@ jobs:
       - run: npm --prefix api ci
       - run: npm --prefix outreach ci
       - name: migrate → boot API → seed → run api/test
-        run: node dev/scripts/run-api-tests.js
+        run: node dev/scripts/test/run-api-tests.js

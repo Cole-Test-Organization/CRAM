@@ -10,7 +10,7 @@
 // provisions or wipes a database itself, so the identical orchestration runs in
 // both places:
 //
-//   • Local : `npm run test:e2e` → dev/scripts/test-e2e.sh brings up the
+//   • Local : `npm run test:e2e` → dev/scripts/test/test-e2e.sh brings up the
 //             `db-test` compose service (throwaway tmpfs Postgres on :55433),
 //             then runs this.
 //   • CI    : .github/workflows/e2e.yml starts a `postgres:16` service on :5432,
@@ -36,7 +36,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(__dirname, '..', '..');
+const repoRoot = path.resolve(__dirname, '..', '..', '..');
 const apiDir = path.join(repoRoot, 'api');
 const guiDir = path.join(repoRoot, 'gui');
 const e2eDir = path.join(repoRoot, 'e2e');

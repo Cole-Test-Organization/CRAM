@@ -8,7 +8,7 @@
 # container, port, and storage from your dev `db`), runs the migrate→boot→seed→test
 # orchestration against it, then removes it. Your dev database is never touched.
 #
-# CI does the identical orchestration (dev/scripts/run-api-tests.js) against a
+# CI does the identical orchestration (dev/scripts/test/run-api-tests.js) against a
 # GitHub Actions `postgres:16` service instead of this compose container.
 #
 # Requires Docker + Node. The host boots the API directly, so it installs api/
@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")/../.."   # repo root
+cd "$(dirname "$0")/../../.."   # repo root
 
 TEST_PG_PORT="${TEST_POSTGRES_PORT:-55433}"
 export DATABASE_URL="postgres://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-devpassword}@127.0.0.1:${TEST_PG_PORT}/${POSTGRES_DB:-crm}"
@@ -45,4 +45,4 @@ echo "▸ starting isolated test Postgres (db-test) on :${TEST_PG_PORT}…"
 # seed never trips its "refuse to seed on top of existing data" guard.
 docker compose --profile test up -d --wait --force-recreate db-test
 
-node dev/scripts/run-api-tests.js
+node dev/scripts/test/run-api-tests.js

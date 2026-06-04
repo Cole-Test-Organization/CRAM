@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Playwright E2E suite (Phase 4) — drives the real GUI against a live, seeded API on one origin. Orchestrated by dev/scripts/run-e2e-tests.js. See ../TEST-SPEC.md §6–7.",
+  "description": "Playwright E2E suite (Phase 4) — drives the real GUI against a live, seeded API on one origin. Orchestrated by dev/scripts/test/run-e2e-tests.js. See ../TEST-SPEC.md §6–7.",
   "scripts": {
     "test": "playwright test",
     "test:headed": "playwright test --headed",
