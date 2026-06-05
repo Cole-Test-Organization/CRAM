@@ -134,7 +134,6 @@ export default function Layout(props: ParentProps) {
                     {link("/events", "Events")}
                     {link("/agent", "Agent")}
                     {link("/import-export", "Import / Export")}
-                    {link("/import-notes", "Import Notes")}
                     {link("/settings", "Settings")}
                 </nav>
             </aside>

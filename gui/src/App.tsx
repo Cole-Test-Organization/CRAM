@@ -1,4 +1,4 @@
-import { Router, Route } from '@solidjs/router';
+import { Router, Route, Navigate } from '@solidjs/router';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import AccountList from './pages/AccountList';
@@ -14,7 +14,6 @@ import OpportunityDetail from './pages/OpportunityDetail';
 import Products from './pages/Products';
 import Agent from './pages/Agent';
 import ImportExport from './pages/ImportExport';
-import NotesImport from './pages/NotesImport';
 import Settings from './pages/Settings';
 
 export default function App() {
@@ -35,7 +34,7 @@ export default function App() {
       <Route path="/products" component={Products} />
       <Route path="/agent" component={Agent} />
       <Route path="/import-export" component={ImportExport} />
-      <Route path="/import-notes" component={NotesImport} />
+      <Route path="/import-notes" component={() => <Navigate href="/import-export" />} />
       <Route path="/settings" component={Settings} />
     </Router>
   );

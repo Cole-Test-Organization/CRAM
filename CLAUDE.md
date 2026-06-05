@@ -124,6 +124,27 @@ docker compose --profile prod up -d --build
 
 Skipping the env check is not a judgment call. The cost of `cat .env | grep LOG_ENV_LABEL` is trivial; the cost of running a prod rebuild on a dev host (or vice versa) is hours of phantom debugging.
 
+### Run the test suite after every change — MANDATORY
+
+After **any** code change, run the **entire test suite except end-to-end** from the repo root before treating the work as done:
+
+```bash
+npm run test:all
+```
+
+`test:all` is `npm test && npm run test:api` — the two non-e2e layers:
+
+- **`npm test`** — the hermetic gate: `tsc --noEmit` (gui) + gui Vitest (unit + component). Fast, no Docker. This is exactly what the `.husky/pre-push` hook runs.
+- **`npm run test:api`** — the backend integration suite: spins up an **isolated throwaway Postgres** (the `db-test` tmpfs container on :55433 — never your dev/prod data), then migrates → seeds → boots the API → runs `api/test` → tears it down. **Needs Docker.**
+
+This is deliberately **stricter than the pre-push hook** (which runs only the hermetic subset to stay fast on push): local work also runs the API suite, because that's where backend contract/validation regressions live.
+
+**The end-to-end suite (`npm run test:e2e`) is excluded** — it builds the GUI and drives a real browser (Playwright) and is reserved for nightly / on-demand / `e2e`-labeled-PR runs (see [TEST-SPEC.md](TEST-SPEC.md) §7). Never run it as a per-change gate.
+
+**If Docker isn't running**, `test:api` fails immediately (`Cannot connect to the Docker daemon`). In that case run the hermetic `npm test` and **explicitly report that the API integration suite was skipped because Docker was unavailable** — don't silently drop it or claim the full suite passed. Offer to re-run `npm run test:all` once Docker is up.
+
+See [TEST-SPEC.md](TEST-SPEC.md) for the full layer taxonomy (static → unit → component → API integration → e2e) and what each layer catches.
+
 ## Modules
 
 - **Outreach** — `outreach/` → @outreach/CLAUDE.md — LinkedIn + web enrichment, exposed via the async `/api/outreach/enrich` endpoint and `outreach` MCP tool

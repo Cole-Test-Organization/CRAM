@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show } from 'solid-js';
 import { api } from '../lib/api';
 import Button from '../components/Button';
+import NotesImportPanel from '../components/NotesImportPanel';
 
 type ImportResult = {
   imported_at: string;
@@ -92,6 +93,16 @@ export default function ImportExport() {
         <h1 class="text-[26px] font-bold font-[family-name:var(--font-display)]">Import / Export</h1>
       </div>
 
+      {/* === NOTES === */}
+      <section class="mb-10">
+        <h2 class="text-[18px] font-bold uppercase tracking-widest text-surf-300 mb-4 pb-2 border-b-2 border-base-600 font-[family-name:var(--font-display)]">Notes</h2>
+        <NotesImportPanel />
+      </section>
+
+      {/* === ACCOUNT BUNDLES === */}
+      <section>
+      <h2 class="text-[18px] font-bold uppercase tracking-widest text-surf-300 mb-4 pb-2 border-b-2 border-base-600 font-[family-name:var(--font-display)]">Account bundles</h2>
+
       <p class="text-base-300 text-[13px] mb-6">
         Portable JSON bundles for moving accounts between tenants. Each bundle carries the account record, its
         technical profile, contacts, meetings, opportunities, and linked partner shells (partner record + partner
@@ -101,7 +112,7 @@ export default function ImportExport() {
       <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
         {/* === EXPORT === */}
         <div class="panel panel-accent p-5">
-          <h2 class="text-[15px] font-bold uppercase tracking-widest text-surf-300 mb-4 font-[family-name:var(--font-display)]">Export</h2>
+          <h3 class="text-[15px] font-bold uppercase tracking-widest text-surf-300 mb-4 font-[family-name:var(--font-display)]">Export</h3>
 
           <div class="flex items-center bg-base-950 border-2 border-base-500 px-3 py-2 gap-2 mb-3 focus-within:border-surf-300 transition-colors">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-surf-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -148,7 +159,7 @@ export default function ImportExport() {
 
         {/* === IMPORT === */}
         <div class="panel panel-accent p-5">
-          <h2 class="text-[15px] font-bold uppercase tracking-widest text-surf-300 mb-4 font-[family-name:var(--font-display)]">Import</h2>
+          <h3 class="text-[15px] font-bold uppercase tracking-widest text-surf-300 mb-4 font-[family-name:var(--font-display)]">Import</h3>
 
           <p class="text-base-300 text-[12px] mb-4">
             Pick a bundle JSON file exported from this app. Accounts are matched by slug; contacts by email;
@@ -224,6 +235,7 @@ export default function ImportExport() {
           </Show>
         </div>
       </div>
+      </section>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { createSignal, onCleanup, Show, For } from 'solid-js';
 import { A } from '@solidjs/router';
 import { api, type NotesImportJob, type NotesImportResult, type NotesImportOutcome } from '../lib/api';
-import Button from '../components/Button';
+import Button from './Button';
 
 // Text extensions we'll read from a chosen folder. Mirrors the server-side zip
 // filter — binaries, images, PDFs, and dotfiles are skipped client-side so we
@@ -37,7 +37,7 @@ function parkedReason(reason?: string | null) {
   }
 }
 
-export default function NotesImport() {
+export default function NotesImportPanel() {
   // idle → reading (folder) → submitting → tracking (polling the job)
   const [phase, setPhase] = createSignal<'idle' | 'reading' | 'submitting' | 'tracking'>('idle');
   const [job, setJob] = createSignal<NotesImportJob | null>(null);
@@ -154,10 +154,6 @@ export default function NotesImport() {
 
   return (
     <div>
-      <div class="flex flex-col gap-3 mb-6 md:flex-row md:justify-between md:items-center">
-        <h1 class="text-[26px] font-bold font-[family-name:var(--font-display)]">Import Notes</h1>
-      </div>
-
       <p class="text-base-300 text-[13px] mb-6 max-w-3xl">
         Drop in a folder of notes (Obsidian, Apple/Google Notes, a folder of call summaries) or a <code>.zip</code>.
         Each file is read by your local model — one at a time — to pull out the date, title, company, and attendees,
@@ -169,7 +165,7 @@ export default function NotesImport() {
       <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
         {/* === FOLDER === */}
         <div class="panel panel-accent p-5">
-          <h2 class="text-[15px] font-bold uppercase tracking-widest text-surf-300 mb-3 font-[family-name:var(--font-display)]">Import a folder</h2>
+          <h3 class="text-[15px] font-bold uppercase tracking-widest text-surf-300 mb-3 font-[family-name:var(--font-display)]">Import a folder</h3>
           <p class="text-base-300 text-[12px] mb-4">
             Pick a directory. Text notes (.md, .txt, .org, .rst) are read in your browser and sent up; everything else
             is ignored. Nothing leaves your machine except the note text.
@@ -200,7 +196,7 @@ export default function NotesImport() {
 
         {/* === ZIP === */}
         <div class="panel panel-accent p-5">
-          <h2 class="text-[15px] font-bold uppercase tracking-widest text-surf-300 mb-3 font-[family-name:var(--font-display)]">Import a .zip</h2>
+          <h3 class="text-[15px] font-bold uppercase tracking-widest text-surf-300 mb-3 font-[family-name:var(--font-display)]">Import a .zip</h3>
           <p class="text-base-300 text-[12px] mb-4">
             Upload a zipped notes folder. The server unpacks the text entries (binaries, images, and
             <code> __MACOSX</code> junk are ignored) and runs the same pipeline.
