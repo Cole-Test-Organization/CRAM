@@ -1,4 +1,4 @@
-import { createSignal, createResource, For, Show } from 'solid-js';
+import { createSignal, createResource, For, Index, Show } from 'solid-js';
 import { A } from '@solidjs/router';
 import { api } from '../../lib/api';
 import type { createAutoSave } from '../../lib/editing';
@@ -148,28 +148,38 @@ export default function OverviewPanel(props: Props) {
             onClick={() => setLocalDomains([...localDomains(), ''])}
           >+ Add</Button>
         </div>
-        <For each={localDomains()} fallback={<span class="text-base-300 text-[13px]">No domains. Click + Add to associate email/web domains with this account.</span>}>
-          {(d: string, i) => (
+        {/* Index, not For: each row binds an <input> straight to a primitive
+            string, and For keys by value identity — so every keystroke (''→'a'→
+            'ac'…) looked like a brand-new item and Solid tore down & recreated
+            the <input>, dropping focus after one character. Index keys by
+            position, keeping the DOM node stable while only the value updates. */}
+        {/* Index, not For: each row binds an <input> straight to a primitive
+            string, and For keys by value identity — so every keystroke (''→'a'→
+            'ac'…) looked like a brand-new item and Solid tore down & recreated
+            the <input>, dropping focus after one character. Index keys by
+            position, keeping the DOM node stable while only the value updates. */}
+        <Index each={localDomains()} fallback={<span class="text-base-300 text-[13px]">No domains. Click + Add to associate email/web domains with this account.</span>}>
+          {(d, i) => (
             <div class="flex gap-2 items-center mt-2">
               <input
                 class={`${fieldClass} flex-1`}
                 placeholder="acme.com"
-                value={d}
+                value={d()}
                 onInput={(e) => {
                   const updated = [...localDomains()];
-                  updated[i()] = e.currentTarget.value;
+                  updated[i] = e.currentTarget.value;
                   setLocalDomains(updated);
                 }}
                 onBlur={() => saver.saveNow({ domains: localDomains() })}
               />
               <button class={btnX} onClick={() => {
-                const updated = localDomains().filter((_, j: number) => j !== i());
+                const updated = localDomains().filter((_, j: number) => j !== i);
                 setLocalDomains(updated);
                 saver.saveNow({ domains: updated });
               }}>×</button>
             </div>
           )}
-        </For>
+        </Index>
       </div>
 
       <div class="panel panel-accent p-5 mt-4">
