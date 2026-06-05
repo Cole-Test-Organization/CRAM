@@ -34,6 +34,7 @@ import { ContactEnrichmentService } from '../services/contacts/contact-enrichmen
 import { InternalDomainsService } from '../services/internal-domains/internal-domains.js';
 import { AgentSettingsService } from '../services/agent/agent-settings.js';
 import { MemoriesService } from '../services/memories/memories.js';
+import { ThreadsService } from '../services/threads/threads.js';
 
 import { registerTools } from '../mcp/tools.js';
 import { buildAgentMarkdown } from '../instructions.js';
@@ -91,6 +92,7 @@ export async function buildMcpSession({ userId } = {}) {
     internalDomainsService,
     agentSettingsService,
     memoriesService,
+    threadsService: new ThreadsService(),
   };
 
   // Until per-session auth lands, every call resolves to the default user —
@@ -128,5 +130,8 @@ export async function buildMcpSession({ userId } = {}) {
   const client = new Client({ name: 'crm-agent', version: '2.0.0' });
   await client.connect(clientTransport);
 
-  return { client, server, instructions };
+  // `services` is returned so callers (the agent loop's @-mention resolver) can
+  // reuse these exact, dependency-wired instances instead of re-instantiating —
+  // same RLS, same construction order.
+  return { client, server, instructions, services };
 }

@@ -1,6 +1,7 @@
 import { createResource, For, Show } from 'solid-js';
 import { api } from '../../lib/api';
 import type { VendorHeatmapBucket, VendorHeatmapCellProduct } from '../../lib/types';
+import { vendorProductLabel, vendorIsRedundant } from '../../lib/vendorProduct';
 
 // Vendor slugs to highlight on the grid. PANW is the primary one — the whole
 // point is "where is Palo Alto in this customer's stack?" — but the same lane
@@ -27,13 +28,15 @@ function ProductChip(props: { product: VendorHeatmapCellProduct }) {
           ? 'bg-surf-900 border-surf-500 text-surf-50'
           : 'bg-base-950 border-base-600 text-base-50'
       }`}
-      title={`${props.product.vendor_name} — ${props.product.name}`}
+      title={vendorProductLabel(props.product)}
     >
-      <div class={`text-[9px] uppercase tracking-wider font-bold ${
-        highlighted() ? 'text-surf-200' : 'text-base-300'
-      }`}>
-        {props.product.vendor_name}
-      </div>
+      <Show when={!vendorIsRedundant(props.product)}>
+        <div class={`text-[9px] uppercase tracking-wider font-bold ${
+          highlighted() ? 'text-surf-200' : 'text-base-300'
+        }`}>
+          {props.product.vendor_name}
+        </div>
+      </Show>
       <div class="text-[11px] font-semibold mt-0.5">{props.product.name}</div>
     </div>
   );

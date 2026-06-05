@@ -204,7 +204,6 @@ export default async function accountRoutes(fastify, { accountsService }) {
           status: { type: 'string', description: 'Either "account" (default — companies you sell to) or "partner" (channel partners you sell with).' },
           last_contact: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'Last contact date (YYYY-MM-DD)' },
           relationship_summary: { type: 'string', description: 'Summary of the relationship' },
-          open_threads: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, done: { type: 'boolean', default: false } } }, description: 'Open action items and follow-ups' },
           active_deals: { type: 'string', description: 'Active deals markdown (for partner accounts)' },
           domains: { type: 'array', items: { type: 'string' }, description: 'List of domains associated with this account (e.g., ["acme.com", "acme-ventures.com"]). Normalized to lowercase; protocol and www. stripped. Used for lookup when only an email/domain is known.' },
           favorite: { type: 'boolean', description: 'Per-user favorite flag — pinned rows sort to the top of /api/accounts listings.' },
@@ -244,9 +243,7 @@ export default async function accountRoutes(fastify, { accountsService }) {
           name: { type: 'string' },
           status: { type: 'string' },
           last_contact: { type: 'string' },
-          relationship_summary: { type: 'string' },
-          open_threads: { type: 'array', items: { type: 'object' } },
-          active_deals: { type: 'string' },
+          relationship_summary: { type: 'string' },          active_deals: { type: 'string' },
           domains: { type: 'array', items: { type: 'string' } },
           favorite: { type: 'boolean' },
         },
@@ -264,7 +261,7 @@ export default async function accountRoutes(fastify, { accountsService }) {
   // Partial update (merge)
   fastify.patch('/accounts/:id', {
     schema: {
-      description: 'Partial update. Only provided fields are updated. Open threads and domains are fully replaced. Technical environment (firewalls, EDRs, employee count, …) lives on the separate /accounts/:id/details endpoint — do not pass it here. Manage partners via /accounts/:id/partners; manage the supporting team by linking kind=internal contacts to the account (they come back in the account\'s `team` array, not as an account field).',
+      description: 'Partial update. Only provided fields are updated. Domains are fully replaced. Technical environment (firewalls, EDRs, employee count, …) lives on the separate /accounts/:id/details endpoint — do not pass it here. Manage partners via /accounts/:id/partners; manage the supporting team by linking kind=internal contacts to the account (they come back in the account\'s `team` array, not as an account field).',
       tags: ['accounts'],
       params: { type: 'object', properties: { id: { type: 'integer' } } },
       body: {
@@ -274,9 +271,7 @@ export default async function accountRoutes(fastify, { accountsService }) {
           name: { type: 'string' },
           status: { type: 'string' },
           last_contact: { type: 'string' },
-          relationship_summary: { type: 'string' },
-          open_threads: { type: 'array', items: { type: 'object' } },
-          active_deals: { type: 'string' },
+          relationship_summary: { type: 'string' },          active_deals: { type: 'string' },
           domains: { type: 'array', items: { type: 'string' }, description: 'Full replace on PATCH. Send the complete list of domains.' },
           favorite: { type: 'boolean', description: 'Per-user favorite flag — pinned rows sort to the top of /api/accounts listings.' },
           needs_review: { type: 'boolean', description: 'Review flag. Set false to clear it after verifying an auto-created account (triage).' },

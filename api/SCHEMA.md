@@ -4,8 +4,8 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-06-01T15:47:19.272Z
-- **Tables:** 23
+- **Generated:** 2026-06-05T01:40:48.784Z
+- **Tables:** 26
 - **Enums:** 0
 - **Views:** 0
 
@@ -30,7 +30,10 @@
 - [`opportunities`](#opportunities)
 - [`product_categories`](#product_categories)
 - [`products`](#products)
+- [`tasks`](#tasks)
 - [`themes`](#themes)
+- [`thread_contacts`](#thread_contacts)
+- [`threads`](#threads)
 - [`user_agent_settings`](#user_agent_settings)
 - [`user_internal_domains`](#user_internal_domains)
 - [`user_memories`](#user_memories)
@@ -192,15 +195,14 @@
 | `status` | `text` | YES | — |  |
 | `last_contact` | `date` | YES | — |  |
 | `relationship_summary` | `text` | YES | — |  |
-| `open_threads` | `jsonb` | YES | — |  |
 | `active_deals` | `text` | YES | — |  |
 | `created_at` | `timestamp with time zone` | NO | `now()` |  |
 | `updated_at` | `timestamp with time zone` | NO | `now()` |  |
 | `user_id` | `bigint` | NO | — |  |
 | `domains` | `jsonb` | NO | `'[]'::jsonb` |  |
-| `search_vector` | `tsvector` | YES | `to_tsvector('english'::regconfig, ((((((((((COALESCE(slug, ''::text) \|\| ' '::text) \|\| COALESCE(name, ''::text)) \|\| ' '::text) \|\| COALESCE(status, ''::text)) \|\| ' '::text) \|\| COALESCE(relationship_summary, ''::text)) \|\| ' '::text) \|\| COALESCE((open_threads)::text, ''::text)) \|\| ' '::text) \|\| COALESCE((domains)::text, ''::text)))` |  |
 | `favorite` | `boolean` | NO | `false` |  |
 | `needs_review` | `boolean` | NO | `false` |  |
+| `search_vector` | `tsvector` | YES | `to_tsvector('english'::regconfig, ((((((((COALESCE(slug, ''::text) \|\| ' '::text) \|\| COALESCE(name, ''::text)) \|\| ' '::text) \|\| COALESCE(status, ''::text)) \|\| ' '::text) \|\| COALESCE(relationship_summary, ''::text)) \|\| ' '::text) \|\| COALESCE((domains)::text, ''::text)))` |  |
 
 **Primary key:** `id`
 
@@ -637,6 +639,44 @@
 
 ---
 
+### `tasks`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `bigint` | NO | `nextval('tasks_id_seq'::regclass)` | **PK** |
+| `user_id` | `bigint` | NO | — |  |
+| `thread_id` | `bigint` | NO | — |  |
+| `assignee_contact_id` | `bigint` | YES | — |  |
+| `title` | `text` | NO | — |  |
+| `description` | `text` | YES | — |  |
+| `due_date` | `date` | YES | — |  |
+| `completed_at` | `timestamp with time zone` | YES | — |  |
+| `created_at` | `timestamp with time zone` | NO | `now()` |  |
+| `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `id`
+
+**Foreign keys:**
+
+- `assignee_contact_id` → `public.contacts`(`id`) — ON DELETE SET NULL
+- `thread_id` → `public.threads`(`id`) — ON DELETE CASCADE
+- `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Indexes:**
+
+- `idx_tasks_assignee` — `CREATE INDEX idx_tasks_assignee ON public.tasks USING btree (assignee_contact_id) WHERE (assignee_contact_id IS NOT NULL)`
+- `idx_tasks_thread_all` — `CREATE INDEX idx_tasks_thread_all ON public.tasks USING btree (thread_id)`
+- `idx_tasks_thread_open` — `CREATE INDEX idx_tasks_thread_open ON public.tasks USING btree (thread_id, due_date) WHERE (completed_at IS NULL)`
+- `idx_tasks_user` — `CREATE INDEX idx_tasks_user ON public.tasks USING btree (user_id)`
+
+**Row-Level Security:** enabled (forced)
+
+- `tasks_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+  - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+
+---
+
 ### `themes`
 
 | Column | Type | Nullable | Default | Notes |
@@ -674,6 +714,66 @@
 - `themes_update` — UPDATE, PERMISSIVE, roles: public
   - USING: `((user_id = (current_setting('app.current_user_id'::text, true))::bigint) AND (is_builtin = false))`
   - WITH CHECK: `((user_id = (current_setting('app.current_user_id'::text, true))::bigint) AND (is_builtin = false))`
+
+---
+
+### `thread_contacts`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `thread_id` | `bigint` | NO | — | **PK** |
+| `contact_id` | `bigint` | NO | — | **PK** |
+
+**Primary key:** `thread_id`, `contact_id`
+
+**Foreign keys:**
+
+- `contact_id` → `public.contacts`(`id`) — ON DELETE CASCADE
+- `thread_id` → `public.threads`(`id`) — ON DELETE CASCADE
+
+**Indexes:**
+
+- `idx_tc_contact` — `CREATE INDEX idx_tc_contact ON public.thread_contacts USING btree (contact_id)`
+
+**Row-Level Security:** enabled (forced)
+
+- `thread_contacts_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(EXISTS ( SELECT 1    FROM threads t   WHERE (t.id = thread_contacts.thread_id)))`
+  - WITH CHECK: `((EXISTS ( SELECT 1    FROM threads t   WHERE (t.id = thread_contacts.thread_id))) AND (EXISTS ( SELECT 1    FROM contacts c   WHERE (c.id = thread_contacts.contact_id))))`
+
+---
+
+### `threads`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `bigint` | NO | `nextval('threads_id_seq'::regclass)` | **PK** |
+| `user_id` | `bigint` | NO | — |  |
+| `account_id` | `bigint` | NO | — |  |
+| `title` | `text` | NO | — |  |
+| `description` | `text` | YES | — |  |
+| `closed_at` | `timestamp with time zone` | YES | — |  |
+| `created_at` | `timestamp with time zone` | NO | `now()` |  |
+| `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `id`
+
+**Foreign keys:**
+
+- `account_id` → `public.accounts`(`id`) — ON DELETE CASCADE
+- `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Indexes:**
+
+- `idx_threads_account_all` — `CREATE INDEX idx_threads_account_all ON public.threads USING btree (account_id, created_at DESC)`
+- `idx_threads_account_open` — `CREATE INDEX idx_threads_account_open ON public.threads USING btree (account_id, created_at DESC) WHERE (closed_at IS NULL)`
+- `idx_threads_user` — `CREATE INDEX idx_threads_user ON public.threads USING btree (user_id)`
+
+**Row-Level Security:** enabled (forced)
+
+- `threads_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+  - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
 
 ---
 

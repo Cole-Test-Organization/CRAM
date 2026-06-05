@@ -496,6 +496,8 @@ export const api = {
     post<{ product: any; created: boolean; vendor: any; vendor_created: boolean }>('/vendor-products/find-or-create', data),
   patchVendorProduct: (id: number, data: any) => patch<any>(`/vendor-products/${id}`, data),
   deleteVendorProduct: (id: number) => del(`/vendor-products/${id}`),
+  mergeVendorProducts: (winner_id: number, loser_id: number) =>
+    post<{ winner: any; loser: any; accounts_repointed: number }>('/vendor-products/merge', { winner_id, loser_id }),
 
   // Account details (technical profile, 1-1 with accounts).
   // A missing row (404) means "no profile yet" — surfaced as null so the GUI
@@ -563,6 +565,32 @@ export const api = {
     patch<any>(`/notes/${id}`, data),
   deleteNote: (id: number) =>
     del(`/notes/${id}`),
+
+  // Threads + tasks (open workstreams per account, each with steps + a contact
+  // pool). Open-only by default; pass includeClosed for the full history.
+  getThreads: (accountId: number, includeClosed = false) => {
+    const qs = new URLSearchParams({ account_id: String(accountId) });
+    if (includeClosed) qs.set('include_closed', 'true');
+    return get<{ threads: import('./types').Thread[]; total: number }>(`/threads?${qs.toString()}`);
+  },
+  getThread: (id: number) =>
+    get<import('./types').Thread>(`/threads/${id}`),
+  createThread: (data: { account_id: number; title: string; description?: string | null; contact_ids?: number[] }) =>
+    post<import('./types').Thread>('/threads', data),
+  patchThread: (id: number, data: { title?: string; description?: string | null; closed?: boolean }) =>
+    patch<import('./types').Thread>(`/threads/${id}`, data),
+  deleteThread: (id: number) =>
+    del<{ deleted: boolean; id: number }>(`/threads/${id}`),
+  addThreadTask: (threadId: number, data: { title: string; description?: string | null; assignee_contact_id?: number | null; due_date?: string | null }) =>
+    post<import('./types').ThreadTask>(`/threads/${threadId}/tasks`, data),
+  patchThreadTask: (threadId: number, taskId: number, data: { title?: string; description?: string | null; assignee_contact_id?: number | null; due_date?: string | null; completed?: boolean }) =>
+    patch<import('./types').ThreadTask>(`/threads/${threadId}/tasks/${taskId}`, data),
+  deleteThreadTask: (threadId: number, taskId: number) =>
+    del<{ deleted: boolean; id: number }>(`/threads/${threadId}/tasks/${taskId}`),
+  linkThreadContact: (threadId: number, contactId: number) =>
+    post<import('./types').Thread>(`/threads/${threadId}/contacts`, { contact_id: contactId }),
+  unlinkThreadContact: (threadId: number, contactId: number) =>
+    del<import('./types').Thread>(`/threads/${threadId}/contacts/${contactId}`),
 
   // Agent provider config (per-user, server-persisted) — replaces the old
   // browser-localStorage state. Background workers read the same row so

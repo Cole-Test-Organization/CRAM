@@ -38,7 +38,7 @@ export class ExportService {
   async _exportAccount(client, slug) {
     const acct = (await client.query(
       `SELECT id, slug, name, status, last_contact,
-              relationship_summary, open_threads, active_deals,
+              relationship_summary, active_deals,
               created_at, updated_at
        FROM accounts WHERE slug = $1`,
       [slug]
@@ -172,16 +172,6 @@ function renderAccountMd(acct) {
 
   if (acct.details) {
     renderTechnicalProfile(lines, acct.details);
-  }
-
-  const threads = acct.open_threads;
-  if (threads && threads.length > 0) {
-    lines.push('## Open Threads\n');
-    for (const t of threads) {
-      const text = t.done ? `~~${t.text}~~` : t.text;
-      lines.push(`- ${text}`);
-    }
-    lines.push('');
   }
 
   const partners = acct.partners;

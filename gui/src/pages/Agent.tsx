@@ -10,6 +10,7 @@ import { createStore } from "solid-js/store";
 import { A, useLocation } from "@solidjs/router";
 import MarkdownRenderer from "../components/MarkdownRenderer";
 import Button from "../components/Button";
+import MentionTextarea, { type Mention } from "../components/MentionTextarea";
 import MemoryManager from "../components/settings/MemoryManager";
 import SystemPromptSettings from "../components/settings/SystemPromptSettings";
 import { api } from "../lib/api";
@@ -30,6 +31,10 @@ export default function Agent() {
     const [events, setEvents] = createSignal<AgentEvent[]>([]);
     const [prompt, setPrompt] = createSignal("");
     const [notes, setNotes] = createSignal("");
+    // Records the user tagged with @ in the prompt box. Sent alongside the
+    // prompt so the server can resolve each to an identity card — the agent
+    // gets the exact id instead of having to search for it.
+    const [mentions, setMentions] = createSignal<Mention[]>([]);
     const [showNotes, setShowNotes] = createSignal(false);
     const [running, setRunning] = createSignal(false);
     const [sessionId, setSessionId] = createSignal<string | null>(null);
@@ -172,6 +177,7 @@ export default function Agent() {
         setSessionId(null);
         setPrompt("");
         setNotes("");
+        setMentions([]);
         setShowNotes(false);
         setSearchInput("");
         setDebouncedSearch("");
@@ -211,6 +217,7 @@ export default function Agent() {
 
         const currentPrompt = prompt();
         const currentNotes = notes();
+        const currentMentions = mentions();
         setEvents((e) => [
             ...e,
             {
@@ -221,6 +228,7 @@ export default function Agent() {
         ]);
         setPrompt("");
         setNotes("");
+        setMentions([]);
         setShowNotes(false);
         setRunning(true);
         abortController = new AbortController();
@@ -241,6 +249,7 @@ export default function Agent() {
                             ? agentSettings.localBaseUrl
                             : undefined,
                     allowedTools: allowedTools() ?? undefined,
+                    mentions: currentMentions.length ? currentMentions : undefined,
                 }),
                 signal: abortController.signal,
             });
@@ -714,21 +723,19 @@ export default function Agent() {
             </Show>
 
             <div class="panel panel-accent p-4 flex flex-col gap-3">
-                <textarea
+                <MentionTextarea
+                    value={prompt()}
+                    onInput={setPrompt}
+                    mentions={mentions()}
+                    onMentionsChange={setMentions}
+                    onSubmit={submit}
+                    rows={4}
+                    disabled={running()}
                     placeholder={
                         sessionId()
                             ? "Follow-up..."
-                            : "Ask the agent to look something up, update an account, save meeting notes, etc."
+                            : "Ask the agent to look something up, update an account, etc. — type @ to tag a record"
                     }
-                    value={prompt()}
-                    onInput={(e) => setPrompt(e.currentTarget.value)}
-                    onKeyDown={(e) => {
-                        if (e.key === "Enter" && (e.metaKey || e.ctrlKey))
-                            submit();
-                    }}
-                    rows={4}
-                    class="bg-base-950 border-2 border-base-500 px-3 py-2 outline-none text-base-50 text-sm placeholder:text-base-400 focus:border-surf-300"
-                    disabled={running()}
                 />
 
                 <Show

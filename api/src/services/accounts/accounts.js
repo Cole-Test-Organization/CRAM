@@ -7,7 +7,7 @@ import { badRequest, notFound, conflict } from '../../lib/http-error.js';
 const ACCOUNT_COLS = `
   id, slug, name, status, last_contact,
   relationship_summary,
-  open_threads, active_deals, domains,
+  active_deals, domains,
   favorite, needs_review,
   created_at, updated_at
 `;
@@ -331,7 +331,12 @@ export class AccountsService {
       [row.id]
     )).rows;
 
-    return { ...row, contacts, team, meetings, partners, opportunities };
+    const { c: open_thread_count } = (await client.query(
+      `SELECT COUNT(*)::int AS c FROM threads WHERE account_id = $1 AND closed_at IS NULL`,
+      [row.id]
+    )).rows[0];
+
+    return { ...row, contacts, team, meetings, partners, opportunities, open_thread_count };
   }
 
   async create(userId, data) {
@@ -356,10 +361,10 @@ export class AccountsService {
         `INSERT INTO accounts (
            user_id, slug, name, status, last_contact,
            relationship_summary,
-           open_threads, active_deals, domains, favorite, needs_review
+           active_deals, domains, favorite, needs_review
          ) VALUES (
            current_setting('app.current_user_id')::bigint,
-           $1, $2, $3, $4, $5, $6, $7, coalesce($8, '[]'::jsonb), coalesce($9, false), coalesce($10, false)
+           $1, $2, $3, $4, $5, $6, coalesce($7, '[]'::jsonb), coalesce($8, false), coalesce($9, false)
          ) RETURNING id`,
         [
           data.slug || null,
@@ -367,7 +372,6 @@ export class AccountsService {
           status,
           data.last_contact || null,
           data.relationship_summary || null,
-          jsonb(data.open_threads),
           data.active_deals || null,
           jsonb(normalizeDomains(data.domains)),
           typeof data.favorite === 'boolean' ? data.favorite : null,
@@ -390,8 +394,8 @@ export class AccountsService {
         `UPDATE accounts SET
            slug = $2, name = $3, status = $4, last_contact = $5,
            relationship_summary = $6,
-           open_threads = $7, active_deals = $8, domains = coalesce($9, '[]'::jsonb),
-           favorite = coalesce($10, false), needs_review = coalesce($11, false)
+           active_deals = $7, domains = coalesce($8, '[]'::jsonb),
+           favorite = coalesce($9, false), needs_review = coalesce($10, false)
          WHERE id = $1`,
         [
           id,
@@ -400,7 +404,6 @@ export class AccountsService {
           data.status || null,
           data.last_contact || null,
           data.relationship_summary || null,
-          jsonb(data.open_threads),
           data.active_deals || null,
           jsonb(normalizeDomains(data.domains)),
           typeof data.favorite === 'boolean' ? data.favorite : null,
@@ -426,7 +429,6 @@ export class AccountsService {
         last_contact: data.last_contact !== undefined ? data.last_contact : existing.last_contact,
         relationship_summary: data.relationship_summary !== undefined ? data.relationship_summary : existing.relationship_summary,
         active_deals: data.active_deals !== undefined ? data.active_deals : existing.active_deals,
-        open_threads: data.open_threads !== undefined ? data.open_threads : existing.open_threads,
         domains: data.domains !== undefined ? normalizeDomains(data.domains) : existing.domains,
         favorite: data.favorite !== undefined ? !!data.favorite : existing.favorite,
         needs_review: data.needs_review !== undefined ? !!data.needs_review : existing.needs_review,
@@ -436,8 +438,8 @@ export class AccountsService {
         `UPDATE accounts SET
            slug = $2, name = $3, status = $4, last_contact = $5,
            relationship_summary = $6,
-           open_threads = $7, active_deals = $8, domains = coalesce($9, '[]'::jsonb),
-           favorite = $10, needs_review = $11
+           active_deals = $7, domains = coalesce($8, '[]'::jsonb),
+           favorite = $9, needs_review = $10
          WHERE id = $1`,
         [
           id,
@@ -446,7 +448,6 @@ export class AccountsService {
           updates.status || null,
           updates.last_contact || null,
           updates.relationship_summary || null,
-          jsonb(updates.open_threads),
           updates.active_deals || null,
           jsonb(updates.domains),
           !!updates.favorite,

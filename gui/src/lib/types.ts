@@ -5,11 +5,45 @@ export interface Account {
   status: string | null;
   last_contact: string | null;
   relationship_summary: string | null;
-  open_threads: Array<{ text: string; done: boolean }> | null;
   active_deals: string | null;
   domains: string[] | null;
+  open_thread_count?: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface ThreadTask {
+  id: number;
+  thread_id: number;
+  assignee_contact_id: number | null;
+  assignee_full_name: string | null;
+  title: string;
+  description: string | null;
+  due_date: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ThreadContact {
+  id: number;
+  full_name: string | null;
+  company: string | null;
+  title: string | null;
+  email: string | null;
+  kind: string;
+}
+
+export interface Thread {
+  id: number;
+  account_id: number;
+  title: string;
+  description: string | null;
+  closed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  tasks: ThreadTask[];
+  contacts: ThreadContact[];
 }
 
 export interface Vendor {

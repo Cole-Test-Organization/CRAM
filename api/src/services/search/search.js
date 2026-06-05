@@ -65,6 +65,23 @@ export class SearchService {
         `, [tsQuery, limit])).rows;
       }
 
+      if (type === 'all' || type === 'opportunities') {
+        results.opportunities = (await client.query(`
+          SELECT o.id, o.name, o.stage, o.account_id,
+            a.slug AS account_slug, a.name AS account_name,
+            ts_headline('english', coalesce(o.notes, ''),
+              to_tsquery('english', $1),
+              'StartSel=<mark>, StopSel=</mark>, MaxWords=20, MinWords=5, ShortWord=3, HighlightAll=FALSE'
+            ) AS snippet,
+            ts_rank(o.search_vector, to_tsquery('english', $1)) AS rank
+          FROM opportunities o
+          JOIN accounts a ON a.id = o.account_id
+          WHERE o.search_vector @@ to_tsquery('english', $1)
+          ORDER BY rank DESC
+          LIMIT $2
+        `, [tsQuery, limit])).rows;
+      }
+
       const total = Object.values(results).reduce((sum, arr) => sum + (arr?.length || 0), 0);
       return { results, query, total };
     });

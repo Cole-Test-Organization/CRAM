@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { get, post, patch, del, listFrom, uniqueName, deleteAfter } from './helpers.js';
+import { get, post, patch, del, listFrom, uniqueName, deleteAfter, makeAccount } from './helpers.js';
 
 // vendors + vendor_products are the GLOBAL catalog (no per-user RLS). The seed
 // counts (75 / 180, asserted in seed-invariants) are protected by the serial
@@ -76,5 +76,61 @@ describe('Vendor products — find-or-create, soft-delete/restore', () => {
   it('find-or-create requires name and category (400)', async () => {
     const vendorId = await ciscoId();
     assert.equal((await post('/vendor-products/find-or-create', { vendor_id: vendorId, name: 'X' })).status, 400);
+  });
+});
+
+describe('Vendor products — merge (de-dupe)', () => {
+  // Two DISTINCT products in the same category. They go under DIFFERENT seeded
+  // vendors on purpose: find-or-create runs a per-vendor fuzzy match, so two
+  // similarly-named rows under one vendor collapse into a single row (nothing to
+  // merge). Different vendors keeps them distinct — merge only requires the
+  // category to match, not the vendor.
+  const vendorIdBySlug = async (slug) => listFrom((await get('/vendors')).body).find((v) => v.slug === slug).id;
+  const pair = async (t, category) => {
+    const winner = (await post('/vendor-products/find-or-create', { vendor_id: await vendorIdBySlug('cisco'), name: uniqueName('ZZZ Merge Win'), category })).body.product;
+    const loser = (await post('/vendor-products/find-or-create', { vendor_id: await vendorIdBySlug('fortinet'), name: uniqueName('ZZZ Merge Lose'), category })).body.product;
+    deleteAfter(t, `/vendor-products/${winner.id}`);
+    deleteAfter(t, `/vendor-products/${loser.id}`);
+    return { winner, loser };
+  };
+
+  it('repoints account_details references loser→winner and soft-deletes the loser', async (t) => {
+    const { winner, loser } = await pair(t, 'firewall');
+    const { body: acc } = await makeAccount(t, { name: 'ZZZ Merge Acct' });
+    await patch(`/accounts/${acc.id}/details`, { firewall_ids: [loser.id] });
+
+    const res = await post('/vendor-products/merge', { winner_id: winner.id, loser_id: loser.id });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.winner.id, winner.id);
+    assert.ok(res.body.accounts_repointed >= 1);
+
+    assert.deepEqual((await get(`/accounts/${acc.id}/details`)).body.firewall_ids, [winner.id]);
+    assert.ok((await get(`/vendor-products/${loser.id}`)).body.deleted_at, 'loser should be soft-deleted');
+  });
+
+  it('de-duplicates when an account referenced BOTH winner and loser', async (t) => {
+    const { winner, loser } = await pair(t, 'edr');
+    const { body: acc } = await makeAccount(t, { name: 'ZZZ Merge Acct Dedup' });
+    await patch(`/accounts/${acc.id}/details`, { edr_ids: [winner.id, loser.id] });
+
+    assert.equal((await post('/vendor-products/merge', { winner_id: winner.id, loser_id: loser.id })).status, 200);
+    assert.deepEqual((await get(`/accounts/${acc.id}/details`)).body.edr_ids, [winner.id]);
+  });
+
+  it('refuses to merge across categories (400)', async (t) => {
+    const vendor_id = await ciscoId();
+    const fw = (await post('/vendor-products/find-or-create', { vendor_id, name: uniqueName('ZZZ Merge FW'), category: 'firewall' })).body.product;
+    const edr = (await post('/vendor-products/find-or-create', { vendor_id, name: uniqueName('ZZZ Merge EDR'), category: 'edr' })).body.product;
+    deleteAfter(t, `/vendor-products/${fw.id}`);
+    deleteAfter(t, `/vendor-products/${edr.id}`);
+    const res = await post('/vendor-products/merge', { winner_id: fw.id, loser_id: edr.id });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /categor/i);
+  });
+
+  it('rejects missing ids and self-merge (400)', async (t) => {
+    const { winner } = await pair(t, 'firewall');
+    assert.equal((await post('/vendor-products/merge', {})).status, 400);
+    assert.equal((await post('/vendor-products/merge', { winner_id: winner.id, loser_id: winner.id })).status, 400);
   });
 });

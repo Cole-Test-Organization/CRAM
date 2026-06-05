@@ -37,6 +37,7 @@ import { InternalDomainsService } from './services/internal-domains/internal-dom
 import { AgentSettingsService } from './services/agent/agent-settings.js';
 import { ThemesService } from './services/themes/themes.js';
 import { MemoriesService } from './services/memories/memories.js';
+import { ThreadsService } from './services/threads/threads.js';
 
 // Routes
 import accountRoutes from './routes/accounts/accounts.js';
@@ -63,6 +64,7 @@ import backupRoutes from './routes/backup/backup.js';
 import internalDomainRoutes from './routes/internal-domains/internal-domains.js';
 import themeRoutes from './routes/themes/themes.js';
 import memoryRoutes from './routes/memories/memories.js';
+import threadRoutes from './routes/threads/threads.js';
 
 const config = getConfig();
 const todoistEnabled = process.env.TODOIST_ENABLED !== 'false';
@@ -120,6 +122,7 @@ const notesService = new NotesService();
 const backupService = new BackupService();
 const themesService = new ThemesService();
 const memoriesService = new MemoriesService();
+const threadsService = new ThreadsService();
 
 fastify.decorate('searchService', searchService);
 
@@ -148,6 +151,7 @@ await fastify.register(swagger, {
       { name: 'vendor-products', description: 'Global catalog of vendor products (firewalls, EDRs, SIEMs, …) used by account_details' },
       { name: 'account-details', description: 'Technical profile per account (firmographics + vendor products + notes)' },
       { name: 'notes', description: 'Timestamped markdown notes attached to an account, contact, or opportunity' },
+      { name: 'threads', description: 'Open workstreams per account, each with tasks (assignee + due date) and a contact pool' },
       { name: 'export', description: 'Markdown export' },
       { name: 'import-export', description: 'Portable JSON bundles for moving accounts between tenants' },
       { name: 'notes-import', description: 'Bulk-import a notes directory (or .zip): per-file local-LLM extraction → account resolution → meetings, with parked/triage fallback' },
@@ -193,6 +197,7 @@ await fastify.register(async (api) => {
   await api.register(internalDomainRoutes, { internalDomainsService });
   await api.register(themeRoutes, { themesService });
   await api.register(memoryRoutes, { memoriesService });
+  await api.register(threadRoutes, { threadsService });
   await api.register(healthRoutes);
   await api.register(agentRoutes, { agentSettingsService, memoriesService });
 }, { prefix: '/api' });

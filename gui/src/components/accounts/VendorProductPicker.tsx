@@ -1,5 +1,6 @@
 import { createSignal, createResource, For, Show, createMemo } from 'solid-js';
 import { api } from '../../lib/api';
+import { vendorProductLabel, vendorIsRedundant } from '../../lib/vendorProduct';
 import { formInputClass } from '../FormField';
 import { modalBtn } from '../Modal';
 import type { VendorProduct } from '../../lib/types';
@@ -118,7 +119,7 @@ export default function VendorProductPicker(props: VendorProductPickerProps) {
       >
         <span class={`flex-1 ${props.value.length > 0 ? 'text-base-50' : 'text-base-400'} text-left`}>
           <Show when={props.value.length > 0} fallback={props.placeholder || `Add ${props.category}...`}>
-            {props.value.map((p) => `${p.vendor_name} ${p.name}`.trim()).join(', ')}
+            {props.value.map((p) => vendorProductLabel(p)).join(', ')}
           </Show>
         </span>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-surf-400 shrink-0 ml-2">
@@ -177,7 +178,8 @@ export default function VendorProductPicker(props: VendorProductPickerProps) {
                       >
                         <span class="w-4 shrink-0 text-surf-300 font-bold">{isSel() ? '✓' : ''}</span>
                         <span class="flex-1 text-base-50 text-sm font-semibold">
-                          {p.vendor_name} <span class="text-base-300 font-normal">{p.name}</span>
+                          <Show when={!vendorIsRedundant(p)}>{p.vendor_name} </Show>
+                          <span class={vendorIsRedundant(p) ? '' : 'text-base-300 font-normal'}>{p.name}</span>
                         </span>
                         <Show when={p.needs_review}>
                           <span class="text-amber-300 text-[10px] uppercase tracking-wider">review</span>

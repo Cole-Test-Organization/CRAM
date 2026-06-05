@@ -7,7 +7,7 @@ import { callService, errorResponse } from './helpers.js';
  * Until per-session auth lands it's a constant (the default user).
  */
 export function registerTools(server, services, resolveUserId) {
-  const { accountsService, contactsService, meetingsService, searchService, todoistService, exportService, outreachService, eventsService, opportunitiesService, productsService, productCategoriesService, vendorsService, vendorProductsService, accountDetailsService, vendorHeatmapService, importExportService, notesImportService, notesService, backupService, contactEnrichmentService, internalDomainsService, agentSettingsService, memoriesService } = services;
+  const { accountsService, contactsService, meetingsService, searchService, todoistService, exportService, outreachService, eventsService, opportunitiesService, productsService, productCategoriesService, vendorsService, vendorProductsService, accountDetailsService, vendorHeatmapService, importExportService, notesImportService, notesService, backupService, contactEnrichmentService, internalDomainsService, agentSettingsService, memoriesService, threadsService } = services;
 
   const todoistDest = () => {
     const project = process.env.TODOIST_DEFAULT_PROJECT || 'Inbox';
@@ -19,7 +19,7 @@ export function registerTools(server, services, resolveUserId) {
 
   server.tool(
     'accounts',
-    'Manage CRM accounts (companies). **If you only have a company name (e.g. "FixtureCorp"), use the `search` tool (type="accounts") first — slug/domain/id lookups here all require structured input and will reject or 404 on a bare name.** Actions: list (returns ALL account slugs as a flat string array — no filtering, no pagination, no extra fields; drill into any specific account with `get`), list_full (full account rows with filters/sort/pagination — pass `status`/`exclude_status` to filter customers vs partners; mirrors `GET /api/accounts`), get (by id/slug/domain — returns full account with contacts, meetings, and linked partners), find_existing (pre-create dedupe probe — same match rules `create` uses: slug → domain → case-insensitive name; returns the match or null), find_or_create (idempotent classifier for ingestion/triage — exact tiers + near-exact fuzzy name return status="matched" with the enriched account; mid-confidence fuzzy names return status="ambiguous" with ranked triage candidates and write nothing; nothing over the suggest floor returns status="none"; set create_if_missing=true to insert when "none" → status="created". Never silently merges a weak match — prefer this over create when ingesting companies from notes/email), create, update (PATCH merge — open_threads/domains fully replaced), delete, list_partners (channel partner accounts linked to this account), add_partner (link a partner account by id), remove_partner (unlink). Partner contacts live as contacts with kind=partner on the partner account; teammates at your own company live as contacts with kind=internal (not tied to any account). Technical environment (firewalls, EDRs, employee count, site count, …) lives in a separate `account_details` tool — do NOT shove it into this account record.',
+    'Manage CRM accounts (companies). **If you only have a company name (e.g. "FixtureCorp"), use the `search` tool (type="accounts") first — slug/domain/id lookups here all require structured input and will reject or 404 on a bare name.** Actions: list (returns ALL account slugs as a flat string array — no filtering, no pagination, no extra fields; drill into any specific account with `get`), list_full (full account rows with filters/sort/pagination — pass `status`/`exclude_status` to filter customers vs partners; mirrors `GET /api/accounts`), get (by id/slug/domain — returns full account with contacts, meetings, and linked partners), find_existing (pre-create dedupe probe — same match rules `create` uses: slug → domain → case-insensitive name; returns the match or null), find_or_create (idempotent classifier for ingestion/triage — exact tiers + near-exact fuzzy name return status="matched" with the enriched account; mid-confidence fuzzy names return status="ambiguous" with ranked triage candidates and write nothing; nothing over the suggest floor returns status="none"; set create_if_missing=true to insert when "none" → status="created". Never silently merges a weak match — prefer this over create when ingesting companies from notes/email), create, update (PATCH merge — domains fully replaced), delete, list_partners (channel partner accounts linked to this account), add_partner (link a partner account by id), remove_partner (unlink). Partner contacts live as contacts with kind=partner on the partner account; teammates at your own company live as contacts with kind=internal (not tied to any account). Technical environment (firewalls, EDRs, employee count, site count, …) lives in a separate `account_details` tool — do NOT shove it into this account record.',
     {
       action: z.enum(['list', 'list_full', 'get', 'find_existing', 'find_or_create', 'create', 'update', 'delete', 'list_partners', 'add_partner', 'remove_partner']),
       id: z.number().optional().describe('Account ID (for get, update, delete, list_partners, add_partner, remove_partner)'),
@@ -41,7 +41,6 @@ export function registerTools(server, services, resolveUserId) {
         status: z.string().optional(),
         last_contact: z.string().optional(),
         relationship_summary: z.string().optional(),
-        open_threads: z.array(z.object({ text: z.string(), done: z.boolean().optional() })).optional(),
         active_deals: z.string().optional(),
         domains: z.array(z.string()).optional().describe('Domains associated with this account (e.g., ["acme.com", "acme-ventures.com"]). Full replace on update.'),
         favorite: z.boolean().optional().describe('Per-user favorite flag — pinned rows sort to the top of list_full.'),
@@ -75,7 +74,7 @@ export function registerTools(server, services, resolveUserId) {
           return callService(() => accountsService.create(userId, data));
         case 'update':
           if (!id) return errorResponse('update requires id (the numeric account id). If you only have a slug/name, call action="get" with slug or the search tool first to resolve the id.');
-          if (!data) return errorResponse('update requires data (a partial account object — only fields you send are changed). open_threads and domains arrays are FULLY replaced when present; send the complete list.');
+          if (!data) return errorResponse('update requires data (a partial account object — only fields you send are changed). The domains array is FULLY replaced when present; send the complete list.');
           return callService(() => accountsService.patch(userId, id, data), { notFoundMsg: `Account not found: id=${id}. Try action="list" or the search tool to find the right id.` });
         case 'delete':
           if (!id) return errorResponse('delete requires id (the numeric account id). If you only have a slug/name, call action="get" with slug or the search tool first.');
@@ -375,10 +374,10 @@ export function registerTools(server, services, resolveUserId) {
 
   server.tool(
     'search',
-    'Full-text search across all CRM data. Searches accounts, contacts, and meetings (including internal meetings) using Postgres tsvector/tsquery. Query tokens are prefix-matched. Specify type to narrow results.',
+    'Full-text search across all CRM data. Searches accounts (customers and partners — each result carries a `status` field), contacts, meetings (including internal meetings), and opportunities using Postgres tsvector/tsquery. Query tokens are prefix-matched. Specify type to narrow results.',
     {
       query: z.string().describe('Search query text'),
-      type: z.enum(['all', 'accounts', 'contacts', 'meetings']).optional().default('all'),
+      type: z.enum(['all', 'accounts', 'contacts', 'meetings', 'opportunities']).optional().default('all'),
       limit: z.number().optional().default(20).describe('Max results per type'),
     },
     async ({ query, type, limit }) => {
@@ -757,10 +756,12 @@ export function registerTools(server, services, resolveUserId) {
 
   server.tool(
     'vendor_products',
-    "Global catalog of vendor products (Palo Alto PA-3220, CrowdStrike Falcon, Splunk Enterprise, …) — describes what your ACCOUNTS RUN, referenced by `account_details` *_ids arrays for tech-stack tracking. **Do NOT use this for opportunity product_ids — that's the separate per-user `products` tool. Different namespace; an id from here will not link to opp_products.** Each product belongs to one vendor and has a free-text `category` (firewall, edr, siem, idp, mfa, pam, email_security, mdr, msp, sase, sdwan, vpn, dlp, casb, vuln_mgmt, ticketing, email_collab, cloud_provider). Shared catalog — no per-user isolation. Actions: list (filter by vendor_id/vendor_slug/category/search; soft-deleted excluded by default), get (by id), find_or_create (idempotent on (vendor_id, slug) AND fuzzy-matched on name within the same vendor + category via pg_trgm — returns existing row with matched_by='fuzzy' + match_score when a near-duplicate is detected. Pass either vendor_id OR vendor_name — if vendor_name is given the vendor is auto-created too; new products are created with needs_review=true). update (PATCH; cannot change vendor_id), delete (soft), restore.",
+    "Global catalog of vendor products (Palo Alto PA-3220, CrowdStrike Falcon, Splunk Enterprise, …) — describes what your ACCOUNTS RUN, referenced by `account_details` *_ids arrays for tech-stack tracking. **Do NOT use this for opportunity product_ids — that's the separate per-user `products` tool. Different namespace; an id from here will not link to opp_products.** Each product belongs to one vendor and has a free-text `category` (firewall, edr, siem, idp, mfa, pam, email_security, mdr, msp, sase, sdwan, vpn, dlp, casb, vuln_mgmt, ticketing, email_collab, cloud_provider). Shared catalog — no per-user isolation. Actions: list (filter by vendor_id/vendor_slug/category/search; soft-deleted excluded by default), get (by id), find_or_create (idempotent on (vendor_id, slug) AND fuzzy-matched on name within the same vendor + category via pg_trgm — returns existing row with matched_by='fuzzy' + match_score when a near-duplicate is detected. Pass either vendor_id OR vendor_name — if vendor_name is given the vendor is auto-created too; new products are created with needs_review=true). update (PATCH; cannot change vendor_id), delete (soft), restore, merge (de-duplicate two rows: repoints every account_details reference from loser_id→winner_id, then soft-deletes the loser; same-category only).",
     {
-      action: z.enum(['list', 'get', 'find_or_create', 'update', 'delete', 'restore']),
+      action: z.enum(['list', 'get', 'find_or_create', 'update', 'delete', 'restore', 'merge']),
       id: z.number().optional().describe('Product ID'),
+      winner_id: z.number().optional().describe('merge: the surviving canonical product id'),
+      loser_id: z.number().optional().describe('merge: the duplicate product id to retire (soft-deleted; its account_details references are repointed to winner_id)'),
       vendor_id: z.number().optional().describe('Filter by vendor (list) or required for find_or_create (alt to vendor_name)'),
       vendor_slug: z.string().optional().describe('Filter by vendor slug (list)'),
       category: z.string().optional().describe('Filter by category (list)'),
@@ -779,7 +780,7 @@ export function registerTools(server, services, resolveUserId) {
         needs_review: z.boolean().optional(),
       }).optional().describe('Product data (for find_or_create / update)'),
     },
-    async ({ action, id, vendor_id, vendor_slug, category, search, needs_review, include_deleted, limit, offset, data }) => {
+    async ({ action, id, winner_id, loser_id, vendor_id, vendor_slug, category, search, needs_review, include_deleted, limit, offset, data }) => {
       switch (action) {
         case 'list':
           return callService(() => vendorProductsService.getAll({ vendor_id, vendor_slug, category, search, needs_review, include_deleted, limit, offset }));
@@ -801,6 +802,9 @@ export function registerTools(server, services, resolveUserId) {
         case 'restore':
           if (!id) return errorResponse('restore requires id (clears deleted_at on a soft-deleted product). Use action="list" with include_deleted=true to find ids of deleted rows.');
           return callService(() => vendorProductsService.restore(id), { notFoundMsg: `Vendor product not found: id=${id}. Use action="list" with include_deleted=true.` });
+        case 'merge':
+          if (!winner_id || !loser_id) return errorResponse('merge requires winner_id (the canonical product that survives) and loser_id (the duplicate to retire). It repoints every account_details reference from loser→winner (same-category only, de-duplicated) and soft-deletes the loser. Find ids via action="list".');
+          return callService(() => vendorProductsService.merge(winner_id, loser_id));
         default:
           return errorResponse(`Unknown action: ${action}`);
       }
@@ -947,6 +951,75 @@ export function registerTools(server, services, resolveUserId) {
         case 'delete':
           if (!id) return errorResponse('delete requires id (the numeric note id). Use action="list" against the parent entity to find ids.');
           return callService(() => notesService.delete(userId, id), { notFoundMsg: `Note not found: id=${id}. Already deleted, or wrong id.` });
+        default:
+          return errorResponse(`Unknown action: ${action}`);
+      }
+    }
+  );
+
+  // ── threads ───────────────────────────────────────────────────────────
+
+  server.tool(
+    'threads',
+    'Threads + tasks: open workstreams per account and the actionable steps inside them. A thread is a relationship-level workstream tied to ONE account ("Firewall refresh POV") — the "where do we stand" record, distinct from a meeting (a dated call summary) or accounts.relationship_summary (one rolling overview). A task is a single step inside a thread, with an optional assignee (a contact; null = no one) and an optional due_date; completion is tracked in the CRM itself (completed_at — there is NO Todoist sync). A thread\'s contact pool (link_contact) is the set of people involved — the list you pick task assignees from. Lists are OPEN-ONLY by default; closed threads are kept for history and hidden unless include_closed=true. Actions: list (threads for an account, each enriched with its tasks + contact pool — requires account_id), get (one thread by id), create (on an account — account_id + data.title; optional data.contact_ids seeds the pool), update (PATCH a thread — data.title/description, or data.closed=true/false to close/reopen), delete (cascades the thread\'s tasks + pool links — prefer update closed=true to keep history), add_task (add a step to a thread — id is the thread, task.title required, optional task.assignee_contact_id / task.due_date), update_task (PATCH a task by task_id — task.assignee_contact_id=null clears the assignee, task.completed=true/false toggles done), delete_task (by task_id), link_contact (add a contact to the pool — id is the thread, contact_id), unlink_contact (remove from the pool; does not unassign their tasks).',
+    {
+      action: z.enum(['list', 'get', 'create', 'update', 'delete', 'add_task', 'update_task', 'delete_task', 'link_contact', 'unlink_contact']),
+      id: z.number().optional().describe('Thread ID (for get, update, delete, add_task, link_contact, unlink_contact)'),
+      task_id: z.number().optional().describe('Task ID (for update_task, delete_task)'),
+      account_id: z.number().optional().describe('Account ID (for list and create)'),
+      contact_id: z.number().optional().describe('Contact ID (for link_contact, unlink_contact)'),
+      include_closed: z.boolean().optional().describe('For list: include closed threads (hidden by default).'),
+      data: z.object({
+        title: z.string().optional().describe('Thread title (required on create).'),
+        description: z.string().nullable().optional(),
+        closed: z.boolean().optional().describe('On update: true closes the thread (kept for history), false reopens it.'),
+        contact_ids: z.array(z.number()).optional().describe('On create: contact ids to seed the involved-people pool.'),
+      }).optional().describe('Thread fields (for create/update).'),
+      task: z.object({
+        title: z.string().optional().describe('Task title (required on add_task).'),
+        description: z.string().nullable().optional(),
+        assignee_contact_id: z.number().nullable().optional().describe('Contact id to assign, or null for "no one".'),
+        due_date: z.string().nullable().optional().describe('Due date YYYY-MM-DD, or null to clear.'),
+        completed: z.boolean().optional().describe('true marks the task done, false reopens it.'),
+      }).optional().describe('Task fields (for add_task/update_task).'),
+    },
+    async ({ action, id, task_id, account_id, contact_id, include_closed, data, task }) => {
+      const userId = await resolveUserId();
+      switch (action) {
+        case 'list':
+          if (!account_id) return errorResponse('list requires account_id (the account whose threads you want). Resolve it via the accounts/search tool first. Returns open threads only unless include_closed=true.');
+          return callService(() => threadsService.getAllForAccount(userId, account_id, { include_closed: !!include_closed }));
+        case 'get':
+          if (!id) return errorResponse('get requires id (the numeric thread id). Use action="list" with account_id to find thread ids.');
+          return callService(() => threadsService.getById(userId, id), { notFoundMsg: `Thread not found: id=${id}. Try action="list" with account_id to confirm.` });
+        case 'create':
+          if (!account_id) return errorResponse('create requires account_id (the account the thread belongs to). Resolve it via the accounts/search tool first.');
+          if (!data?.title) return errorResponse('create requires data.title (the thread name, e.g. "Firewall refresh POV"). Optional: data.description, data.contact_ids (seed the involved-people pool).');
+          return callService(() => threadsService.create(userId, { account_id, title: data.title, description: data.description, contact_ids: data.contact_ids }));
+        case 'update':
+          if (!id) return errorResponse('update requires id (the numeric thread id).');
+          if (!data) return errorResponse('update requires data — any of title, description, or closed (true to close, false to reopen). Only fields you send change.');
+          return callService(() => threadsService.patch(userId, id, data), { notFoundMsg: `Thread not found: id=${id}. Try action="list" with account_id to confirm.` });
+        case 'delete':
+          if (!id) return errorResponse('delete requires id (the numeric thread id). This cascades the thread\'s tasks + pool links; prefer action="update" with data.closed=true to keep history.');
+          return callService(() => threadsService.delete(userId, id), { notFoundMsg: `Thread not found: id=${id}. Already deleted, or wrong id.` });
+        case 'add_task':
+          if (!id) return errorResponse('add_task requires id (the thread the task belongs to).');
+          if (!task?.title) return errorResponse('add_task requires task.title (what the step is, e.g. "Send updated SOW"). Optional: task.assignee_contact_id (a contact id; omit/null = no one), task.due_date (YYYY-MM-DD).');
+          return callService(() => threadsService.createTask(userId, id, task));
+        case 'update_task':
+          if (!task_id) return errorResponse('update_task requires task_id (the numeric task id). Use action="get"/"list" on its thread to find task ids.');
+          if (!task) return errorResponse('update_task requires task — any of title, description, assignee_contact_id (null clears), due_date (null clears), completed (true/false).');
+          return callService(() => threadsService.patchTask(userId, task_id, task), { notFoundMsg: `Task not found: id=${task_id}. Use action="get" on its thread to confirm.` });
+        case 'delete_task':
+          if (!task_id) return errorResponse('delete_task requires task_id (the numeric task id).');
+          return callService(() => threadsService.deleteTask(userId, task_id), { notFoundMsg: `Task not found: id=${task_id}. Already deleted, or wrong id.` });
+        case 'link_contact':
+          if (!id || !contact_id) return errorResponse('link_contact requires id (the thread) and contact_id (the person to add to the pool). Returns the enriched thread.');
+          return callService(() => threadsService.linkContact(userId, id, contact_id));
+        case 'unlink_contact':
+          if (!id || !contact_id) return errorResponse('unlink_contact requires id (the thread) and contact_id (the person to remove from the pool).');
+          return callService(() => threadsService.unlinkContact(userId, id, contact_id));
         default:
           return errorResponse(`Unknown action: ${action}`);
       }

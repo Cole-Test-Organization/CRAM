@@ -115,4 +115,26 @@ export default async function vendorProductRoutes(fastify, { vendorProductsServi
     if (!restored) { reply.code(404); return { error: 'Vendor product not found' }; }
     return restored;
   });
+
+  fastify.post('/vendor-products/merge', {
+    schema: {
+      description: 'Merge one vendor product into another (de-duplicate). Repoints every account_details *_ids array that references loser_id to winner_id (de-duplicated, order preserved), then soft-deletes loser_id. Same-category only. Returns the surviving winner, the retired loser, and accounts_repointed.',
+      tags: ['vendor-products'],
+      body: {
+        type: 'object',
+        required: ['winner_id', 'loser_id'],
+        properties: {
+          winner_id: { type: 'integer', description: 'The surviving canonical product' },
+          loser_id: { type: 'integer', description: 'The duplicate to retire (soft-deleted; its references are repointed to the winner)' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    try {
+      return await vendorProductsService.merge(request.body.winner_id, request.body.loser_id);
+    } catch (err) {
+      if (err.statusCode) { reply.code(err.statusCode); return { error: err.message }; }
+      throw err;
+    }
+  });
 }

@@ -64,7 +64,7 @@ const REFS = {
   'meetings.list_enrichment_jobs': { http: 'GET /api/meetings/:id/enrichment-jobs',        mcp: { tool: 'meetings', action: 'list_enrichment_jobs' } },
 
   // search
-  'search.all': { http: 'GET /api/search?q=&type=', mcp: { tool: 'search' } },
+  'search.all': { http: 'GET /api/search?q=&type=', mcp: { tool: 'search', note: "type: 'all' | 'accounts' (customers + partners) | 'contacts' | 'meetings' | 'opportunities'" } },
 
   // todoist
   'todoist.create':        { http: 'POST /api/todoist/tasks',             mcp: { tool: 'todoist_tasks', action: 'create' } },
@@ -140,6 +140,7 @@ const REFS = {
   'vendor_products.update':         { http: 'PATCH /api/vendor-products/:id',                    mcp: { tool: 'vendor_products', action: 'update' } },
   'vendor_products.delete':         { http: 'DELETE /api/vendor-products/:id',                   mcp: { tool: 'vendor_products', action: 'delete' } },
   'vendor_products.restore':        { http: 'POST /api/vendor-products/:id/restore',             mcp: { tool: 'vendor_products', action: 'restore' } },
+  'vendor_products.merge':          { http: 'POST /api/vendor-products/merge',                   mcp: { tool: 'vendor_products', action: 'merge' } },
 
   // account_details (typed technical profile per account — replaces the old environment JSONB)
   'account_details.get':    { http: 'GET /api/accounts/:accountId/details',     mcp: { tool: 'account_details', action: 'get' } },
@@ -153,6 +154,18 @@ const REFS = {
   'notes.create': { http: 'POST /api/notes',                                        mcp: { tool: 'notes', action: 'create' } },
   'notes.update': { http: 'PATCH /api/notes/:id',                                   mcp: { tool: 'notes', action: 'update' } },
   'notes.delete': { http: 'DELETE /api/notes/:id',                                  mcp: { tool: 'notes', action: 'delete' } },
+
+  // threads + tasks (open workstreams per account, each with steps and an involved-people pool)
+  'threads.list':           { http: 'GET /api/threads?account_id=',                 mcp: { tool: 'threads', action: 'list' } },
+  'threads.get':            { http: 'GET /api/threads/:id',                         mcp: { tool: 'threads', action: 'get' } },
+  'threads.create':         { http: 'POST /api/threads',                            mcp: { tool: 'threads', action: 'create' } },
+  'threads.update':         { http: 'PATCH /api/threads/:id',                       mcp: { tool: 'threads', action: 'update' } },
+  'threads.delete':         { http: 'DELETE /api/threads/:id',                      mcp: { tool: 'threads', action: 'delete' } },
+  'threads.add_task':       { http: 'POST /api/threads/:id/tasks',                  mcp: { tool: 'threads', action: 'add_task' } },
+  'threads.update_task':    { http: 'PATCH /api/threads/:id/tasks/:taskId',         mcp: { tool: 'threads', action: 'update_task' } },
+  'threads.delete_task':    { http: 'DELETE /api/threads/:id/tasks/:taskId',        mcp: { tool: 'threads', action: 'delete_task' } },
+  'threads.link_contact':   { http: 'POST /api/threads/:id/contacts',               mcp: { tool: 'threads', action: 'link_contact' } },
+  'threads.unlink_contact': { http: 'DELETE /api/threads/:id/contacts/:contactId',  mcp: { tool: 'threads', action: 'unlink_contact' } },
 
   // backup (instance-wide pg_dump backups and admin)
   'backup.get_settings':    { http: 'GET /api/backup/settings',           mcp: { tool: 'backup', action: 'get_settings' } },
@@ -255,6 +268,7 @@ Per-tool argument schemas, action enums, and field-level semantics live in ${isM
 - **Meeting attendees** come in two forms. **Linked** attendees are \`contact_ids\` → existing CRM contacts. **Unlinked** attendees are a name (and optional email) with no contact yet — passed via \`attendees\` (free text, split on \`,\`/\`;\`) or \`unlinked_attendees: [{display_name, email?}]\`, recorded for visibility so you can capture who was in the room without spawning a contact per head. On \`update\`, \`contact_ids\` replaces the linked set and \`attendees\`/\`unlinked_attendees\` replaces the unlinked set, independently. The read shape exposes \`contacts\` (linked), \`unlinked_attendees[]\` (each with an \`attendee_id\`), and \`attendees\` (a display string of everyone).
 - **Parked notes & triage.** A note you can't confidently place gets parked: create it \`internal:true, needs_review:true\` (no account), and it shows up in ${ref('meetings.list')} with \`needs_review=true\`. Resolve later: ${ref('meetings.assign_account')} attaches it to an account (sets \`account_id\`, flips \`internal=false\`, clears \`needs_review\`; 409 if already assigned), and ${ref('meetings.link_attendee')} converts an \`unlinked_attendee\` into a link to an existing contact (dedupes if that contact is already linked). This is the "separate creation from assignment" path — capture the note now, place it deterministically later, rather than dropping data or guessing. **Fixing a bad import is a different operation:** to move a meeting that is *already* on the wrong account to a different account — or to strip its account and turn it back into an internal note — use ${ref('meetings.reassign_account')}. Unlike \`assign_account\` it works on an already-assigned meeting (no 409 guard), clears \`needs_review\`, and leaves the attendee list untouched (who attended is independent of which account owns the note).
 - **Notes** are short markdown blurbs attached to **exactly one** of account / contact / opportunity (DB-enforced). Target is immutable — wrong target means delete and recreate.
+- **Threads & tasks** are per-account workstreams: a thread is an open line of work on one account (e.g. "Firewall refresh POV") that holds **tasks** (concrete steps, each with an optional contact assignee and \`due_date\`) and a **contact pool** (who's involved). Open-by-default with a \`closed_at\` lifecycle; completion is tracked in the CRM with no Todoist sync. Lighter than an opportunity — workstream state, not a forecastable deal. See **Threads & Tasks** below.
 - **Opportunities** are sales deals tied to one non-partner account. Stages run a fixed pipeline: \`opp_identification\` → \`tech_discovery\` → \`non_pov_tech_validation\` → \`pov_planning\` → \`pov_tech_validation\` → \`tech_decision_pending\` → terminal \`tech_loss_closed\` / \`tech_win_closed\` / \`no_tech_validation_closed\`.
 - **Vendor catalog** (\`vendors\` + \`vendor_products\`) is **global** — no per-user RLS, shared across tenants so dedup and stack analytics work org-wide. The per-user **product catalog** (\`products\` + \`product_categories\`) is what *you sell*. The two namespaces do not link.
 - **Account Details** is the typed technical profile (one row per account), replacing the old \`accounts.environment\` JSONB blob. Tech-environment data (firewalls, EDRs, employee/site/endpoint counts, …) lives ONLY here — never stuff it back onto the account row.
@@ -289,14 +303,22 @@ Attendees named in a note become **unlinked attendees** (recorded, not turned in
 
 ### Vendor Catalog Rules
 - **Use \`find_or_create\`, never \`create\`.** ${ref('vendors.find_or_create')} and ${ref('vendor_products.find_or_create')} are idempotent and fuzzy-match (pg_trgm, threshold ~0.4) against existing rows. Auto-created rows get \`needs_review=true\` for later human cleanup. Don't pre-check existence — send what you have and let the server decide.
-- **Send canonical full names.** Vendor = full corporate name (\`"Palo Alto Networks"\` not \`"PANW"\`, \`"Aruba Networks"\` not \`"Aruba"\`, \`"Cisco"\` not \`"Cisco Meraki"\`). Product = the actual brand (\`"AnyConnect"\` not \`"VPN"\`, \`"Firepower NGFW"\` not \`"Firewall"\`, \`"Entra ID"\` not \`"Identity"\`, \`"Purview DLP"\` not \`"DLP"\`). The fuzzy matcher saves you from variants — it can't invent the canonical name from nothing.
+- **Send canonical full names.** Vendor = full corporate name (\`"Palo Alto Networks"\` not \`"PANW"\`, \`"Aruba Networks"\` not \`"Aruba"\`, \`"Cisco"\` not \`"Cisco Meraki"\`). Product = the actual brand (\`"AnyConnect"\` not \`"VPN"\`, \`"Firepower NGFW"\` not \`"Firewall"\`, \`"Entra ID"\` not \`"Identity"\`, \`"Purview DLP"\` not \`"DLP"\`, \`"Amazon Web Services"\` not \`"AWS"\`). The fuzzy matcher saves you from variants — it can't invent the canonical name from nothing, and it CANNOT bridge an abbreviation to its expansion (\`"AWS"\` shares almost no trigrams with \`"Amazon Web Services"\`), so spell names out the same way every time.
 - **Known rebrands — translate before calling:** Cisco FTD / Firepower Threat Defense → \`Firepower NGFW\`; Aruba Silver Peak SD-WAN → \`EdgeConnect SD-WAN\`; Microsoft Azure AD / AAD → \`Entra ID\`; VMware NSX SD-WAN by VeloCloud → \`VeloCloud SD-WAN\`.
 - **Soft-delete only.** \`delete\` sets \`deleted_at\`; rows stay in the DB so \`account_details *_ids\` references don't dangle. Use \`restore\` to unmark.
+- **De-dupe with ${ref('vendor_products.merge')}.** When two rows are the same product — an abbreviation/rebrand the fuzzy matcher missed ("AWS" vs "Amazon Web Services"), or a generic placeholder vs the real brand ("DLP" vs "Digital Guardian") — merge them instead of deleting. \`winner_id\` survives as canonical; \`loser_id\` is repointed across every \`account_details *_ids\` array (de-duplicated) and soft-deleted, so no account loses the fact. Same-category only. Pick the spelled-out name as the winner; if the better name is on the loser, rename the winner first (\`update\`) or merge the other direction.
 
 ### Account Details (Technical Profile)
 - Typed firmographics + numeric counts + one \`bigint[]\` column per security category (\`firewall_ids\`, \`edr_ids\`, \`siem_ids\`, \`idp_ids\`, etc.) referencing \`vendor_products.id\`. Multi-vendor reality (e.g. Cisco FTD *and* Meraki firewalls) is modeled by multiple IDs in one array.
 - \`technical_notes\` is the prose lane for nuance that doesn't compress into a column ("Cisco FTD used as VPN only", "SSL decryption sized but rollout deferred").
 - **No generic analytics endpoint.** For ad-hoc queries ("accounts >$10M running CrowdStrike Falcon"), resolve product IDs via ${ref('vendor_products.list')} and surface them with the user's thresholds — they run the actual query in psql.
+
+### Threads & Tasks
+A **thread** is an open workstream with one account — the relationship-level "where do we stand" record ("Firewall refresh POV", "MSA redlines"). A **task** is one concrete step inside a thread, with an optional assignee (any of the user's contacts; omit/null = "no one") and an optional \`due_date\`. Use threads to track what's in flight on an account; tasks for the individual steps and who owes them.
+- **Read:** ${ref('threads.list')} returns an account's threads, each enriched with its \`tasks\` and its \`contacts\` pool. **Open threads only by default** — pass \`include_closed=true\` to include closed ones.
+- **Lifecycle:** finish a thread by closing it (${ref('threads.update')} with \`closed=true\`), not deleting — closing keeps the history and just hides it from the default view; reopen with \`closed=false\`. ${ref('threads.delete')} is a hard cascade (drops the thread's tasks + pool links), so reserve it for mistakes. Mark a step done with \`completed=true\` on ${ref('threads.update_task')} (\`false\` reopens); no need to delete it.
+- **Completion lives in the CRM.** Tasks are tracked here with **no Todoist sync** — don't mirror them into Todoist or assume completing one here closes one there.
+- **Contact pool vs assignee:** the pool (${ref('threads.link_contact')} / ${ref('threads.unlink_contact')}) is simply *who's involved* in the thread — the shortlist you pick task assignees from. Assigning a task doesn't require pool membership, and unlinking someone from the pool does **not** unassign their tasks.
 
 ### Prose Lanes (Don't Mix)
 Different long-form fields capture different things:
@@ -360,7 +382,6 @@ ${saveHint}`;
 | Field | Strategy |
 |---|---|
 | Scalars (\`status\`, \`last_contact\`, \`relationship_summary\`, \`active_deals\`, \`favorite\`, \`needs_review\`) | Replace |
-| \`open_threads\` | Full replace (send the complete list) |
 | \`domains\` | Full replace (send the complete list) |
 
 Partners are managed via the dedicated partner endpoints (\`list_partners\`, \`add_partner\`, \`remove_partner\`) — not through the account body. The supporting team is managed the same way contacts always are: link \`kind=internal\` contacts to the account (${ref('contacts.link')} / ${ref('contacts.unlink')}); they come back in the account's \`team\` array, not as an account field. **Technical environment data does not live on the account record** — it's on \`account_details\`, see that section's update semantics (scalars replaced when present; array fields fully replaced when present).`;

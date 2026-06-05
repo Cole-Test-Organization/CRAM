@@ -158,7 +158,6 @@ Full interactive docs: `http://localhost:3200/docs` (Swagger UI). LLM-friendly m
 - **Scalars** (`status`, `last_contact`, `relationship_summary`): replaced
 - **`environment`**: shallow merge (`{...existing, ...patch}`)
 - **`channel_partners` / `pa_team`**: merge by name (updates existing entries, appends new ones)
-- **`open_threads`**: full replace (caller sends the complete list)
 
 ## Data model
 
@@ -178,12 +177,12 @@ users ── owns ──┐
 ```
 
 - **Users** — tenant rows. Every other table carries a `user_id` FK.
-- **Accounts** — relationship metadata, environment info, open threads, deal notes. `UNIQUE(user_id, slug)`.
+- **Accounts** — relationship metadata, environment info, deal notes. `UNIQUE(user_id, slug)`.
 - **Contacts** — standalone records linked to accounts via a junction table. A contact can belong to multiple accounts.
 - **Meetings** — belong to one account; linked to contacts via `meeting_attendees`.
 - **Internal notes** — freestanding meeting records not tied to any account. `UNIQUE(user_id, filename)`.
 
-JSON fields (`channel_partners`, `pa_team`, `environment`, `open_threads`) are stored as `JSONB`.
+JSON fields (`channel_partners`, `pa_team`, `environment`) are stored as `JSONB`.
 
 ## MCP
 

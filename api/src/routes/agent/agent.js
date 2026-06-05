@@ -46,11 +46,25 @@ export default async function agentRoutes(fastify, { agentSettingsService, memor
             items: { type: 'string' },
             description: 'Restrict MCP tools the model sees on this turn. Omit for all tools; pass [] to cut tools off entirely (text-only answer); pass a list of tool names to expose only those.',
           },
+          mentions: {
+            type: 'array',
+            description: 'Records the user @-tagged in the prompt. The server resolves each to a compact identity card appended to the message, so the agent gets the exact id without having to search for it.',
+            items: {
+              type: 'object',
+              required: ['type', 'id'],
+              properties: {
+                type: { type: 'string', enum: ['account', 'partner', 'contact', 'meeting', 'opportunity'] },
+                id: { type: 'integer' },
+                label: { type: 'string' },
+                slug: { type: 'string' },
+              },
+            },
+          },
         },
       },
     },
   }, async (request, reply) => {
-    const { prompt, notes, sessionId, allowedTools } = request.body;
+    const { prompt, notes, mentions, sessionId, allowedTools } = request.body;
     let { provider, model, localBaseUrl } = request.body;
 
     // Resolve unspecified fields from the user's saved settings (with env
@@ -83,6 +97,7 @@ export default async function agentRoutes(fastify, { agentSettingsService, memor
         userId: request.userId,
         prompt,
         notes,
+        mentions,
         sessionId,
         provider,
         model,

@@ -7,6 +7,18 @@ const COLS = `vp.id, vp.vendor_id, vp.name, vp.slug, vp.category, vp.notes,
               vp.needs_review, vp.deleted_at, vp.created_at, vp.updated_at,
               v.name AS vendor_name, v.slug AS vendor_slug`;
 
+// The per-category bigint[] columns on account_details that reference
+// vendor_products.id. Verified to be the ONLY place a product id is referenced
+// (no FK tables, no scalar vendor_product_id columns), so a merge repoints
+// exactly these. Keep in sync with account_details (migrations 11 / 16 / 24).
+const LINK_COLUMNS = [
+  'firewall_ids', 'edr_ids', 'siem_ids', 'idp_ids', 'mfa_ids', 'pam_ids',
+  'email_security_ids', 'mdr_ids', 'msp_ids', 'sase_ids', 'sdwan_ids',
+  'vpn_ids', 'dlp_ids', 'casb_ids', 'vuln_mgmt_ids', 'ticketing_ids',
+  'productivity_suite_ids', 'cloud_provider_ids', 'cspm_ids', 'appsec_ids',
+  'ndr_ids', 'iot_ot_ids', 'ai_security_ids',
+];
+
 // Global catalog — no RLS. Each product belongs to exactly one vendor and has
 // a free-text category (firewall, edr, siem, …). The category is what the GUI
 // uses to scope picker dropdowns per account_details column.
@@ -259,6 +271,78 @@ export class VendorProductsService {
         `SELECT ${COLS} FROM vendor_products vp JOIN vendors v ON v.id = vp.vendor_id WHERE vp.id = $1`,
         [id]
       )).rows[0] || null;
+    } finally {
+      client.release();
+    }
+  }
+
+  // Merge `loserId` into `winnerId`: repoint every account_details *_ids array
+  // that references the loser to the winner (de-duplicated, first-occurrence
+  // order preserved), then soft-delete the loser. Same-category only — the
+  // arrays are per-category, so a cross-category merge would file the surviving
+  // id under the wrong column. Transactional, with a post-check that refuses to
+  // soft-delete while any reference to the loser remains, so we never orphan.
+  //
+  // account_details has RLS ENABLED but not FORCED (migration 11 vs 3), so the
+  // table-owner pool role bypasses the per-user policy and this repoints across
+  // every tenant — correct for a globally-shared catalog.
+  async merge(winnerId, loserId) {
+    const wId = Number(winnerId);
+    const lId = Number(loserId);
+    if (!wId || !lId) throw badRequest('merge requires numeric winner_id and loser_id. The winner survives as the canonical row; the loser is repointed and soft-deleted.');
+    if (wId === lId) throw badRequest('winner_id and loser_id must differ — cannot merge a product into itself.');
+    const client = await getPool().connect();
+    try {
+      await client.query('BEGIN');
+      const fetch = async (pid) => (await client.query(
+        `SELECT ${COLS} FROM vendor_products vp JOIN vendors v ON v.id = vp.vendor_id WHERE vp.id = $1`,
+        [pid]
+      )).rows[0];
+      const winner = await fetch(wId);
+      const loser = await fetch(lId);
+      if (!winner) throw notFound(`Winner vendor_product not found: id=${wId}`);
+      if (!loser) throw notFound(`Loser vendor_product not found: id=${lId}`);
+      if (winner.deleted_at) throw badRequest(`Winner id=${wId} is soft-deleted — restore it first, or pick a live winner.`);
+      if (winner.category !== loser.category) {
+        throw badRequest(`Refusing to merge across categories (winner="${winner.category}", loser="${loser.category}"). account_details references are per-category bigint[] columns; merging across would file the surviving id under the wrong column. Recategorize one of them first if they're truly the same product.`);
+      }
+
+      let accountsRepointed = 0;
+      for (const col of LINK_COLUMNS) {
+        const res = await client.query(
+          `UPDATE account_details
+           SET ${col} = (
+             SELECT COALESCE(array_agg(e ORDER BY ord), '{}'::bigint[])
+             FROM (
+               SELECT e, MIN(ord) AS ord
+               FROM unnest(array_replace(${col}, $1, $2)) WITH ORDINALITY AS u(e, ord)
+               GROUP BY e
+             ) d
+           )
+           WHERE $1 = ANY(${col})`,
+          [lId, wId]
+        );
+        accountsRepointed += res.rowCount;
+      }
+
+      // Fail-safe: never soft-delete while a reference to the loser survives
+      // (e.g. if RLS had silently filtered the UPDATE). Roll back, don't orphan.
+      const stillReferenced = await client.query(
+        `SELECT 1 FROM account_details
+         WHERE ${LINK_COLUMNS.map((c) => `$1 = ANY(${c})`).join(' OR ')}
+         LIMIT 1`,
+        [lId]
+      );
+      if (stillReferenced.rowCount > 0) {
+        throw new Error('merge aborted: loser still referenced after repoint — rolled back, nothing changed (check that the DB role bypasses account_details RLS).');
+      }
+
+      await client.query(`UPDATE vendor_products SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL`, [lId]);
+      await client.query('COMMIT');
+      return { winner, loser, accounts_repointed: accountsRepointed };
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
     } finally {
       client.release();
     }

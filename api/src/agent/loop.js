@@ -15,6 +15,7 @@ import {
     NUDGE_NOTICE,
 } from "../services/agent/agent-sessions.js";
 import { buildMcpSession } from "./mcp-client.js";
+import { resolveMentions } from "./mentions.js";
 import { getProvider, listProviders } from "./providers/index.js";
 import { FALLBACK_MODEL, DEFAULT_PROVIDER } from "./defaults.js";
 import { AgentSettingsService } from "../services/agent/agent-settings.js";
@@ -36,11 +37,13 @@ const THINKING_ONLY_NUDGE = [
 // turn (below) so saved edits take effect on the next run without a restart.
 const agentSettings = new AgentSettingsService();
 
-function buildUserContent(prompt, notes) {
-    if (notes && notes.trim()) {
-        return `${prompt}\n\n--- ATTACHED NOTES/EMAILS ---\n${notes}`;
-    }
-    return prompt;
+function buildUserContent(prompt, notes, taggedBlock) {
+    let out = prompt;
+    // Resolved @-mentions go right after the prompt so the model reads the exact
+    // ids next to the request that references them; pasted notes/emails follow.
+    if (taggedBlock && taggedBlock.trim()) out += `\n\n${taggedBlock}`;
+    if (notes && notes.trim()) out += `\n\n--- ATTACHED NOTES/EMAILS ---\n${notes}`;
+    return out;
 }
 
 function stringifyMcpResult(result) {
@@ -74,6 +77,7 @@ export async function runAgent({
     userId,
     prompt,
     notes,
+    mentions,
     sessionId,
     provider,
     model,
@@ -93,15 +97,33 @@ export async function runAgent({
 
     send({ type: "session", sessionId: session.id });
 
-    const userContent = buildUserContent(prompt, notes);
+    const { client: mcp, instructions: mcpInstructions, services } =
+        await buildMcpSession({ userId });
+    const { tools: allMcpTools } = await mcp.listTools();
+
+    // Resolve any @-tagged records the GUI attached into a compact context
+    // block (exact ids, no search needed). Best-effort — a resolver failure
+    // must never sink the turn; we just proceed without the block.
+    let taggedBlock = "";
+    try {
+        taggedBlock = await resolveMentions(userId, mentions, services);
+    } catch (err) {
+        logger.warn(
+            {
+                event: "agent_mentions_failed",
+                component: "agent_loop",
+                sessionId: session.id,
+                err: err?.message,
+            },
+            `mention resolution failed: ${err?.message || err}`,
+        );
+    }
+
+    const userContent = buildUserContent(prompt, notes, taggedBlock);
     const messages = session.messages.slice();
     messages.push({ role: "user", content: userContent });
 
     const derivedTitle = session.title ? null : deriveTitle(userContent);
-
-    const { client: mcp, instructions: mcpInstructions } =
-        await buildMcpSession({ userId });
-    const { tools: allMcpTools } = await mcp.listTools();
 
     // Compose the system prompt: the user's base prompt (their customization or
     // the built-in default), then today's date injected fresh at runtime — never

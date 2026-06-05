@@ -28,6 +28,7 @@ import { ContactEnrichmentService } from '../services/contacts/contact-enrichmen
 import { InternalDomainsService } from '../services/internal-domains/internal-domains.js';
 import { AgentSettingsService } from '../services/agent/agent-settings.js';
 import { MemoriesService } from '../services/memories/memories.js';
+import { ThreadsService } from '../services/threads/threads.js';
 
 import { registerTools } from './tools.js';
 import { buildAgentMarkdown } from '../instructions.js';
@@ -93,6 +94,7 @@ const services = {
   internalDomainsService,
   agentSettingsService,
   memoriesService,
+  threadsService: new ThreadsService(),
 };
 
 const PORT = parseInt(process.env.MCP_PORT || '3100', 10);

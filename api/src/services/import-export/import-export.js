@@ -65,7 +65,7 @@ export class ImportExportService {
   async _exportSingleAccount(client, slug) {
     const acct = (await client.query(
       `SELECT id, slug, name, status, last_contact, relationship_summary,
-              open_threads, active_deals, domains
+              active_deals, domains
        FROM accounts WHERE slug = $1`,
       [slug]
     )).rows[0];
@@ -83,7 +83,6 @@ export class ImportExportService {
       status: acct.status,
       last_contact: acct.last_contact,
       relationship_summary: acct.relationship_summary,
-      open_threads: acct.open_threads,
       active_deals: acct.active_deals,
       domains: acct.domains,
       details,
@@ -316,10 +315,10 @@ export class ImportExportService {
       const ins = await client.query(
         `INSERT INTO accounts (
            user_id, slug, name, status, last_contact, relationship_summary,
-           open_threads, active_deals, domains
+           active_deals, domains
          ) VALUES (
            current_setting('app.current_user_id')::bigint,
-           $1, $2, $3, $4, $5, $6, $7, coalesce($8, '[]'::jsonb)
+           $1, $2, $3, $4, $5, $6, coalesce($7, '[]'::jsonb)
          ) RETURNING id`,
         [
           j.slug,
@@ -327,7 +326,6 @@ export class ImportExportService {
           j.status || 'account',
           j.last_contact || null,
           j.relationship_summary || null,
-          jsonb(j.open_threads),
           j.active_deals || null,
           jsonb(j.domains),
         ]
@@ -348,7 +346,6 @@ export class ImportExportService {
     if (j.last_contact != null) set('last_contact', j.last_contact);
     if (j.relationship_summary != null) set('relationship_summary', j.relationship_summary);
     if (j.active_deals != null) set('active_deals', j.active_deals);
-    if (j.open_threads != null) set('open_threads', jsonb(j.open_threads));
     if (Array.isArray(j.domains)) set('domains', jsonb(j.domains));
 
     if (fields.length > 0) {

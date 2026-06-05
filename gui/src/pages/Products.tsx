@@ -7,6 +7,7 @@ import {
   VendorProductFormModal,
 } from '../components/FormModals';
 import Button from '../components/Button';
+import { vendorProductLabel } from '../lib/vendorProduct';
 
 const VENDOR_PRODUCT_CATEGORIES = [
   'firewall', 'edr', 'siem', 'idp', 'mfa', 'pam',
@@ -293,7 +294,7 @@ function VendorProductsTab() {
   });
 
   const softDelete = async (p: any) => {
-    if (!confirm(`Soft-delete "${p.vendor_name} ${p.name}"? Existing account_details references are preserved.`)) return;
+    if (!confirm(`Soft-delete "${vendorProductLabel(p)}"? Existing account_details references are preserved.`)) return;
     await api.deleteVendorProduct(p.id);
     refetch();
   };
@@ -301,6 +302,50 @@ function VendorProductsTab() {
   const restore = async (p: any) => {
     await fetch(`/api/vendor-products/${p.id}/restore`, { method: 'POST' });
     refetch();
+  };
+
+  // ── Merge (de-dupe) ──────────────────────────────────────────────────
+  // Select up to two live rows, choose which survives (Git-style), and merge:
+  // the loser's account references repoint to the winner, loser is soft-deleted.
+  const [selected, setSelected] = createSignal<any[]>([]);
+  const [winnerId, setWinnerId] = createSignal<number | null>(null);
+  const [merging, setMerging] = createSignal(false);
+
+  const isSelected = (p: any) => selected().some((x) => x.id === p.id);
+  const toggleSelect = (p: any) => {
+    if (isSelected(p)) {
+      const next = selected().filter((x) => x.id !== p.id);
+      setSelected(next);
+      if (winnerId() === p.id) setWinnerId(next[0]?.id ?? null);
+    } else if (selected().length < 2) {
+      const next = [...selected(), p];
+      setSelected(next);
+      if (next.length === 1) setWinnerId(p.id);
+    }
+  };
+  const clearSelection = () => { setSelected([]); setWinnerId(null); };
+  const sameCategory = () => selected().length === 2 && selected()[0].category === selected()[1].category;
+
+  const doMerge = async () => {
+    const winner = selected().find((p) => p.id === winnerId());
+    const loser = selected().find((p) => p.id !== winnerId());
+    if (!winner || !loser) return;
+    if (!confirm(
+      `Merge "${vendorProductLabel(loser)}" into "${vendorProductLabel(winner)}"?\n\n` +
+      `Every account that runs "${vendorProductLabel(loser)}" will be repointed to ` +
+      `"${vendorProductLabel(winner)}", and the duplicate will be retired (soft-deleted, restorable).`
+    )) return;
+    setMerging(true);
+    try {
+      const res = await api.mergeVendorProducts(winner.id, loser.id);
+      clearSelection();
+      refetch();
+      alert(`Merged. ${res.accounts_repointed} account row(s) now point to "${vendorProductLabel(winner)}".`);
+    } catch (e: any) {
+      alert(e?.message || 'Merge failed');
+    } finally {
+      setMerging(false);
+    }
   };
 
   return (
@@ -343,6 +388,52 @@ function VendorProductsTab() {
         </Button>
       </div>
 
+      <Show when={selected().length > 0}>
+        <div class="panel panel-accent p-3 mb-4 border-2 border-surf-500 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div class="flex items-center gap-2 flex-wrap text-[12px]">
+            <span class="uppercase tracking-widest font-bold text-surf-300">Merge {selected().length}/2</span>
+            <For each={selected()}>
+              {(p) => (
+                <span class="font-semibold text-base-50">{vendorProductLabel(p)} <span class="text-base-400 font-normal">[{p.category}]</span></span>
+              )}
+            </For>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <Show when={selected().length === 2} fallback={
+              <span class="text-base-400 text-[11px] uppercase tracking-wider">pick one more</span>
+            }>
+              <Show when={sameCategory()} fallback={
+                <span class="text-scarlet-400 text-[11px] uppercase tracking-wider font-bold">same category only</span>
+              }>
+                <span class="text-[11px] uppercase tracking-wider text-base-300">keep:</span>
+                <For each={selected()}>
+                  {(p) => (
+                    <button
+                      type="button"
+                      class={`px-2 py-1 text-[11px] font-bold uppercase tracking-wider border-2 transition-colors duration-150 ${
+                        winnerId() === p.id ? 'bg-surf-500/20 text-surf-200 border-surf-500' : 'text-base-300 border-base-600 hover:text-base-50'
+                      }`}
+                      onClick={() => setWinnerId(p.id)}
+                    >{vendorProductLabel(p)}</button>
+                  )}
+                </For>
+                <button
+                  type="button"
+                  class="px-3 py-1 text-[11px] font-bold uppercase tracking-wider border-2 border-surf-500 bg-surf-500/20 text-surf-100 hover:bg-surf-500/30 disabled:opacity-50"
+                  disabled={merging()}
+                  onClick={doMerge}
+                >{merging() ? 'Merging…' : 'Merge →'}</button>
+              </Show>
+            </Show>
+            <button
+              type="button"
+              class="px-3 py-1 text-[11px] font-bold uppercase tracking-wider border-2 border-base-600 text-base-300 hover:text-base-50"
+              onClick={clearSelection}
+            >Cancel</button>
+          </div>
+        </div>
+      </Show>
+
       <Show when={!products.loading} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
         <For each={grouped()} fallback={
           <div class="panel panel-accent">
@@ -370,6 +461,16 @@ function VendorProductsTab() {
                 <For each={items}>
                   {(p: any) => (
                     <div class={`press-row gap-3 flex-wrap border-b border-base-700 last:border-b-0 ${p.deleted_at ? 'opacity-60' : ''}`}>
+                      <Show when={!p.deleted_at} fallback={<span class="w-4 shrink-0" />}>
+                        <input
+                          type="checkbox"
+                          class="accent-surf-400 w-4 h-4 cursor-pointer shrink-0"
+                          title="Select to merge"
+                          checked={isSelected(p)}
+                          disabled={!isSelected(p) && selected().length >= 2}
+                          onChange={() => toggleSelect(p)}
+                        />
+                      </Show>
                       <span class="text-base-300 text-[12px] min-w-[100px] font-semibold">{p.vendor_name}</span>
                       <span class="flex-1 min-w-[40%] md:min-w-[180px] text-base-50 text-sm font-semibold">{p.name}</span>
                       <span class="text-base-400 text-[10px] uppercase tracking-wider font-mono">{p.slug}</span>
@@ -384,7 +485,7 @@ function VendorProductsTab() {
                         <Show when={!p.deleted_at} fallback={
                           <button type="button" class="press press-ghost press-sm" onClick={() => restore(p)}>Restore</button>
                         }>
-                          <button type="button" class="btn-x" aria-label={`Delete ${p.vendor_name} ${p.name}`} onClick={() => softDelete(p)}>&times;</button>
+                          <button type="button" class="btn-x" aria-label={`Delete ${vendorProductLabel(p)}`} onClick={() => softDelete(p)}>&times;</button>
                         </Show>
                       </div>
                     </div>

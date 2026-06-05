@@ -374,7 +374,7 @@ exports.up = (pgm) => {
       ('pagerduty', 'PagerDuty',                       'pagerduty',                'ticketing'),
 
       -- Cloud providers
-      ('aws',    'AWS',                                'aws',                      'cloud_provider'),
+      ('aws',    'Amazon Web Services',               'amazon-web-services',      'cloud_provider'),
       ('google', 'Google Cloud',                       'google-cloud',             'cloud_provider'),
       ('google', 'Google Workspace',                   'google-workspace',         'productivity_suite'),
       ('google', 'Chronicle',                          'chronicle',                'siem'),

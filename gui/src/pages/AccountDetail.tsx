@@ -8,6 +8,7 @@ import SaveIndicator from '../components/SaveIndicator';
 import OverviewPanel from '../components/accounts/OverviewPanel';
 import TechnicalProfilePanel from '../components/accounts/TechnicalProfilePanel';
 import NotesPanel from '../components/NotesPanel';
+import ThreadsPanel from '../components/accounts/ThreadsPanel';
 import BackLink from '../components/BackLink';
 import MeetingsList from './MeetingsList';
 import ContactList from './ContactList';
@@ -128,6 +129,9 @@ export default function AccountDetail() {
                   <div class={tabClass(tab() === 'opportunities')} onClick={() => setTab('opportunities')}>
                     Opportunities ({account().opportunities?.length || 0})
                   </div>
+                  <div class={tabClass(tab() === 'threads')} onClick={() => setTab('threads')}>
+                    Threads ({account().open_thread_count ?? 0})
+                  </div>
                   <div class={tabClass(tab() === 'notes')} onClick={() => setTab('notes')}>Notes</div>
                 </div>
               </div>
@@ -171,6 +175,15 @@ export default function AccountDetail() {
                   accountName={account().name}
                   onAfterCreate={() => refetch()}
                   onAfterDelete={() => refetch()}
+                />
+              </Show>
+
+              {/* === THREADS TAB === */}
+              <Show when={tab() === 'threads'}>
+                <ThreadsPanel
+                  accountId={acct.id}
+                  accountContacts={[...(account().contacts || []), ...(account().team || [])]}
+                  onThreadsChanged={() => refetch()}
                 />
               </Show>
 
