@@ -114,7 +114,7 @@ async function probeLlamaCpp(baseUrl, headers) {
 // This cap is Ollama-only on purpose: llama.cpp's /props returns the actual
 // loaded n_ctx (you set it at server startup with -c), so there's nothing to
 // cap there — the reported number already matches reality.
-const OLLAMA_CONTEXT_CAP = Number(process.env.OLLAMA_CONTEXT_CAP) || 65536;
+const OLLAMA_CONTEXT_CAP = Number(process.env.OLLAMA_CONTEXT_CAP) || 262144;
 
 async function probeOllama(baseUrl, headers, model) {
   if (!model) return null;

@@ -113,12 +113,12 @@ export default function AgentLLMSettings() {
                             class="input-vintage font-mono"
                             value={agentModel()}
                             onInput={(e) => setAgentModel(e.currentTarget.value)}
-                            placeholder="gemma4:e4b"
+                            placeholder="gemma4:12b"
                         />
                         <span class="text-[10px] text-base-500 mt-1">
                             Any model you've pulled (e.g.{" "}
-                            <code class="text-surf-300">gemma4:e4b</code>,{" "}
-                            <code class="text-surf-300">gemma4:e4b-mlx</code>,{" "}
+                            <code class="text-surf-300">gemma4:12b</code>,{" "}
+                            <code class="text-surf-300">gemma4:12b-mlx</code>,{" "}
                             <code class="text-surf-300">qwen2.5:14b</code>).
                             Leave blank and the app auto-selects one of the
                             models your server has installed.
@@ -132,7 +132,7 @@ export default function AgentLLMSettings() {
                             sure Ollama is running on the host and the model is
                             pulled (
                             <code class="text-surf-300">
-                                ollama pull gemma4:e4b
+                                ollama pull gemma4:12b
                             </code>
                             ). Works out of the box on Docker Desktop
                             (Mac/Windows); on Linux the compose file needs the{" "}

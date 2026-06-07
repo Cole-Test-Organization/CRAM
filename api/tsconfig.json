@@ -1,0 +1,33 @@
+{
+  // The API runs on Node directly (NOT bundled), so this MUST use NodeNext — the
+  // resolution mode that expects the explicit .js import extensions this codebase
+  // already uses everywhere. Do NOT copy gui/tsconfig.json: its
+  // moduleResolution "bundler" is for Vite and would break Node-run code.
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "types": ["node"],
+
+    "strict": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "sourceMap": true,
+
+    // Migration coexistence: .js and .ts live side by side, and only .ts files
+    // are type-checked (checkJs:false) so unconverted .js never error-walls the
+    // gate. Flip allowJs:false at the end to prove no stray .js remains.
+    "allowJs": true,
+    "checkJs": false,
+
+    // tsx transpiles at runtime, so we don't emit. If prod later moves to a
+    // precompiled dist/, add a tsconfig.build.json with noEmit:false + outDir.
+    "noEmit": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

@@ -17,7 +17,7 @@ CRAM runs in Docker. The recommended deployment is on a mini-PC or always-on mac
 ### Prerequisites
 
 - **Docker** (with Docker Compose). Install Docker for your OS first — instructions are at [docker.com](https://www.docker.com/get-started/).
-- **A local LLM** — the agent runs on [Ollama](https://ollama.com) (or any OpenAI-compatible server: LM Studio / llama.cpp / vLLM), by default on the device hosting the app. Pull a model (e.g. `ollama pull gemma4:e4b`) and you're set — no cloud API keys. You can also point it at an LLM on another machine on your LAN from the GUI.
+- **A local LLM** — the agent runs on [Ollama](https://ollama.com) (or any OpenAI-compatible server: LM Studio / llama.cpp / vLLM), by default on the device hosting the app. Pull a model (e.g. `ollama pull gemma4:12b`) and you're set — no cloud API keys. You can also point it at an LLM on another machine on your LAN from the GUI.
 
 ### Option A — Ubuntu mini-PC (recommended)
 

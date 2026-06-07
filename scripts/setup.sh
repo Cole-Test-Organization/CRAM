@@ -144,7 +144,7 @@ esac
 echo
 
 bold "Agent LLM"; echo
-echo "The agent runs on a local LLM via Ollama. You don't set a model here — once running, the app uses your pick from Settings → Agent LLM, or auto-selects one from whatever models your Ollama has installed. Just make sure Ollama is running and you've pulled a model (e.g. 'ollama pull gemma4:e4b')."
+echo "The agent runs on a local LLM via Ollama. You don't set a model here — once running, the app uses your pick from Settings → Agent LLM, or auto-selects one from whatever models your Ollama has installed. Just make sure Ollama is running and you've pulled a model (e.g. 'ollama pull gemma4:12b')."
 echo
 
 # Write .env at repo root

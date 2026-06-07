@@ -12,12 +12,12 @@ echo "Running Postgres migrations..."
 npm run db:migrate
 
 # Start API with nodemon (hot-reload on file changes)
-npx nodemon --watch src --ext js,json,sql --signal SIGTERM src/index.js &
+npx nodemon --watch src --ext ts,js,json,sql --signal SIGTERM --exec tsx src/index.js &
 API_PID=$!
 
 # Start MCP server (separate process on :3100) under nodemon so edits to
 # src/mcp/, src/services/, instructions.js, etc. hot-reload like the API.
-npx nodemon --watch src --ext js,json,sql --signal SIGTERM src/mcp/server.js &
+npx nodemon --watch src --ext ts,js,json,sql --signal SIGTERM --exec tsx src/mcp/server.js &
 MCP_PID=$!
 
 # Start GUI Vite dev server with HMR

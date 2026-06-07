@@ -416,7 +416,7 @@ export default function Agent() {
                     <div class="text-[10px] text-base-500">
                         Runs on a local LLM — Ollama on this device by default.
                         Leave the fields blank to use the server default
-                        (gemma4:e4b on this device), or set a model / machine
+                        (gemma4:12b on this device), or set a model / machine
                         below.
                     </div>
 
@@ -430,7 +430,7 @@ export default function Agent() {
                             onInput={(e) =>
                                 setAgentSettings("model", e.currentTarget.value)
                             }
-                            placeholder="gemma4:e4b (or any model you've pulled)"
+                            placeholder="gemma4:12b (or any model you've pulled)"
                             class="bg-base-950 border-2 border-base-500 px-3 py-2 outline-none text-base-50 text-sm placeholder:text-base-400 focus:border-surf-300 font-mono"
                         />
                     </label>

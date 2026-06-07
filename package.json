@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Repo-root test runner + git hooks. Fans out to the gui/ and api/ subpackages; see TEST-SPEC.md.",
   "scripts": {
-    "typecheck": "npm --prefix gui run typecheck",
+    "typecheck": "npm --prefix gui run typecheck && npm --prefix api run typecheck",
     "test:gui": "npm --prefix gui test",
     "test": "npm run typecheck && npm run test:gui",
     "test:api": "bash dev/scripts/test/test-api.sh",

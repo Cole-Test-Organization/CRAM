@@ -24,7 +24,7 @@ export const DEFAULT_LOCAL_BASE_URL =
 // Last-resort model tag, used only if the user hasn't picked one AND the
 // server's installed models can't be listed. The model is a per-user DB
 // setting or resolved live from the server — never a deploy-time env var.
-export const FALLBACK_MODEL = 'gemma4:e4b';
+export const FALLBACK_MODEL = 'gemma4:12b';
 
 // The built-in agent system prompt — the base persona/instructions the in-app
 // agent runs with when the user hasn't customized it. Stored per-user (nullable
