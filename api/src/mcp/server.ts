@@ -30,7 +30,7 @@ import { AgentSettingsService } from '../services/agent/agent-settings.js';
 import { MemoriesService } from '../services/memories/memories.js';
 import { ThreadsService } from '../services/threads/threads.js';
 
-import { registerTools } from './tools.js';
+import { registerTools, type Services } from './tools.js';
 import { buildAgentMarkdown } from '../instructions.js';
 import { createLogger } from '../lib/logger.js';
 
@@ -70,7 +70,7 @@ const meetingsService = new MeetingsService({
 contactsService.accountsService = accountsService;
 contactsService.internalDomainsService = internalDomainsService;
 contactsService.contactEnrichmentService = contactEnrichmentService;
-const services = {
+const services: Services = {
   accountsService,
   contactsService,
   meetingsService,
@@ -108,7 +108,7 @@ const baseUrl = process.env.API_BASE_URL || 'http://localhost';
 // on the next client reconnect without restarting the process. The memory
 // lookup runs under RLS for the resolved user.
 async function createSessionServer() {
-  let memories = [];
+  let memories: any[] = [];
   try {
     memories = await memoriesService.listEnabledForInjection(defaultUserId);
   } catch {

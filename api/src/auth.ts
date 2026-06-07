@@ -1,7 +1,8 @@
+import type { FastifyRequest } from 'fastify';
 import { getPool } from './db/connection.js';
 import { getConfig } from './config.js';
 
-let cachedDefaultUserId = null;
+let cachedDefaultUserId: number | null = null;
 
 export async function getDefaultUserId() {
   if (cachedDefaultUserId) return cachedDefaultUserId;
@@ -18,6 +19,6 @@ export async function getDefaultUserId() {
 }
 
 // TODO: replace with real auth (magic link → session cookie) once the auth story lands.
-export async function getCurrentUserId(_request) {
+export async function getCurrentUserId(_request: FastifyRequest) {
   return getDefaultUserId();
 }

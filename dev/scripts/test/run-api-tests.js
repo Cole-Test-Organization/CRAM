@@ -106,7 +106,7 @@ async function main() {
   // Boot via api's local tsx binary so the suite runs against the real .ts
   // sources (no precompile step). Absolute bin + entry paths keep the original
   // cwd. The host already installs api deps (see test-api.sh), so tsx is present.
-  apiProc = spawn(path.join(apiDir, 'node_modules', '.bin', 'tsx'), [path.join(apiDir, 'src', 'index.js')], { stdio: 'inherit', env: serverEnv });
+  apiProc = spawn(path.join(apiDir, 'node_modules', '.bin', 'tsx'), [path.join(apiDir, 'src', 'index.ts')], { stdio: 'inherit', env: serverEnv });
   apiProc.on('exit', (code, signal) => {
     // If it dies before we've intentionally stopped it, fail loudly.
     if (!stopping) {

@@ -179,7 +179,7 @@ await fastify.register(async (api) => {
   await api.register(contactRoutes, { contactsService, accountsService, contactEnrichmentService });
   await api.register(meetingRoutes, { meetingsService, accountsService, contactEnrichmentService });
   await api.register(searchRoutes, { searchService });
-  if (todoistEnabled) await api.register(todoistRoutes, { todoistService });
+  if (todoistEnabled) await api.register(todoistRoutes, { todoistService: todoistService! });
   await api.register(exportRoutes, { exportService });
   await api.register(outreachRoutes, { outreachService });
   await api.register(eventRoutes, { eventsService });

@@ -12,13 +12,12 @@ npm run db:migrate
 # Start the API (Fastify on :3200). `node --import tsx` keeps node as the direct
 # process (clean $! PID capture + SIGTERM for graceful shutdown) while tsx
 # transpiles .ts on load. tsx is a runtime dependency, so it survives `npm ci
-# --omit=dev`. Entry stays src/index.js until the entrypoint files are renamed
-# to .ts in a later migration phase.
-node --import tsx src/index.js &
+# --omit=dev`.
+node --import tsx src/index.ts &
 API_PID=$!
 
 # Start the MCP server (separate process on :3100)
-node --import tsx src/mcp/server.js &
+node --import tsx src/mcp/server.ts &
 MCP_PID=$!
 
 echo "API on :3200 | MCP on :3100"

@@ -18,9 +18,14 @@
     "forceConsistentCasingInFileNames": true,
     "sourceMap": true,
 
-    // Migration coexistence: .js and .ts live side by side, and only .ts files
-    // are type-checked (checkJs:false) so unconverted .js never error-walls the
-    // gate. Flip allowJs:false at the end to prove no stray .js remains.
+    // Migration complete (Phase 4): api/src is 100% TypeScript (verified — no .js
+    // under src/). allowJs stays TRUE, not for api/src coexistence but because the
+    // outreach service imports the sibling outreach/ package's JS sources in-process
+    // via relative paths (../../../../outreach/src/*.js) — those cross-package .js
+    // imports need allowJs to resolve, and outreach/ deliberately stays JS. A
+    // relative specifier can't be covered by an ambient `declare module`. To flip
+    // allowJs:false later, give the outreach boundary a .d.ts facade (or convert
+    // outreach/ to TS). checkJs:false keeps that foreign JS out of our gate.
     "allowJs": true,
     "checkJs": false,
 
