@@ -8,46 +8,57 @@ Instructions for Claude when working in this repo. For project overview, archite
 
 When updating accounts, contacts, meetings, or tasks — **use the API endpoints**, not files. The database is the source of truth.
 
+### The `api/` backend is TypeScript (NodeNext, run under `tsx`)
+
+`api/src` is 100% TypeScript (`.ts`) with **no build step** — it runs directly under **`tsx`** in every context: dev (`tsx watch`), prod (`node --import tsx`), and the api test runner (`node --import tsx`). There is no `dist/` to compile before running.
+
+- **Dev hot-reloads `.ts` in place.** Editing any file under `api/src/` is a *code-only* change — nodemon/tsx reload it, no Docker rebuild (see "Rebuild after every code change" below).
+- **`tsconfig.json` is `NodeNext`.** Keep the explicit `.js` extension on relative imports *inside* `.ts` files — `import { x } from './foo.js'` is correct even though the file on disk is `foo.ts`. Do not strip it.
+- **Type gate:** `tsc --noEmit` (`npm --prefix api run typecheck`) is chained into the root `npm test` and the `.husky/pre-push` hook, so an api type error fails the same gate as the gui.
+- **What deliberately stays JS:** migrations are `.cjs` (node-pg-migrate executes them itself); `dev/scripts/*` are host `.js`; `api/test/*.test.js` stay `.js`; and the sibling `outreach/` / `events/` / `todoist/` packages stay `.js` — the api imports `outreach/`'s JS in-process, which is why `tsconfig` keeps `allowJs:true`.
+
+Full history and rationale: [api/TS-MIGRATION.md](api/TS-MIGRATION.md).
+
 ### Keep HTTP, MCP, in-process MCP client, and agent instructions in sync — MANDATORY
 
 The API is exposed through **four parallel surfaces** that must stay aligned. Any time you add, remove, or modify a route/field/behavior/workflow, check all four:
 
 | # | File | What it is |
 |---|---|---|
-| 1 | `api/src/routes/<resource>/*.js` | HTTP route (Fastify handler, swagger schema) |
-| 2 | `api/src/mcp/tools.js` | MCP tool registration (same operation, action-dispatched) |
-| 3 | `api/src/mcp/server.js` | Standalone MCP server process — builds the `services` bag passed to `registerTools` for external (HTTP) MCP clients |
-| 4 | `api/src/agent/mcp-client.js` | In-process MCP server/client pair used by the in-app agent loop — builds its **own** `services` bag passed to the same `registerTools`. **Easy to forget — if you add a service here, the in-app agent can't see it.** |
-| 5 | `api/src/instructions.js` | Agent-facing workflow doc — served over HTTP at `/api/agent` and delivered to MCP clients automatically in the initialize handshake (`InitializeResult.instructions`) |
+| 1 | `api/src/routes/<resource>/*.ts` | HTTP route (Fastify handler, swagger schema) |
+| 2 | `api/src/mcp/tools.ts` | MCP tool registration (same operation, action-dispatched) |
+| 3 | `api/src/mcp/server.ts` | Standalone MCP server process — builds the `services` bag passed to `registerTools` for external (HTTP) MCP clients |
+| 4 | `api/src/agent/mcp-client.ts` | In-process MCP server/client pair used by the in-app agent loop — builds its **own** `services` bag passed to the same `registerTools`. **Easy to forget — if you add a service here, the in-app agent can't see it.** |
+| 5 | `api/src/instructions.ts` | Agent-facing workflow doc — served over HTTP at `/api/agent` and delivered to MCP clients automatically in the initialize handshake (`InitializeResult.instructions`) |
 
-Shared business logic lives in `api/src/services/<resource>/*.js` — both the HTTP route and MCP tool should call the service, not reimplement logic.
+Shared business logic lives in `api/src/services/<resource>/*.ts` — both the HTTP route and MCP tool should call the service, not reimplement logic.
 
-**Folder layout.** `routes/` and `services/` are grouped by top-level resource and mirror each other (`accounts/`, `contacts/`, `vendors/`, `notes/`, …); a resource folder can hold more than one file (e.g. `routes/accounts/` has `accounts.js` + `account-details.js`). Cross-cutting service helpers (`_domain`, `_slug`, `_json`, `_email`, `_enrich`, `_fuzzy-match`, `_html`, `_llm`) live in `services/_shared/`. Folder location never changes a route's URL — Fastify builds paths from the literal strings in each handler plus the `/api` prefix registered in `index.js`.
+**Folder layout.** `routes/` and `services/` are grouped by top-level resource and mirror each other (`accounts/`, `contacts/`, `vendors/`, `notes/`, …); a resource folder can hold more than one file (e.g. `routes/accounts/` has `accounts.ts` + `account-details.ts`). Cross-cutting service helpers (`_domain`, `_slug`, `_json`, `_email`, `_enrich`, `_fuzzy-match`, `_html`, `_llm`) live in `services/_shared/`. Folder location never changes a route's URL — Fastify builds paths from the literal strings in each handler plus the `/api` prefix registered in `index.ts`.
 
 **HTTP and MCP must be at full parity.** Every service operation reachable via the HTTP API must also be reachable via the MCP tool (and vice versa). It is not enough that both surfaces share a service — both must actually *expose* every operation the service offers. If you add a new service method, add it to both surfaces in the same change. If you find an existing service method that's only wired up on one surface, treat that as a parity bug and fix it. Symptom: an agent asks the MCP client to do something the HTTP API can already do (e.g., filter accounts by status) and gets told it's not possible.
 
-**Two MCP servers, one `registerTools`.** The external MCP server (`api/src/mcp/server.js`, port 3100, HTTP transport) and the in-process MCP server (`api/src/agent/mcp-client.js`, `InMemoryTransport`) each build their own `services` object and hand it to the same `registerTools` in `api/src/mcp/tools.js`. The in-process one is what the in-app `/api/agent` loop calls. If a new service is added to `server.js` but not `mcp-client.js`, the in-app agent will throw `Cannot read properties of undefined` the moment it tries to use that tool — even though everything looks fine when tested against `localhost:3100`. **Always update both `services` bags in the same change.**
+**Two MCP servers, one `registerTools`.** The external MCP server (`api/src/mcp/server.ts`, port 3100, HTTP transport) and the in-process MCP server (`api/src/agent/mcp-client.ts`, `InMemoryTransport`) each build their own `services` object and hand it to the same `registerTools` in `api/src/mcp/tools.ts`. The in-process one is what the in-app `/api/agent` loop calls. If a new service is added to `server.ts` but not `mcp-client.ts`, the in-app agent will throw `Cannot read properties of undefined` the moment it tries to use that tool — even though everything looks fine when tested against `localhost:3100`. **Always update both `services` bags in the same change.**
 
 **When you change something, update in this order:**
 
 1. **Service** (`api/src/services/`) — the actual logic
 2. **HTTP route** (`api/src/routes/`) — wire it up for REST clients, including swagger schema
-3. **MCP tool** (`api/src/mcp/tools.js`) — wire it up for MCP clients (add an `action` enum value or a new tool)
+3. **MCP tool** (`api/src/mcp/tools.ts`) — wire it up for MCP clients (add an `action` enum value or a new tool)
 4. **Both `services` bags** — add the new service to *both*:
-   - `api/src/mcp/server.js` (external MCP, used by Claude Code / Claude.ai / Cursor / etc.)
-   - `api/src/agent/mcp-client.js` (in-process MCP, used by the in-app `/api/agent` loop)
-5. **Instructions** (`api/src/instructions.js`):
+   - `api/src/mcp/server.ts` (external MCP, used by Claude Code / Claude.ai / Cursor / etc.)
+   - `api/src/agent/mcp-client.ts` (in-process MCP, used by the in-app `/api/agent` loop)
+5. **Instructions** (`api/src/instructions.ts`):
    - Add/update an entry in the `REFS` map (`{ http, mcp }` representations) for any new or renamed operation
    - Update the "When to Use" and "Common Workflows" prose so agents know when to reach for it
    - Both `/api/agent` (HTTP) and the MCP initialize handshake will pick up the change automatically — don't duplicate. MCP clients re-read instructions only on a new session, so restart clients after doc changes.
 
-Schemas (request/response shapes, validation) come from the OpenAPI spec (HTTP) or `tools/list` (MCP) — don't duplicate them in `instructions.js`.
+Schemas (request/response shapes, validation) come from the OpenAPI spec (HTTP) or `tools/list` (MCP) — don't duplicate them in `instructions.ts`.
 
 **Removing an operation?** Delete its `REFS` entry and any prose that referenced it — leaving a stale key will crash the renderer (`Unknown instruction reference`).
 
-**Exception — deterministic HTTP-only endpoints.** A surface that is *only ever* machine-to-machine and deterministic — never invoked by the in-app agent or an external MCP client — may live as **service + HTTP route only**, and is deliberately excluded from the MCP tool (`api/src/mcp/tools.js`), both `services` bags (`api/src/mcp/server.js`, `api/src/agent/mcp-client.js`), and `api/src/instructions.js` / `REFS`. Keep these out of the four-surface parity check. Current exceptions:
+**Exception — deterministic HTTP-only endpoints.** A surface that is *only ever* machine-to-machine and deterministic — never invoked by the in-app agent or an external MCP client — may live as **service + HTTP route only**, and is deliberately excluded from the MCP tool (`api/src/mcp/tools.ts`), both `services` bags (`api/src/mcp/server.ts`, `api/src/agent/mcp-client.ts`), and `api/src/instructions.ts` / `REFS`. Keep these out of the four-surface parity check. Current exceptions:
 
-- **`calendar-import`** (`POST /api/calendar-import` → `api/src/services/calendar-import/calendar-import.js` + `api/src/routes/calendar-import/calendar-import.js`) — the daily Google Calendar ingestion a Google Apps Script forwards through a Cloudflare tunnel (the Apps Script exporter source lives in `calendar/` → @calendar/README.md). It's deterministic (no LLM) and consumed by the tunnel, not the agent, so it has **no** `calendar_import` MCP tool, is **not** in either `services` bag, and has **no** `instructions.js` entry. If it ever needs to be agent-callable, wire all four surfaces at that point.
+- **`calendar-import`** (`POST /api/calendar-import` → `api/src/services/calendar-import/calendar-import.ts` + `api/src/routes/calendar-import/calendar-import.ts`) — the daily Google Calendar ingestion a Google Apps Script forwards through a Cloudflare tunnel (the Apps Script exporter source lives in `calendar/` → @calendar/README.md). It's deterministic (no LLM) and consumed by the tunnel, not the agent, so it has **no** `calendar_import` MCP tool, is **not** in either `services` bag, and has **no** `instructions.ts` entry. If it ever needs to be agent-callable, wire all four surfaces at that point.
 
 ### Keep api/SCHEMA.md in sync with the database — MANDATORY
 
@@ -65,7 +76,7 @@ The script reads `DATABASE_URL` (defaults to `postgres://crm:devpassword@localho
 
 ### API routes live under /api
 
-All backend routes are registered under the `/api` prefix in `api/src/index.js`. Add new route files inside the existing `/api` plugin scope — don't repeat the prefix and don't extend the Vite proxy (it forwards the entire `/api` and `/docs` trees). SPA paths like `/accounts/:slug` belong to the GUI alone.
+All backend routes are registered under the `/api` prefix in `api/src/index.ts`. Add new route files inside the existing `/api` plugin scope — don't repeat the prefix and don't extend the Vite proxy (it forwards the entire `/api` and `/docs` trees). SPA paths like `/accounts/:slug` belong to the GUI alone.
 
 ### LinkedIn enrichment
 
