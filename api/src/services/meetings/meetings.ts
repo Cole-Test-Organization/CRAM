@@ -100,6 +100,25 @@ export class MeetingsService {
     return withUser(userId, (client) => this._fetchFull(client, id));
   }
 
+  // Look up an existing meeting for this user by its stable `filename`, REGARDLESS
+  // of account_id. The two unique indexes that back filename idempotency are
+  // partitioned — meetings_account_filename_uniq (account_id, filename) WHERE
+  // account_id IS NOT NULL and meetings_internal_filename_uniq (user_id, filename)
+  // WHERE account_id IS NULL — so a row that crosses partitions (parked ↔ linked)
+  // does NOT collide. Callers that need import idempotency tied to the filename
+  // alone (notes-import) check here first instead of relying solely on a 23505.
+  // RLS already scopes the query to this user; returns the row or null.
+  async findByFilename(userId: number, filename: string) {
+    if (!filename) return null;
+    return withUser(userId, async (client) => {
+      const res = await client.query(
+        'SELECT id, account_id, internal, needs_review FROM meetings WHERE filename = $1 LIMIT 1',
+        [filename]
+      );
+      return res.rows[0] || null;
+    });
+  }
+
   async _fetchFull(client: PoolClient, id: number) {
     const meeting = (await client.query(
       `SELECT ${MEETING_COLS} FROM meetings WHERE id = $1`,

@@ -24,10 +24,17 @@
 //   - internal / no account hint                       → park (internal +
 //                                                        needs_review).
 //
-// Re-import is idempotent: the meeting filename is derived from the source file
-// PATH (stable across runs), and meetings has unique indexes on
-// (account_id, filename) and (user_id, filename WHERE account_id IS NULL), so a
-// repeat of the same file trips a 23505 we catch and report as "skipped".
+// Re-import is idempotent on the FILENAME alone: the meeting filename is derived
+// from the source file PATH (stable across runs), so before writing we look up an
+// existing meeting with that filename for this user REGARDLESS of account_id and
+// skip if one is found. This matters because meetings' unique indexes are
+// partitioned — (account_id, filename) WHERE account_id IS NOT NULL and
+// (user_id, filename) WHERE account_id IS NULL — so a note that parked on one run
+// but links on the next (the local LLM is nondeterministic, or the user created/
+// merged the account in between) crosses partitions and would NOT trip a 23505.
+// The pre-write lookup ties idempotency to the filename and preserves any triage/
+// reassignment the user has done; a 23505 catch remains as a same-partition
+// backstop. Either way a repeat of the same file is reported as "skipped".
 //
 // Jobs run serially behind a single worker — like contact-enrichment, we never
 // fire two local-LLM calls at once (one small box, limited VRAM).
@@ -400,13 +407,37 @@ Return ONLY the JSON object specified in the system prompt.`;
   // per-file result the job report surfaces. Idempotent: a duplicate filename
   // (re-import of the same source file) is caught and reported as "skipped".
   async _writeOne(userId: number, file: NoteFile, ex: ExtractionRecord) {
-    // Stable, path-derived filename → re-importing the same file collides on the
-    // meetings unique index instead of creating a second copy.
+    // Stable, path-derived filename → re-importing the same file resolves to the
+    // same meeting. NOTE: must match meetingsService.create's stored value exactly
+    // (it re-runs deriveFilename, which is idempotent on an already-derived stem)
+    // so the lookup below actually matches.
     const filename = deriveFilename(ex.date || todayIso(), null, stripExt(file.path));
     const date = ex.date || todayIso();
     const title = ex.title || null;
     const body = file.content;
     const unlinked = ex.attendees;
+
+    // Idempotency is tied to the filename ALONE, regardless of account_id. The
+    // two unique indexes that back the meetings filename constraint are
+    // partitioned on (account_id IS NULL), so a note that PARKED on a prior run
+    // (account_id NULL) but resolves to a confident account this run — or the
+    // reverse — would land in the OTHER partition and NOT trip a 23505, silently
+    // creating a duplicate. Look first (user-scoped) and, if a meeting from this
+    // source file already exists, leave it as-is (preserving any triage /
+    // reassignment the user has done) and report it skipped. The 23505 catch
+    // below stays as a backstop for a race within a single partition.
+    const existing = await this.meetingsService.findByFilename(userId, filename);
+    if (existing) {
+      return {
+        path: file.path,
+        ok: true,
+        outcome: 'skipped',
+        reason: 'duplicate',
+        meeting_id: existing.id,
+        account_id: existing.account_id ?? null,
+        note: 'A meeting from this file already exists (matched on filename, any account) — left as-is.',
+      };
+    }
 
     // Decide account assignment.
     const hasHint = !ex.is_internal && (ex.account_name || ex.account_domain);
