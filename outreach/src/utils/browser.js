@@ -49,15 +49,25 @@ export async function getBrowser(options = {}) {
     return browser;
 }
 
-export async function loadCookies(page) {
+// Read and parse the saved cookie jar without launching a browser.
+// Returns the parsed cookie array, or null if the file is missing/unparseable.
+// Used by the cheap (no-navigation) session pre-check in session.js.
+export async function readCookiesRaw() {
     try {
         const cookiesString = await fs.readFile(COOKIES_PATH, "utf-8");
-        const cookies = JSON.parse(cookiesString);
-        await page.setCookie(...cookies);
-        return true;
+        return JSON.parse(cookiesString);
     } catch (error) {
+        return null;
+    }
+}
+
+export async function loadCookies(page) {
+    const cookies = await readCookiesRaw();
+    if (!cookies) {
         return false;
     }
+    await page.setCookie(...cookies);
+    return true;
 }
 
 export async function saveCookies(page) {
@@ -201,6 +211,40 @@ export async function scrapeLinkedInProfile(url, options = {}) {
             "navigating to profile",
         );
         await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+
+        // In-flight auth-wall detection. The cheap pre-check can't tell a
+        // server-side-stale session from a live one, so catch it here before
+        // we scrape — otherwise an expired session yields garbage profile data.
+        // Mirrors the login-wall detection in searchLinkedIn.
+        const isLoginPage = await page.evaluate(() => {
+            const hasLoginForm =
+                document.querySelector('input[name="session_key"]') !== null;
+            const hasPasswordInput =
+                document.querySelector(
+                    'input[type="password"][name="session_password"]',
+                ) !== null;
+            const isAuthChallenge =
+                window.location.href.includes("/authwall") ||
+                window.location.href.includes("/checkpoint");
+
+            return hasLoginForm || hasPasswordInput || isAuthChallenge;
+        });
+
+        if (isLoginPage) {
+            await page
+                .screenshot({ path: "/tmp/linkedin-login-wall.png" })
+                .catch(() => {});
+            logger.error(
+                {
+                    event: "profile.login_wall",
+                    screenshot: "/tmp/linkedin-login-wall.png",
+                },
+                "detected login/verification page — cookies may have expired",
+            );
+            throw new Error(
+                "LinkedIn requires login. Cookies may have expired. Please run: node src/index.js login",
+            );
+        }
 
         // Human-like delay after page load
         await humanLikeDelay(page);

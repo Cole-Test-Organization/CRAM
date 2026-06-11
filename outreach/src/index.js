@@ -99,7 +99,9 @@ await runCli({
           const { validateSession } = await import('./utils/session.js');
           const { getRateLimitStats } = await import('./utils/ratelimit.js');
 
-          const isValid = await validateSession();
+          // Human explicitly asked for status — do the real /feed probe to
+          // confirm the session is live server-side, not just locally valid.
+          const isValid = await validateSession(true);
           const rateLimit = await getRateLimitStats();
 
           console.log(JSON.stringify({
