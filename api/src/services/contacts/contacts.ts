@@ -490,6 +490,22 @@ export class ContactsService {
     return fields;
   }
 
+  // Public, RLS-scoped fill-only enrich — the write path for MACHINE-generated
+  // data (the background research/LLM enrichment pipeline). Mirrors what
+  // findOrCreate does on a match: fills only columns that are currently blank,
+  // never overwriting curated/hand-edited values. Use this — NOT patch() —
+  // whenever an automated source contributes data, so re-running research can't
+  // clobber the SE's notes/title/location. patch() stays the deliberate
+  // user-edit path (routes/MCP update). Returns
+  //   { contact, enriched, enriched_fields } (contact is null if id is gone).
+  async enrichBlanks(userId: number, id: number, data: Record<string, unknown>) {
+    return withUser(userId, async (client) => {
+      const enriched_fields = await this._enrichBlanks(client, id, data);
+      const contact = await this._fetchWithAccounts(client, id);
+      return { contact, enriched: enriched_fields.length > 0, enriched_fields };
+    });
+  }
+
   // Idempotent upsert — the single creation path every caller should funnel
   // through (calendar/notes import, the from-emails meeting flow, the agent),
   // so the same dedupe + enrich checks always run and near-duplicate contacts

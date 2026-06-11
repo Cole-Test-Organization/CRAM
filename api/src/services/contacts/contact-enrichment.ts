@@ -10,7 +10,8 @@
 //      retries once if not, then drops the run if the second attempt still
 //      doesn't parse — better to leave the contact untouched than to write
 //      garbage.
-//   5. PATCHes the contact with the validated fields.
+//   5. Fills the validated fields into the contact — FILL-ONLY (blank columns
+//      only; never overwrites the SE's curated notes/title/location).
 //
 // Jobs run serially behind the outreach queue (outreach already serializes
 // LinkedIn calls). The local LLM call is one-shot per job — we don't run
@@ -280,13 +281,17 @@ export class ContactEnrichmentService {
       return;
     }
 
-    // 4) patch the contact
+    // 4) write the contact — FILL-ONLY. Research is machine-generated, so it
+    //    may only populate columns that are currently blank; it must never
+    //    overwrite the SE's hand-written notes/title/location. enrichBlanks
+    //    enforces that (same fill-only machinery findOrCreate uses), unlike
+    //    patch() which is a full overwrite reserved for explicit user edits.
     job.stage = 'patching';
     try {
-      await this.contactsService.patch(job.userId, job.contactId, patch);
+      await this.contactsService.enrichBlanks(job.userId, job.contactId, patch);
     } catch (err) {
       job.status = 'failed';
-      job.error = `contact patch failed: ${(err as Error).message || String(err)}`;
+      job.error = `contact enrich failed: ${(err as Error).message || String(err)}`;
       job.completedAt = new Date().toISOString();
       return;
     }

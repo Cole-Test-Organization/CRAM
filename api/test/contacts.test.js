@@ -65,6 +65,21 @@ describe('Contacts — find-or-create (upsert + fill-blanks)', () => {
     assert.ok(matched.body.enriched_fields.includes('full_name'));
     assert.equal(matched.body.contact.full_name, name);
   });
+
+  // Fill-only is one-directional: a column that ALREADY has a value is never
+  // clobbered by a later enrich. Same machinery the research/LLM write path
+  // (ContactsService.enrichBlanks) relies on to protect the SE's curated data.
+  it('never overwrites an already-populated field', async (t) => {
+    const email = uniqueEmail();
+    const created = await post('/contacts/find-or-create', { email, title: 'Original Title', kind: 'internal' });
+    if (created.body?.contact?.id) deleteAfter(t, `/contacts/${created.body.contact.id}`);
+    assert.equal(created.body.created, true);
+
+    const again = await post('/contacts/find-or-create', { email, title: 'New Title', kind: 'internal' });
+    assert.equal(again.body.created, false);
+    assert.equal(again.body.contact.title, 'Original Title');
+    assert.ok(!again.body.enriched_fields || !again.body.enriched_fields.includes('title'));
+  });
 });
 
 describe('Contacts — account links', () => {

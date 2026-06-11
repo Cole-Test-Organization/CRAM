@@ -474,7 +474,7 @@ export default async function contactRoutes(fastify: FastifyInstance, { contacts
   // and the service handles outreach queue + LLM formatting + PATCH.
   fastify.post<{ Params: { id: number } }>('/contacts/:id/research', {
     schema: {
-      description: 'Enqueue a background outreach + local-LLM enrichment job for an existing contact. Returns `{ jobId }` immediately; poll GET /api/contacts/enrichment-jobs/:jobId or GET /api/contacts/:id/enrichment-jobs. Uses the same ContactEnrichmentService as the from-emails meeting flow — when the job completes the contact is PATCHed in place.',
+      description: 'Enqueue a background outreach + local-LLM enrichment job for an existing contact. Returns `{ jobId }` immediately; poll GET /api/contacts/enrichment-jobs/:jobId or GET /api/contacts/:id/enrichment-jobs. Uses the same ContactEnrichmentService as the from-emails meeting flow — when the job completes its fields are filled into the contact FILL-ONLY (blank columns only; curated values are never overwritten).',
       tags: ['contacts'],
       params: { type: 'object', properties: { id: { type: 'integer' } } },
     },
