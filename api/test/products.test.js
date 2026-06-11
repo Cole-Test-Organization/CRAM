@@ -32,6 +32,21 @@ describe('Products — CRUD', () => {
     assert.equal(res.body.deleted, true);
     assert.equal((await del(`/products/${body.id}`)).status, 404);
   });
+
+  it('total respects the search filter (counts matches, not all products)', async (t) => {
+    // Two products sharing a unique token; nothing else in the catalog matches it.
+    const token = uniqueName('ZZZSearchTotal').replace(/\s+/g, '');
+    const a = await post('/products', { name: `${token} Alpha` });
+    const b = await post('/products', { name: `${token} Beta` });
+    deleteAfter(t, `/products/${a.body.id}`);
+    deleteAfter(t, `/products/${b.body.id}`);
+
+    const res = await get(`/products?search=${token}`);
+    assert.equal(res.status, 200);
+    // The bug counted every product; total must reflect the ILIKE filter.
+    assert.equal(res.body.total, 2);
+    assert.equal(res.body.total, listFrom(res.body).length);
+  });
 });
 
 describe('Product categories — CRUD', () => {

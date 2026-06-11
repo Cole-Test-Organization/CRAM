@@ -57,6 +57,7 @@ export class OpportunitiesService {
         conditions.push(`o.stage = $${params.length}`);
       }
       const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+      const filterParams = [...params];
       params.push(limit, offset);
 
       const rows = (await client.query(
@@ -73,9 +74,10 @@ export class OpportunitiesService {
         params
       )).rows;
 
-      const countRes = account_id
-        ? await client.query('SELECT COUNT(*)::int AS c FROM opportunities WHERE account_id = $1', [account_id])
-        : await client.query('SELECT COUNT(*)::int AS c FROM opportunities');
+      const countRes = await client.query(
+        `SELECT COUNT(*)::int AS c FROM opportunities o ${whereClause}`,
+        filterParams
+      );
       return { opportunities: rows, total: countRes.rows[0].c };
     });
   }

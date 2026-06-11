@@ -68,6 +68,23 @@ describe('Opportunities — CRUD + rules', () => {
     assert.ok(listFrom(res.body).length >= 1);
   });
 
+  it('total respects the stage filter (drops opps in other stages)', async (t) => {
+    const acc = await aCustomerAccount();
+    // Seed data spreads opps across many stages, so a single-stage count must be
+    // strictly smaller than the unfiltered count.
+    await makeOpp(t, acc.id, { stage: 'pov_planning' });
+
+    const all = await get('/opportunities?limit=500');
+    assert.equal(all.status, 200);
+    const filtered = await get('/opportunities?stage=pov_planning&limit=500');
+    assert.equal(filtered.status, 200);
+
+    // The bug ignored stage in the count, so filtered.total equalled all.total.
+    assert.ok(filtered.body.total < all.body.total, 'stage filter must shrink the total');
+    assert.equal(filtered.body.total, listFrom(filtered.body).length);
+    assert.ok(listFrom(filtered.body).every((o) => o.stage === 'pov_planning'));
+  });
+
   it('DELETE returns the name; a second delete 404s', async () => {
     const acc = await aCustomerAccount();
     const { body } = await post('/opportunities', { account_id: acc.id, name: 'ZZZ Delete Opp' });

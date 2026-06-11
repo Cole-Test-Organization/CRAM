@@ -25,6 +25,7 @@ export class ProductsService {
         conditions.push(`p.name ILIKE $${params.length}`);
       }
       const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+      const filterParams = [...params];
       let paginationSql = '';
       if (limit != null) {
         params.push(limit, offset);
@@ -42,9 +43,10 @@ export class ProductsService {
         params
       )).rows;
 
-      const totalRes = category_id
-        ? await client.query('SELECT COUNT(*)::int AS c FROM products WHERE category_id = $1', [category_id])
-        : await client.query('SELECT COUNT(*)::int AS c FROM products');
+      const totalRes = await client.query(
+        `SELECT COUNT(*)::int AS c FROM products p ${whereClause}`,
+        filterParams
+      );
       return { products: rows, total: totalRes.rows[0].c };
     });
   }
