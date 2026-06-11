@@ -5,6 +5,7 @@ import {
     Show,
 } from "solid-js";
 import { api } from "../../lib/api";
+import { STORAGE_KEY as THEME_STORAGE_KEY } from "../../lib/theme";
 import Button from "../Button";
 
 function fmtBytes(n: number) {
@@ -65,10 +66,19 @@ export default function BackupSettings(props: Props) {
         setRestoring(filename);
         try {
             await api.restoreBackup(filename);
-            props.flash("ok", `Restored from ${filename}`);
+            // The restore dropped and rebuilt the whole DB (themes, agent config,
+            // memories, internal domains, …), so every cached client-side value is
+            // now stale. Clear the cached theme and hard-reload to rebuild all state
+            // from the freshly-restored database.
+            props.flash("ok", `Restored from ${filename} — reloading…`);
+            try {
+                localStorage.removeItem(THEME_STORAGE_KEY);
+            } catch {
+                /* private mode etc. */
+            }
+            setTimeout(() => window.location.reload(), 800);
         } catch (err: any) {
             props.flash("err", `Restore failed: ${err.message || err}`);
-        } finally {
             setRestoring(null);
         }
     };

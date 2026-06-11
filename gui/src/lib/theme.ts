@@ -61,7 +61,7 @@ export type Theme = {
 export const RAMP_NAMES = ['surf', 'cerulean', 'amber', 'papaya', 'scarlet', 'base'] as const;
 export const RAMP_STEPS = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
 
-const STORAGE_KEY = 'cram-active-theme';
+export const STORAGE_KEY = 'cram-active-theme';
 const STYLE_ID    = 'active-theme-vars';
 
 // ── CSS injection ────────────────────────────────────────────────────────────
