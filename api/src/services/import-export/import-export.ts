@@ -653,7 +653,12 @@ export class ImportExportService {
         if (id) attendeeIds.push(id);
       }
       if (attendeeIds.length > 0) {
-        await client.query('DELETE FROM meeting_attendees WHERE meeting_id = $1', [meetingId]);
+        // Only replace LINKED (contact_id) attendee rows. display_name-only
+        // rows (contact_id NULL — partner reps / teammates) are not carried in
+        // the portable bundle, so a `meeting_id`-only delete would permanently
+        // wipe locally-recorded unlinked attendees on re-import. Scope to linked
+        // rows, mirroring meetings.ts.
+        await client.query('DELETE FROM meeting_attendees WHERE meeting_id = $1 AND contact_id IS NOT NULL', [meetingId]);
         for (const cid of attendeeIds) {
           await client.query(
             'INSERT INTO meeting_attendees (meeting_id, contact_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
