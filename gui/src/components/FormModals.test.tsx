@@ -13,7 +13,7 @@
 // hermetic. Each modal renders through a Portal, so we query via `screen`.
 
 import { render, screen, fireEvent } from '@solidjs/testing-library';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import {
   MeetingFormModal,
   AccountFormModal,
@@ -29,13 +29,16 @@ import {
 // the modals render; writes are vi.fn()s with light implementations so we can
 // assert the call and let the submit→onClose path complete. getAttendeeOptions
 // gives the Meeting attendee test exactly one selectable contact.
+type AttendeeOpt = { id: number; full_name: string; kind: string };
+type AttendeeOptions = { account: AttendeeOpt[]; partner: AttendeeOpt[]; internal: AttendeeOpt[] };
+
 const apiMock = vi.hoisted(() => ({
-  getAttendeeOptions: vi.fn(async () => ({
+  getAttendeeOptions: vi.fn(async (): Promise<AttendeeOptions> => ({
     account: [],
     partner: [],
     internal: [{ id: 99, full_name: 'Test Teammate', kind: 'internal' }],
   })),
-  getAccounts: vi.fn(async () => ({ accounts: [{ id: 1, name: 'Acme Corp', slug: 'acme-corp', status: 'account' }], total: 1 })),
+  getAccounts: vi.fn(async () => ({ accounts: [{ id: 1, name: 'Acme Corp', slug: 'acme-corp', status: 'account' }] as any[], total: 1 })),
   getProducts: vi.fn(async () => ({ products: [], total: 0 })),
   getProductCategories: vi.fn(async () => ({ categories: [], total: 0 })),
   getVendors: vi.fn(async () => ({ vendors: [{ id: 7, name: 'Cisco' }], total: 1 })),
@@ -108,6 +111,75 @@ describe('MeetingFormModal — editing must not be clobbered by the init effect'
     // Pre-fix: the init effect re-ran and reset contactIds to [] on selection,
     // which is exactly the "it won't let me keep a contact" symptom.
     expect(checkbox.checked).toBe(true);
+  });
+});
+
+// ───────────────── Meeting — attendee scope changes clear selection ──────────
+// Switching the account (or toggling internal) changes the attendee option set.
+// The selection must be dropped so a prior scope's contact ids can't be silently
+// submitted: AttendeePicker hides ids it can't resolve against the new options,
+// but they'd still POST, and the meetings service only validates that a contact
+// *exists*, not that it belongs to the chosen account.
+
+describe('MeetingFormModal — changing the scope clears selected attendees', () => {
+  // mockResolvedValue persists past clearAllMocks (which only clears call
+  // history), so restore the two mocks this block overrides to their file
+  // defaults afterwards — otherwise the two-account list / customer contact
+  // would leak into later AccountPicker-rendering tests.
+  afterEach(() => {
+    apiMock.getAccounts.mockResolvedValue({ accounts: [{ id: 1, name: 'Acme Corp', slug: 'acme-corp', status: 'account' }] as any[], total: 1 });
+    apiMock.getAttendeeOptions.mockResolvedValue({ account: [], partner: [], internal: [{ id: 99, full_name: 'Test Teammate', kind: 'internal' }] });
+  });
+
+  it('clears the selection when the account changes (stale ids are not submitted)', async () => {
+    // Two accounts to switch between, and one selectable customer contact that the
+    // attendee picker offers for whichever account is chosen.
+    apiMock.getAccounts.mockResolvedValue({
+      accounts: [
+        { id: 1, name: 'Acme Corp', slug: 'acme-corp', status: 'account' },
+        { id: 2, name: 'Beta Inc', slug: 'beta-inc', status: 'account' },
+      ],
+      total: 2,
+    });
+    apiMock.getAttendeeOptions.mockResolvedValue({
+      account: [{ id: 42, full_name: 'Casey Customer', kind: 'account' }],
+      partner: [],
+      internal: [],
+    });
+
+    const onClose = vi.fn();
+    render(() => <MeetingFormModal open onClose={onClose} />);
+
+    // Notes are required for submit — fill them so only the attendee check gates.
+    fireEvent.input(screen.getByPlaceholderText(/meeting notes/i), { target: { value: 'kickoff' } });
+
+    // Pick account #1 via the AccountPicker dropdown.
+    fireEvent.click(screen.getByRole('button', { name: /select account/i }));
+    fireEvent.click(await screen.findByText('Acme Corp'));
+
+    // Select the contact the picker offers for account #1. Scope the checkbox to
+    // the attendee row — the modal also renders the "internal" Type checkbox.
+    const contact = await screen.findByText('Casey Customer');
+    fireEvent.click(contact);
+    await flush();
+    const attendeeRow = screen.getByTestId('attendee-option');
+    const checkbox = attendeeRow.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    expect(checkbox.checked).toBe(true);
+
+    // Switch to account #2 without re-picking an attendee.
+    fireEvent.click(screen.getByRole('button', { name: /acme corp/i }));
+    fireEvent.click(await screen.findByText('Beta Inc'));
+    await flush();
+
+    // Try to save. The selection must have been cleared, so the manual-create
+    // guard blocks with "Select at least one attendee" and never POSTs the stale
+    // contact. Pre-fix: contactIds still held id 42 and createMeeting fired,
+    // linking Acme's contact to Beta.
+    fireEvent.click(create());
+    await flush();
+    expect(screen.getByText('Select at least one attendee')).toBeTruthy();
+    expect(apiMock.createMeeting).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });
 

@@ -643,7 +643,14 @@ export function MeetingFormModal(props: MeetingModalProps) {
             <input
               type="checkbox"
               checked={internal()}
-              onChange={(e) => setInternal(e.currentTarget.checked)}
+              onChange={(e) => {
+                setInternal(e.currentTarget.checked);
+                // Toggling the scope changes the attendee option set (account
+                // contacts vs. internal team). Drop the current selection so
+                // stale ids from the old scope can't be silently submitted —
+                // AttendeePicker hides unknown ids but they'd still POST.
+                setContactIds([]);
+              }}
               class="w-4 h-4 accent-surf-300"
             />
             Internal meeting (no account)
@@ -678,7 +685,19 @@ export function MeetingFormModal(props: MeetingModalProps) {
       <Show when={showManualAccountPickers()}>
         <FormField label="Account" required>
           <Show when={props.fixedAccountId} fallback={
-            <AccountPicker value={account()} onChange={setAccount} />
+            <AccountPicker
+              value={account()}
+              onChange={(a) => {
+                setAccount(a);
+                // The attendee picker scopes its options to the selected
+                // account; switching accounts must drop the prior account's
+                // selected contacts so they aren't silently linked to the new
+                // one (the meetings service only validates existence, not
+                // membership, and AttendeePicker hides — but still submits —
+                // ids it can't resolve against the new option set).
+                setContactIds([]);
+              }}
+            />
           }>
             <div class="input-vintage opacity-75">
               {props.fixedAccountName}
