@@ -24,29 +24,31 @@ export async function researchCompany(name, options = {}) {
     const cyberResults = await searchWeb(`${name} cybersecurity initiatives`);
 
     if (options.linkedin) {
-      // Search for company page on LinkedIn
-      const companyResults = await searchLinkedIn(name, 'companies');
+      result.source = 'linkedin';
+      result.linkedin = { searches: [] };
 
-      if (companyResults.length > 0) {
-        result.source = 'linkedin';
+      // Search for the company page and its leaders on LinkedIn.
+      // searchLinkedIn returns raw page content for the LLM/agent to parse,
+      // not a structured array — fold each search's raw_text + profile_links
+      // into the result so downstream consumers can extract leaders/details.
+      const linkedinSearches = [
+        { query: name, type: 'companies' },
+        { query: `${name} CEO`, type: 'people' },
+        { query: `${name} CISO`, type: 'people' },
+        { query: `${name} CTO`, type: 'people' }
+      ];
 
-        // Search for leaders of the company
-        const leaderSearches = [
-          `${name} CEO`,
-          `${name} CISO`,
-          `${name} CTO`
-        ];
-
-        for (const query of leaderSearches) {
-          const leaders = await searchLinkedIn(query, 'people');
-          if (leaders.length > 0) {
-            result.leaders.push(...leaders.slice(0, 2).map(l => ({
-              name: l.name,
-              title: l.subtitle,
-              url: l.url
-            })));
-          }
-        }
+      for (const { query, type } of linkedinSearches) {
+        const searchData = await searchLinkedIn(query, type, options);
+        result.linkedin.searches.push({
+          query: searchData.query,
+          type: searchData.type,
+          search_url: searchData.url,
+          raw_text: searchData.pageContent.raw_text,
+          profile_links: searchData.pageContent.profile_links || [],
+          instructions:
+            "Parse the raw_text to extract the company page or its leaders (name, title/role, profile URL). Use profile_links for /in/ URLs. Match against the company being researched."
+        });
       }
     }
 
@@ -56,7 +58,8 @@ export async function researchCompany(name, options = {}) {
     // Extract initiatives from web results
     result.initiatives = extractInitiatives(webResults, cyberResults);
 
-    // If no LinkedIn leaders found, try to extract from web
+    // Best-effort structured leaders from web results; LinkedIn leader detail
+    // lives in result.linkedin.searches as raw_text for the agent to parse.
     if (result.leaders.length === 0) {
       result.leaders = extractLeadersFromWeb(webResults);
     }

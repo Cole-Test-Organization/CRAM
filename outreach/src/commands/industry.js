@@ -39,30 +39,21 @@ export async function researchIndustry(area, options = {}) {
     const motiveResults = await searchWeb(motiveQuery);
     result.motives = extractMotives(motiveResults);
 
-    // If LinkedIn is enabled, enrich with LinkedIn data
+    // If LinkedIn is enabled, enrich with LinkedIn data.
+    // searchLinkedIn returns raw page content for the LLM/agent to parse,
+    // not a structured array — fold the search's raw_text + profile_links
+    // into the result so downstream consumers can extract companies/leaders.
     if (options.linkedin) {
-      // Search for companies on LinkedIn
-      const linkedinCompanies = await searchLinkedIn(`${area} companies`, 'companies');
-
-      // Merge with existing companies
-      for (const lc of linkedinCompanies.slice(0, limit)) {
-        const existingCompany = result.companies.find(c =>
-          c.name.toLowerCase().includes(lc.name.toLowerCase()) ||
-          lc.name.toLowerCase().includes(c.name.toLowerCase())
-        );
-
-        if (existingCompany) {
-          existingCompany.linkedin = lc.url;
-          existingCompany.description = lc.subtitle;
-        } else if (result.companies.length < limit) {
-          result.companies.push({
-            name: lc.name,
-            description: lc.subtitle,
-            linkedin: lc.url,
-            cybersecurity_focus: null
-          });
-        }
-      }
+      const searchData = await searchLinkedIn(`${area} companies`, 'companies', options);
+      result.linkedin = {
+        query: searchData.query,
+        type: searchData.type,
+        search_url: searchData.url,
+        raw_text: searchData.pageContent.raw_text,
+        profile_links: searchData.pageContent.profile_links || [],
+        instructions:
+          "Parse the raw_text to extract companies operating in this industry (name, description, LinkedIn URL). Use profile_links for any individual /in/ URLs surfaced. Cross-reference with the web-sourced companies array."
+      };
     }
 
     return result;
