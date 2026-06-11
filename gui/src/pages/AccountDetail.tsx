@@ -1,4 +1,4 @@
-import { createResource, createSignal, Show } from 'solid-js';
+import { createResource, createSignal, createEffect, Show } from 'solid-js';
 import { useParams, useNavigate } from '@solidjs/router';
 import { api } from '../lib/api';
 import { createAutoSave } from '../lib/editing';
@@ -50,16 +50,33 @@ export default function AccountDetail() {
 
       <Show when={data()} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
         {(account) => {
-          const acct = account();
           const [editingName, setEditingName] = createSignal(false);
-          const [nameVal, setNameVal] = createSignal(acct.name);
+          const [nameVal, setNameVal] = createSignal(account().name);
+
+          // The non-keyed <Show> keeps this closure alive while data() stays
+          // truthy, and createResource retains the previous account during a
+          // slug refetch — so on account→account navigation the closure (and the
+          // signals below) persist. Reset the inline-edit name state whenever the
+          // account id changes so a half-typed rename can't leak to the next
+          // account. Guard on the id so a same-account refetch (which re-fires
+          // this effect via the new account() object) doesn't clobber an
+          // in-progress edit.
+          let lastNameId: number | undefined;
+          createEffect(() => {
+            const a = account();
+            if (a.id !== lastNameId) {
+              lastNameId = a.id;
+              setEditingName(false);
+              setNameVal(a.name);
+            }
+          });
 
           return (
             <>
               <div class="flex flex-col gap-4 mb-6 md:flex-row md:justify-between md:items-start">
                 <div class="flex-1 min-w-0">
                   <Show when={editingName()} fallback={
-                    <h1 class="text-[26px] font-bold cursor-pointer font-[family-name:var(--font-display)]" onClick={() => setEditingName(true)} title="Click to edit">{acct.name}</h1>
+                    <h1 class="text-[26px] font-bold cursor-pointer font-[family-name:var(--font-display)]" onClick={() => setEditingName(true)} title="Click to edit">{account().name}</h1>
                   }>
                     <input
                       class={`${fieldClass} text-[26px] font-bold py-0.5 px-1.5 w-full font-[family-name:var(--font-display)]`}
@@ -67,7 +84,7 @@ export default function AccountDetail() {
                       onInput={(e) => setNameVal(e.currentTarget.value)}
                       onBlur={() => {
                         setEditingName(false);
-                        if (nameVal() !== acct.name) {
+                        if (nameVal() !== account().name) {
                           accountSaver.saveNow({ name: nameVal() });
                         }
                       }}
@@ -78,7 +95,7 @@ export default function AccountDetail() {
                   <div class="flex items-center gap-3 mt-1 flex-wrap">
                     <select
                       class={fieldClass}
-                      value={acct.status === 'partner' ? 'partner' : 'account'}
+                      value={account().status === 'partner' ? 'partner' : 'account'}
                       onChange={(e) => accountSaver.saveNow({ status: e.currentTarget.value })}
                     >
                       <option value="account">Account</option>
@@ -87,7 +104,7 @@ export default function AccountDetail() {
                     <input
                       type="date"
                       class={fieldClass}
-                      value={acct.last_contact || ''}
+                      value={account().last_contact || ''}
                       onChange={(e) => accountSaver.saveNow({ last_contact: e.currentTarget.value || null })}
                       title="Last contact date"
                     />
@@ -97,12 +114,12 @@ export default function AccountDetail() {
                 <div class="flex gap-3 flex-wrap">
                   <Button variant="ghost" size="sm" onClick={async () => {
                     try {
-                      const bundle = await api.exportAccountBundle(acct.slug);
+                      const bundle = await api.exportAccountBundle(account().slug);
                       const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement('a');
                       a.href = url;
-                      a.download = `${acct.slug}.json`;
+                      a.download = `${account().slug}.json`;
                       document.body.appendChild(a);
                       a.click();
                       document.body.removeChild(a);
@@ -140,12 +157,18 @@ export default function AccountDetail() {
               {/* Mounted unconditionally and gated by `active` (not wrapped in a
                   <Show> like the other tabs) so its inline-edit state for
                   domains / partners / supporting team survives tab switches —
-                  the panel hides its own content when inactive. */}
-              <OverviewPanel account={acct} saver={accountSaver} active={tab() === 'overview'} />
+                  the panel hides its own content when inactive. It snapshots its
+                  `account` prop at setup (seeding optimistic local lists), so a
+                  keyed Show on the account id remounts it on account→account
+                  navigation to re-seed from the new account — while a same-account
+                  refetch (id unchanged) and tab switches leave it mounted. */}
+              <Show when={account().id} keyed>
+                <OverviewPanel account={account()} saver={accountSaver} active={tab() === 'overview'} />
+              </Show>
 
               {/* === PROFILE TAB === */}
               <Show when={tab() === 'profile'}>
-                <TechnicalProfilePanel accountId={acct.id} />
+                <TechnicalProfilePanel accountId={account().id} />
               </Show>
 
               {/* === CONTACTS TAB === */}
@@ -181,7 +204,7 @@ export default function AccountDetail() {
               {/* === THREADS TAB === */}
               <Show when={tab() === 'threads'}>
                 <ThreadsPanel
-                  accountId={acct.id}
+                  accountId={account().id}
                   accountContacts={[...(account().contacts || []), ...(account().team || [])]}
                   onThreadsChanged={() => refetch()}
                 />
@@ -189,7 +212,7 @@ export default function AccountDetail() {
 
               {/* === NOTES TAB === */}
               <Show when={tab() === 'notes'}>
-                <NotesPanel target={{ account_id: acct.id }} />
+                <NotesPanel target={{ account_id: account().id }} />
               </Show>
 
             </>
