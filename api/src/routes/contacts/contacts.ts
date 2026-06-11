@@ -2,6 +2,13 @@ import type { FastifyInstance } from 'fastify';
 import type { ContactsService } from '../../services/contacts/contacts.js';
 import type { AccountsService } from '../../services/accounts/accounts.js';
 import type { ContactEnrichmentService } from '../../services/contacts/contact-enrichment.js';
+import { badRequest } from '../../lib/http-error.js';
+
+// Shared message for the "can't research a nameless contact" guard — full_name
+// is nullable by design (calendar import / the agent routinely create
+// email-only contacts), so the research surfaces must reject it with a clear,
+// actionable error rather than letting enqueue throw an opaque 500.
+const RESEARCH_NEEDS_NAME = 'cannot research a contact without a name — set full_name first';
 
 export default async function contactRoutes(fastify: FastifyInstance, { contactsService, accountsService, contactEnrichmentService }: { contactsService: ContactsService; accountsService: AccountsService; contactEnrichmentService: ContactEnrichmentService }) {
   // List all contacts (with optional filters)
@@ -486,13 +493,24 @@ export default async function contactRoutes(fastify: FastifyInstance, { contacts
     const contact = await contactsService.getById(request.userId, request.params.id);
     if (!contact) { reply.code(404); return { error: 'Contact not found' }; }
     const accountName = contact.accounts?.[0]?.name || contact.company || null;
-    const jobId = contactEnrichmentService.enqueue(request.userId, {
-      contactId: contact.id,
-      name: contact.full_name,
-      accountName,
-    });
-    reply.code(202);
-    return { jobId, contactId: contact.id, name: contact.full_name, accountName };
+    try {
+      // full_name is nullable (email-only contacts) — enqueue would throw an
+      // opaque 500 on a blank name, so reject it up front with a clear 400.
+      if (!contact.full_name?.trim()) throw badRequest(RESEARCH_NEEDS_NAME);
+      const jobId = contactEnrichmentService.enqueue(request.userId, {
+        contactId: contact.id,
+        name: contact.full_name,
+        accountName,
+      });
+      reply.code(202);
+      return { jobId, contactId: contact.id, name: contact.full_name, accountName };
+    } catch (err) {
+      // Map any service-shaped error (statusCode) — our badRequest guard above
+      // and anything enqueue might throw — instead of bubbling as a 500.
+      const e = err as { statusCode?: number; message?: string };
+      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
+      throw err;
+    }
   });
 
   // List enrichment jobs (any status) for a single contact.

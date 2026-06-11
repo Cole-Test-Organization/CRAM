@@ -46,6 +46,20 @@ describe('Contacts — CRUD + dedupe', () => {
     assert.equal(res.body.deleted, true);
     assert.equal((await del(`/contacts/${body.id}`)).status, 404);
   });
+
+  // full_name is nullable (calendar import / the agent create email-only
+  // contacts), so researching one must fail with a clear 400 — never an opaque
+  // 500 from enqueue's `requires name` guard. Short-circuits before outreach.
+  it('POST /research on an email-only contact → 400, not 500', async (t) => {
+    const created = await post('/contacts/find-or-create', { email: uniqueEmail(), kind: 'internal' });
+    const id = created.body?.contact?.id;
+    if (id) deleteAfter(t, `/contacts/${id}`);
+    assert.ok(id, 'expected an email-only contact to be created');
+    assert.equal(created.body.contact.full_name, null);
+    const res = await post(`/contacts/${id}/research`, {});
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /name/i);
+  });
 });
 
 describe('Contacts — find-or-create (upsert + fill-blanks)', () => {

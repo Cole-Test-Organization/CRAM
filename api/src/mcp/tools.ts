@@ -260,17 +260,21 @@ export function registerTools(server: McpServer, services: Services, resolveUser
         case 'research': {
           if (!contactEnrichmentService) return errorResponse('Contact enrichment service not available on this server. Check ops config.');
           if (!id) return errorResponse('research requires id (the numeric contact id to enrich). Resolve via action="get_by_email" or action="list" with search first.');
-          return callService(async () => {
-            const contact = await contactsService.getById(userId, id);
-            if (!contact) return null;
-            const accountName = contact.accounts?.[0]?.name || contact.company || null;
+          const contact = await contactsService.getById(userId, id);
+          if (!contact) return errorResponse(`Contact not found: id=${id}. Resolve via action="list" or "get_by_email" first.`);
+          // full_name is nullable (email-only contacts) — enqueue requires a name,
+          // so reject a nameless contact with a clear, actionable tool error
+          // rather than a generic enqueue failure.
+          if (!contact.full_name?.trim()) return errorResponse('cannot research a contact without a name — set full_name first');
+          const accountName = contact.accounts?.[0]?.name || contact.company || null;
+          return callService(() => {
             const jobId = contactEnrichmentService.enqueue(userId, {
               contactId: contact.id,
               name: contact.full_name,
               accountName,
             });
             return { jobId, contactId: contact.id, name: contact.full_name, accountName };
-          }, { notFoundMsg: `Contact not found: id=${id}. Resolve via action="list" or "get_by_email" first.` });
+          });
         }
         case 'get_enrichment_job':
           if (!contactEnrichmentService) return errorResponse('Contact enrichment service not available on this server.');
