@@ -272,25 +272,36 @@ export class MeetingsService {
   // Fill calendar-sourced fields (start/end timestamps, location) on an EXISTING
   // meeting without disturbing anything else — COALESCE means we only populate
   // columns that are currently NULL, never overwriting a value already set.
-  // Matched by the stable calendar-derived `filename` (RLS already scopes to this
-  // user, so a `cal-<eventId>` filename is unique per event). This is how the
-  // idempotent calendar re-import backfills onto rows imported before time/
+  // Matched by the stable calendar-derived `filename` AS STORED (the caller must
+  // pass the same value deriveFilename produced on create — e.g. the slugified,
+  // ".md"-suffixed "cal-<eventId>.md", NOT the raw "cal-<eventId>"). This is how
+  // the idempotent calendar re-import backfills onto rows imported before time/
   // location capture existed: re-sending a day collides on the filename unique
   // index (the import reports it "skipped"), and this method lets those
-  // skipped-but-stale rows still pick up their times and join link. Returns the
-  // updated row, or null if nothing matched / nothing left to fill.
-  async backfillCalendarFields(userId: number, filename: string, { starts_at = null, ends_at = null, location = null }: { starts_at?: string | null; ends_at?: string | null; location?: string | null } = {}) {
+  // skipped-but-stale rows still pick up their times and join link.
+  //
+  // The two filename unique indexes are PARTITIONED on (account_id IS NULL), so
+  // the same filename can legitimately exist on several accounts AND as an
+  // internal note. We therefore scope to the SAME partition the insert collided
+  // with: pass `accountId` = the customer account the meeting was created under,
+  // or null for an internal note. With a non-null id we match that exact
+  // (account_id, filename) row; with null we match the (user_id, filename) row in
+  // the account_id IS NULL partition. This makes a filename-only match impossible
+  // to land on an unrelated account's row. Returns the updated row, or null if
+  // nothing matched / nothing left to fill.
+  async backfillCalendarFields(userId: number, filename: string, accountId: number | null, { starts_at = null, ends_at = null, location = null }: { starts_at?: string | null; ends_at?: string | null; location?: string | null } = {}) {
     if (!filename || (!starts_at && !ends_at && !location)) return null;
     return withUser(userId, async (client) => {
       const res = await client.query(
         `UPDATE meetings
-            SET starts_at = COALESCE(starts_at, $2),
-                ends_at   = COALESCE(ends_at,   $3),
-                location  = COALESCE(location,  $4)
+            SET starts_at = COALESCE(starts_at, $3),
+                ends_at   = COALESCE(ends_at,   $4),
+                location  = COALESCE(location,  $5)
           WHERE filename = $1
+            AND account_id IS NOT DISTINCT FROM $2
             AND (starts_at IS NULL OR ends_at IS NULL OR location IS NULL)
           RETURNING id, starts_at, ends_at, location`,
-        [filename, starts_at, ends_at, location]
+        [filename, accountId, starts_at, ends_at, location]
       );
       return res.rows[0] || null;
     });

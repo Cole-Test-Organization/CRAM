@@ -50,7 +50,7 @@ import {
     normalizeDomain,
 } from "../_shared/_domain.js";
 import { htmlToMarkdown } from "../_shared/_html.js";
-import { slugify } from "../_shared/_slug.js";
+import { slugify, deriveFilename } from "../_shared/_slug.js";
 import { badRequest } from "../../lib/http-error.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 
@@ -151,6 +151,7 @@ interface MeetingsServiceLike {
     backfillCalendarFields(
         userId: number,
         filename: string,
+        accountId: number | null,
         fields: unknown,
     ): Promise<any>;
 }
@@ -687,6 +688,12 @@ export class CalendarImportService {
         const filename = eventId
             ? `cal-${eventId}`
             : `cal-${date}-${slugify(title || "meeting")}`;
+        // meetingsService.create slugifies + ".md"-suffixes this via deriveFilename
+        // before storing (a real event id like "abc@google.com" becomes
+        // "cal-abc-google-com.md"). The 23505 backfill below matches on the value
+        // AS STORED, so derive it here the same way create does — passing the raw
+        // `filename` to the backfill would match zero rows.
+        const storedFilename = deriveFilename(date, title, filename);
 
         try {
             const row = await this.meetingsService.create(userId, accountId, {
@@ -726,9 +733,14 @@ export class CalendarImportService {
                 let backfilled = false;
                 if (startsAt || endsAt || location) {
                     try {
+                        // Target the stored (slugified, ".md") filename and scope to
+                        // the SAME account partition the insert collided with
+                        // (accountId, or null for an internal note) so the COALESCE
+                        // fill can only touch the exact row a re-import duplicated.
                         const updated = await this.meetingsService.backfillCalendarFields(
                             userId,
-                            filename,
+                            storedFilename,
+                            accountId,
                             { starts_at: startsAt, ends_at: endsAt, location },
                         );
                         backfilled = !!updated;
