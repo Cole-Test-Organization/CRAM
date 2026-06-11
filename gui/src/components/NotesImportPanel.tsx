@@ -43,6 +43,12 @@ export default function NotesImportPanel() {
   const [job, setJob] = createSignal<NotesImportJob | null>(null);
   const [error, setError] = createSignal('');
   const [readInfo, setReadInfo] = createSignal<{ kept: number; skipped: number; bytes: number } | null>(null);
+  // The job we're tracking, kept so the error block's Retry can re-enter polling.
+  const [trackingId, setTrackingId] = createSignal<string | null>(null);
+
+  // Tolerate a few transient poll blips before giving up — a long, LLM-backed
+  // import shouldn't wedge the panel because one fetch failed.
+  const MAX_POLL_FAILURES = 5;
 
   let zipInput!: HTMLInputElement;
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -60,22 +66,45 @@ export default function NotesImportPanel() {
     return Math.round((j.processed / j.total) * 100);
   };
 
-  const reset = () => { setError(''); setJob(null); setReadInfo(null); };
+  const reset = () => { setError(''); setJob(null); setReadInfo(null); setTrackingId(null); };
 
   const track = (jobId: string) => {
+    if (pollTimer) { clearTimeout(pollTimer); pollTimer = undefined; }
+    setError('');
+    setTrackingId(jobId);
     setPhase('tracking');
+    let failures = 0;
     const poll = async () => {
       try {
         const j = await api.getNotesImportJob(jobId);
+        failures = 0;
         setJob(j);
+        setError('');
         if (j.status === 'completed' || j.status === 'failed') return;
       } catch (e: any) {
-        setError(e?.message || String(e));
-        return;
+        failures += 1;
+        if (failures >= MAX_POLL_FAILURES) {
+          // Give up: drop the stale job snapshot so running() is false again and
+          // the import buttons re-enable. The server-side job may still be fine,
+          // so the error block offers a Retry that re-enters polling.
+          setJob(null);
+          setPhase('idle');
+          setError(`Lost contact with the import (${e?.message || String(e)}). The import may still be running — retry to reconnect.`);
+          return;
+        }
+        // Transient blip: surface it but keep polling at the same cadence.
+        setError(`Connection hiccup, retrying… (${e?.message || String(e)})`);
       }
       pollTimer = setTimeout(poll, 1500);
     };
     poll();
+  };
+
+  // Re-enter polling for the job we were tracking (or, if it's gone, just reset).
+  const retryTracking = () => {
+    const id = trackingId();
+    if (id) track(id);
+    else reset();
   };
 
   const onFolderChosen = async (fileList: FileList) => {
@@ -227,7 +256,15 @@ export default function NotesImportPanel() {
       {/* === ERROR === */}
       <Show when={error()}>
         <div class="mt-6 p-3 border-2 border-scarlet-500/50 bg-scarlet-500/10 text-scarlet-300 text-[12px]">
-          {error()}
+          <div>{error()}</div>
+          {/* Once polling has given up (no live job, not busy) offer a way back in —
+              otherwise the panel would stay stuck behind disabled buttons. */}
+          <Show when={!running() && trackingId()}>
+            <div class="flex flex-wrap gap-2 mt-3">
+              <Button variant="secondary" size="sm" onClick={retryTracking}>Retry</Button>
+              <Button variant="ghost" size="sm" onClick={reset}>Dismiss</Button>
+            </div>
+          </Show>
         </div>
       </Show>
 
