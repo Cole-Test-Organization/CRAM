@@ -4,8 +4,8 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-06-05T01:40:48.784Z
-- **Tables:** 26
+- **Generated:** 2026-06-08T20:14:02.223Z
+- **Tables:** 34
 - **Enums:** 0
 - **Views:** 0
 
@@ -21,7 +21,10 @@
 - [`accounts`](#accounts)
 - [`agent_sessions`](#agent_sessions)
 - [`app_settings`](#app_settings)
+- [`broker_state`](#broker_state)
 - [`contacts`](#contacts)
+- [`deployment_resources`](#deployment_resources)
+- [`deployments`](#deployments)
 - [`events`](#events)
 - [`meeting_attendees`](#meeting_attendees)
 - [`meetings`](#meetings)
@@ -30,6 +33,11 @@
 - [`opportunities`](#opportunities)
 - [`product_categories`](#product_categories)
 - [`products`](#products)
+- [`provider_profiles`](#provider_profiles)
+- [`provisioned_resources`](#provisioned_resources)
+- [`provisioning_job_logs`](#provisioning_job_logs)
+- [`provisioning_jobs`](#provisioning_jobs)
+- [`resource_profiles`](#resource_profiles)
 - [`tasks`](#tasks)
 - [`themes`](#themes)
 - [`thread_contacts`](#thread_contacts)
@@ -278,6 +286,29 @@
 
 ---
 
+### `broker_state`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `user_id` | `bigint` | NO | — | **PK** |
+| `active_job_id` | `text` | YES | — |  |
+| `schema_version` | `integer` | NO | `2` |  |
+| `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `user_id`
+
+**Foreign keys:**
+
+- `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Row-Level Security:** enabled (forced)
+
+- `broker_state_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+  - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+
+---
+
 ### `contacts`
 
 | Column | Type | Nullable | Default | Notes |
@@ -324,6 +355,81 @@
 **Row-Level Security:** enabled (forced)
 
 - `contacts_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+  - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+
+---
+
+### `deployment_resources`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `bigint` | NO | `nextval('deployment_resources_id_seq'::regclass)` | **PK** |
+| `deployment_id` | `bigint` | NO | — |  |
+| `ordinal` | `integer` | NO | `0` |  |
+| `kind` | `text` | NO | — |  |
+| `name` | `text` | YES | — |  |
+| `hostname` | `text` | NO | — |  |
+| `terraform_profile` | `text` | YES | — |  |
+| `config` | `jsonb` | NO | — |  |
+| `created_at` | `timestamp with time zone` | NO | `now()` |  |
+| `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `id`
+
+**Unique constraints:**
+
+- `deployment_resources_deployment_id_hostname_key`: (`deployment_id`, `hostname`)
+
+**Foreign keys:**
+
+- `deployment_id` → `public.deployments`(`id`) — ON DELETE CASCADE
+
+**Indexes:**
+
+- `deployment_resources_deployment_id_hostname_key` *(unique)* — `CREATE UNIQUE INDEX deployment_resources_deployment_id_hostname_key ON public.deployment_resources USING btree (deployment_id, hostname)`
+- `idx_deployment_resources_deployment` — `CREATE INDEX idx_deployment_resources_deployment ON public.deployment_resources USING btree (deployment_id)`
+
+**Row-Level Security:** enabled (forced)
+
+- `deployment_resources_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(EXISTS ( SELECT 1    FROM deployments d   WHERE (d.id = deployment_resources.deployment_id)))`
+  - WITH CHECK: `(EXISTS ( SELECT 1    FROM deployments d   WHERE (d.id = deployment_resources.deployment_id)))`
+
+---
+
+### `deployments`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `bigint` | NO | `nextval('deployments_id_seq'::regclass)` | **PK** |
+| `user_id` | `bigint` | NO | — |  |
+| `name` | `text` | NO | — |  |
+| `provider_type` | `text` | NO | — |  |
+| `provider_profile` | `text` | YES | — |  |
+| `provider_config` | `jsonb` | YES | — |  |
+| `steps` | `jsonb` | YES | — |  |
+| `created_at` | `timestamp with time zone` | NO | `now()` |  |
+| `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `id`
+
+**Unique constraints:**
+
+- `deployments_user_id_name_key`: (`user_id`, `name`)
+
+**Foreign keys:**
+
+- `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Indexes:**
+
+- `deployments_user_id_name_key` *(unique)* — `CREATE UNIQUE INDEX deployments_user_id_name_key ON public.deployments USING btree (user_id, name)`
+- `idx_deployments_user` — `CREATE INDEX idx_deployments_user ON public.deployments USING btree (user_id)`
+
+**Row-Level Security:** enabled (forced)
+
+- `deployments_isolation` — ALL, PERMISSIVE, roles: public
   - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
   - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
 
@@ -634,6 +740,198 @@
 **Row-Level Security:** enabled (forced)
 
 - `products_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+  - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+
+---
+
+### `provider_profiles`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `bigint` | NO | `nextval('provider_profiles_id_seq'::regclass)` | **PK** |
+| `user_id` | `bigint` | NO | — |  |
+| `name` | `text` | NO | — |  |
+| `type` | `text` | NO | — |  |
+| `config` | `jsonb` | YES | — |  |
+| `created_at` | `timestamp with time zone` | NO | `now()` |  |
+| `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `id`
+
+**Unique constraints:**
+
+- `provider_profiles_user_id_name_key`: (`user_id`, `name`)
+
+**Foreign keys:**
+
+- `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Indexes:**
+
+- `provider_profiles_user_id_name_key` *(unique)* — `CREATE UNIQUE INDEX provider_profiles_user_id_name_key ON public.provider_profiles USING btree (user_id, name)`
+
+**Row-Level Security:** enabled (forced)
+
+- `provider_profiles_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+  - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+
+---
+
+### `provisioned_resources`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `text` | NO | — | **PK** |
+| `user_id` | `bigint` | NO | — |  |
+| `deployment_id` | `bigint` | NO | — |  |
+| `name` | `text` | YES | — |  |
+| `hostname` | `text` | NO | — |  |
+| `kind` | `text` | YES | — |  |
+| `lifecycle_status` | `text` | NO | `'idle'::text` |  |
+| `provider` | `text` | YES | — |  |
+| `vm_id` | `integer` | YES | — |  |
+| `provider_resource_id` | `text` | YES | — |  |
+| `auth_code` | `text` | YES | — |  |
+| `serial` | `text` | YES | — |  |
+| `bootstrap_iso_path` | `text` | YES | — |  |
+| `bootstrap_iso_file_id` | `text` | YES | — |  |
+| `terraform_workspace` | `text` | YES | — |  |
+| `panos` | `jsonb` | YES | — |  |
+| `outputs` | `jsonb` | YES | — |  |
+| `last_job_id` | `text` | YES | — |  |
+| `power_state` | `text` | YES | — |  |
+| `power_state_checked_at` | `timestamp with time zone` | YES | — |  |
+| `created_at` | `timestamp with time zone` | NO | `now()` |  |
+| `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `id`
+
+**Unique constraints:**
+
+- `provisioned_resources_deployment_id_hostname_key`: (`deployment_id`, `hostname`)
+
+**Foreign keys:**
+
+- `deployment_id` → `public.deployments`(`id`) — ON DELETE RESTRICT
+- `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Indexes:**
+
+- `idx_provisioned_resources_deployment` — `CREATE INDEX idx_provisioned_resources_deployment ON public.provisioned_resources USING btree (deployment_id)`
+- `idx_provisioned_resources_user_host` — `CREATE INDEX idx_provisioned_resources_user_host ON public.provisioned_resources USING btree (user_id, hostname)`
+- `idx_provisioned_resources_user_name` — `CREATE INDEX idx_provisioned_resources_user_name ON public.provisioned_resources USING btree (user_id, name)`
+- `provisioned_resources_deployment_id_hostname_key` *(unique)* — `CREATE UNIQUE INDEX provisioned_resources_deployment_id_hostname_key ON public.provisioned_resources USING btree (deployment_id, hostname)`
+
+**Row-Level Security:** enabled (forced)
+
+- `provisioned_resources_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+  - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+
+---
+
+### `provisioning_job_logs`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `bigint` | NO | `nextval('provisioning_job_logs_id_seq'::regclass)` | **PK** |
+| `job_id` | `text` | NO | — |  |
+| `ts` | `timestamp with time zone` | NO | `now()` |  |
+| `line` | `text` | NO | — |  |
+
+**Primary key:** `id`
+
+**Foreign keys:**
+
+- `job_id` → `public.provisioning_jobs`(`id`) — ON DELETE CASCADE
+
+**Indexes:**
+
+- `idx_provisioning_job_logs_job` — `CREATE INDEX idx_provisioning_job_logs_job ON public.provisioning_job_logs USING btree (job_id, id)`
+
+**Row-Level Security:** enabled (forced)
+
+- `provisioning_job_logs_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(EXISTS ( SELECT 1    FROM provisioning_jobs j   WHERE (j.id = provisioning_job_logs.job_id)))`
+  - WITH CHECK: `(EXISTS ( SELECT 1    FROM provisioning_jobs j   WHERE (j.id = provisioning_job_logs.job_id)))`
+
+---
+
+### `provisioning_jobs`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `text` | NO | — | **PK** |
+| `user_id` | `bigint` | NO | — |  |
+| `deployment_id` | `bigint` | YES | — |  |
+| `action` | `text` | NO | — |  |
+| `hostname` | `text` | YES | — |  |
+| `params` | `jsonb` | YES | — |  |
+| `status` | `text` | NO | `'queued'::text` |  |
+| `claimed_by` | `text` | YES | — |  |
+| `claimed_at` | `timestamp with time zone` | YES | — |  |
+| `error` | `text` | YES | — |  |
+| `started_at` | `timestamp with time zone` | YES | — |  |
+| `finished_at` | `timestamp with time zone` | YES | — |  |
+| `created_at` | `timestamp with time zone` | NO | `now()` |  |
+| `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `id`
+
+**Foreign keys:**
+
+- `deployment_id` → `public.deployments`(`id`) — ON DELETE SET NULL
+- `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Check constraints:**
+
+- `provisioning_jobs_status_check`: `CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text])))`
+
+**Indexes:**
+
+- `idx_provisioning_jobs_claimable` — `CREATE INDEX idx_provisioning_jobs_claimable ON public.provisioning_jobs USING btree (created_at) WHERE (status = 'queued'::text)`
+- `idx_provisioning_jobs_user_status` — `CREATE INDEX idx_provisioning_jobs_user_status ON public.provisioning_jobs USING btree (user_id, status, created_at DESC)`
+
+**Row-Level Security:** enabled (forced)
+
+- `provisioning_jobs_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+  - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+
+---
+
+### `resource_profiles`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `bigint` | NO | `nextval('resource_profiles_id_seq'::regclass)` | **PK** |
+| `user_id` | `bigint` | NO | — |  |
+| `name` | `text` | NO | — |  |
+| `provider` | `text` | NO | — |  |
+| `kind` | `text` | NO | — |  |
+| `terraform` | `jsonb` | NO | — |  |
+| `created_at` | `timestamp with time zone` | NO | `now()` |  |
+| `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `id`
+
+**Unique constraints:**
+
+- `resource_profiles_user_id_name_key`: (`user_id`, `name`)
+
+**Foreign keys:**
+
+- `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Indexes:**
+
+- `resource_profiles_user_id_name_key` *(unique)* — `CREATE UNIQUE INDEX resource_profiles_user_id_name_key ON public.resource_profiles USING btree (user_id, name)`
+
+**Row-Level Security:** enabled (forced)
+
+- `resource_profiles_isolation` — ALL, PERMISSIVE, roles: public
   - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
   - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
 
