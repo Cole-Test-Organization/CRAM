@@ -21,11 +21,13 @@ FROM node:22-slim AS production
 # (Linux), and either via WSL2 (Windows). PUPPETEER_SKIP_DOWNLOAD below tells
 # npm install to skip the bundled-Chromium download in both packages.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates chromium wget curl gnupg \
+    ca-certificates chromium wget curl gnupg unzip \
     && install -d /usr/share/postgresql-common/pgdg \
     && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg \
     && echo "deb https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
-    && apt-get update && apt-get install -y --no-install-recommends postgresql-client-16 \
+    && curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/hashicorp.gpg \
+    && echo "deb https://apt.releases.hashicorp.com bookworm main" > /etc/apt/sources.list.d/hashicorp.list \
+    && apt-get update && apt-get install -y --no-install-recommends postgresql-client-16 terraform \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PUPPETEER_SKIP_DOWNLOAD=true
@@ -67,11 +69,13 @@ FROM node:22-slim AS dev
 # Chromium for Puppeteer + postgresql-client-16 (matches the postgres:16-alpine
 # db image — see the production stage comment for the rationale on both).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates chromium wget curl gnupg \
+    ca-certificates chromium wget curl gnupg unzip \
     && install -d /usr/share/postgresql-common/pgdg \
     && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg \
     && echo "deb https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
-    && apt-get update && apt-get install -y --no-install-recommends postgresql-client-16 \
+    && curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/hashicorp.gpg \
+    && echo "deb https://apt.releases.hashicorp.com bookworm main" > /etc/apt/sources.list.d/hashicorp.list \
+    && apt-get update && apt-get install -y --no-install-recommends postgresql-client-16 terraform \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PUPPETEER_SKIP_DOWNLOAD=true

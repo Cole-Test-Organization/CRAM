@@ -35,6 +35,7 @@ import { InternalDomainsService } from '../services/internal-domains/internal-do
 import { AgentSettingsService } from '../services/agent/agent-settings.js';
 import { MemoriesService } from '../services/memories/memories.js';
 import { ThreadsService } from '../services/threads/threads.js';
+import { ProvisioningService } from '../services/provisioning/index.js';
 
 import { registerTools } from '../mcp/tools.js';
 import type { Services } from '../mcp/tools.js';
@@ -43,6 +44,10 @@ import { getDefaultUserId } from '../auth.js';
 
 export async function buildMcpSession({ userId }: { userId?: number } = {}) {
   const todoistEnabled = process.env.TODOIST_ENABLED !== 'false';
+  // Resolve the pinned user up front — ProvisioningService needs it at construction
+  // (its repos are user-scoped). Until per-session auth lands every call resolves to
+  // the default user; mirrors api/src/mcp/server.ts.
+  const resolvedUserId = userId ?? await getDefaultUserId();
   const vendorsService = new VendorsService();
   const accountsService = new AccountsService();
   const contactsService = new ContactsService();
@@ -94,12 +99,13 @@ export async function buildMcpSession({ userId }: { userId?: number } = {}) {
     agentSettingsService,
     memoriesService,
     threadsService: new ThreadsService(),
+    // Enqueues/reads only — the api process (src/index.ts) runs the single job worker.
+    provisioningService: new ProvisioningService({ userId: resolvedUserId }),
   };
 
-  // Until per-session auth lands, every call resolves to the default user —
-  // mirrors api/src/mcp/server.js. When real auth arrives, swap this for a
-  // request-scoped resolver (likely via AsyncLocalStorage).
-  const resolvedUserId = userId ?? await getDefaultUserId();
+  // Every call resolves to the default user (resolved above) — mirrors
+  // api/src/mcp/server.ts. When real auth arrives, swap this for a request-scoped
+  // resolver (likely via AsyncLocalStorage).
   const resolveUserId = () => resolvedUserId;
 
   // Fetch the user's enabled memories so they're baked into the instructions

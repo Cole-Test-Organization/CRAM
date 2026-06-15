@@ -29,6 +29,7 @@ import { InternalDomainsService } from '../services/internal-domains/internal-do
 import { AgentSettingsService } from '../services/agent/agent-settings.js';
 import { MemoriesService } from '../services/memories/memories.js';
 import { ThreadsService } from '../services/threads/threads.js';
+import { ProvisioningService } from '../services/provisioning/index.js';
 
 import { registerTools, type Services } from './tools.js';
 import { buildAgentMarkdown } from '../instructions.js';
@@ -95,6 +96,8 @@ const services: Services = {
   agentSettingsService,
   memoriesService,
   threadsService: new ThreadsService(),
+  // Enqueues/reads only — the api process (src/index.ts) runs the single job worker.
+  provisioningService: new ProvisioningService({ userId: defaultUserId }),
 };
 
 const PORT = parseInt(process.env.MCP_PORT || '3100', 10);

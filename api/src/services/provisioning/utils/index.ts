@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import type { LogFn } from "../types/logging.js";
 import { lookupSecretOverlay } from "./secretSource.js";
+import { currentJobSignal } from "./jobSignal.js";
 
 export async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
@@ -32,9 +33,14 @@ export async function runCommand(
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     log?: LogFn;
+    signal?: AbortSignal;
   } = {},
 ): Promise<void> {
   const log = options.log ?? (() => undefined);
+  // Defaults to the job worker's process-global signal so a user cancellation
+  // (which aborts it) terminates the spawned child — no need to thread the signal
+  // through every adapter. Jobs are serialized, so the global is unambiguous.
+  const signal = options.signal ?? currentJobSignal() ?? undefined;
   log(`$ ${command} ${args.join(" ")}`);
 
   await new Promise<void>((resolve, reject) => {
@@ -42,6 +48,7 @@ export async function runCommand(
       cwd: options.cwd,
       env: { ...process.env, ...options.env },
       stdio: ["ignore", "pipe", "pipe"],
+      signal,
     });
 
     child.stdout.on("data", (chunk: Buffer) => {
@@ -78,9 +85,11 @@ export async function captureCommand(
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     log?: LogFn;
+    signal?: AbortSignal;
   } = {},
 ): Promise<string> {
   const log = options.log ?? (() => undefined);
+  const signal = options.signal ?? currentJobSignal() ?? undefined;
   log(`$ ${command} ${args.join(" ")}`);
 
   return await new Promise<string>((resolve, reject) => {
@@ -88,6 +97,7 @@ export async function captureCommand(
       cwd: options.cwd,
       env: { ...process.env, ...options.env },
       stdio: ["ignore", "pipe", "pipe"],
+      signal,
     });
     let stdout = "";
     let stderr = "";

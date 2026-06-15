@@ -38,6 +38,7 @@ import { AgentSettingsService } from './services/agent/agent-settings.js';
 import { ThemesService } from './services/themes/themes.js';
 import { MemoriesService } from './services/memories/memories.js';
 import { ThreadsService } from './services/threads/threads.js';
+import { ProvisioningService, ProvisioningJobWorker } from './services/provisioning/index.js';
 
 // Routes
 import accountRoutes from './routes/accounts/accounts.js';
@@ -65,6 +66,7 @@ import internalDomainRoutes from './routes/internal-domains/internal-domains.js'
 import themeRoutes from './routes/themes/themes.js';
 import memoryRoutes from './routes/memories/memories.js';
 import threadRoutes from './routes/threads/threads.js';
+import provisioningRoutes from './routes/provisioning/provisioning.js';
 
 const config = getConfig();
 const todoistEnabled = process.env.TODOIST_ENABLED !== 'false';
@@ -75,7 +77,7 @@ await initDb();
 logger.info('Database connection verified');
 
 // Warm the default-user cache so the first request doesn't pay for the lookup.
-await getDefaultUserId();
+const defaultUserId = await getDefaultUserId();
 
 // Initialize services
 const accountsService = new AccountsService();
@@ -123,6 +125,15 @@ const backupService = new BackupService();
 const themesService = new ThemesService();
 const memoriesService = new MemoriesService();
 const threadsService = new ThreadsService();
+// Provisioning (homelab broker). This process owns the single DB-claim job worker;
+// the MCP server/agent build their own ProvisioningService for enqueue/reads only.
+const provisioningService = new ProvisioningService({ userId: defaultUserId });
+const provisioningWorker = new ProvisioningJobWorker({
+  userId: defaultUserId,
+  broker: provisioningService.broker,
+  store: provisioningService.store,
+  secretResolver: provisioningService.secretResolver,
+});
 
 fastify.decorate('searchService', searchService);
 
@@ -157,6 +168,7 @@ await fastify.register(swagger, {
       { name: 'notes-import', description: 'Bulk-import a notes directory (or .zip): per-file local-LLM extraction → account resolution → meetings, with parked/triage fallback' },
       { name: 'calendar-import', description: 'Ingest a day of Google Calendar events (forwarded via tunnel): domain-classify attendees → contacts + account, one meeting per non-declined event' },
       { name: 'backup', description: 'Database backup configuration, pg_dump scheduling, list/restore/download' },
+      { name: 'provisioning', description: 'Homelab/cloud infrastructure broker — deployments, resources, async lifecycle jobs, and encrypted secrets (Terraform + PAN-OS/AWS)' },
       { name: 'themes', description: 'GUI themes — built-in palettes plus per-user custom themes and the active-theme pointer' },
       { name: 'memories', description: 'Per-user long-lived preferences/rules/facts injected into the agent\'s system prompt at session start' },
       { name: 'health', description: 'Health check' },
@@ -194,6 +206,7 @@ await fastify.register(async (api) => {
   await api.register(calendarImportRoutes, { calendarImportService });
   await api.register(noteRoutes, { notesService });
   await api.register(backupRoutes, { backupService });
+  await api.register(provisioningRoutes, { provisioningService });
   await api.register(internalDomainRoutes, { internalDomainsService });
   await api.register(themeRoutes, { themesService });
   await api.register(memoryRoutes, { memoriesService });
@@ -224,6 +237,7 @@ try {
 
 // Graceful shutdown
 async function shutdown() {
+  await provisioningWorker.stop().catch(() => {});
   await closeDb().catch(() => {});
   process.exit(0);
 }
@@ -234,5 +248,18 @@ process.on('SIGTERM', shutdown);
 const pool = getPool();
 const stats = await pool.query('SELECT COUNT(*)::int AS c FROM accounts');
 logger.info({ accountCount: stats.rows[0].c }, 'Loaded accounts from database');
+
+// Seed the shipped deployment config (idempotent) and start the provisioning job
+// worker. Seeding is best-effort so a config issue never blocks API startup; set
+// PROVISIONING_SEED_ON_BOOT=false to skip (e.g. once deployments are GUI-managed).
+if (process.env.PROVISIONING_SEED_ON_BOOT !== 'false') {
+  try {
+    const seeded = await provisioningService.seed();
+    logger.info(seeded, 'Seeded provisioning config from database/*.yaml');
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'Provisioning config seed failed (continuing)');
+  }
+}
+await provisioningWorker.start();
 
 await fastify.listen({ port: config.port, host: config.host });

@@ -197,6 +197,27 @@ const REFS: Record<string, OpRef> = {
   'memories.update': { http: 'PATCH /api/memories/:id',    mcp: { tool: 'memories', action: 'update' } },
   'memories.delete': { http: 'DELETE /api/memories/:id',   mcp: { tool: 'memories', action: 'delete' } },
 
+  // provisioning (homelab infrastructure broker — async lifecycle jobs)
+  'provisioning.list_deployments': { http: 'GET /api/provisioning/deployments',                                   mcp: { tool: 'provisioning', action: 'list_deployments' } },
+  'provisioning.get_deployment':   { http: 'GET /api/provisioning/deployments/:id',                               mcp: { tool: 'provisioning', action: 'get_deployment' } },
+  'provisioning.list_resources':   { http: 'GET /api/provisioning/resources',                                     mcp: { tool: 'provisioning', action: 'list_resources' } },
+  'provisioning.get_resource':     { http: 'GET /api/provisioning/resources/:id',                                 mcp: { tool: 'provisioning', action: 'get_resource' } },
+  'provisioning.power_state':      { http: 'GET /api/provisioning/resources/:id/power-state',                     mcp: { tool: 'provisioning', action: 'power_state' } },
+  'provisioning.start':            { http: 'POST /api/provisioning/resources/:id/start',                          mcp: { tool: 'provisioning', action: 'start' } },
+  'provisioning.stop':             { http: 'POST /api/provisioning/resources/:id/stop',                           mcp: { tool: 'provisioning', action: 'stop' } },
+  'provisioning.deploy':           { http: 'POST /api/provisioning/deployments/:id/deploy',                       mcp: { tool: 'provisioning', action: 'deploy' } },
+  'provisioning.deprovision':      { http: 'POST /api/provisioning/deployments/:id/deprovision',                  mcp: { tool: 'provisioning', action: 'deprovision' } },
+  'provisioning.up':               { http: 'POST /api/provisioning/deployments/:id/resources/:target/up',        mcp: { tool: 'provisioning', action: 'up' } },
+  'provisioning.down':             { http: 'POST /api/provisioning/resources/:id/down',                           mcp: { tool: 'provisioning', action: 'down' } },
+  'provisioning.run_action':       { http: 'POST /api/provisioning/deployments/:id/resources/:target/actions/:action', mcp: { tool: 'provisioning', action: 'run_action' } },
+  'provisioning.list_jobs':        { http: 'GET /api/provisioning/jobs',                                          mcp: { tool: 'provisioning', action: 'list_jobs' } },
+  'provisioning.get_job':          { http: 'GET /api/provisioning/jobs/:id',                                      mcp: { tool: 'provisioning', action: 'get_job' } },
+  'provisioning.cancel_job':       { http: 'POST /api/provisioning/jobs/:id/cancel',                              mcp: { tool: 'provisioning', action: 'cancel_job' } },
+  'provisioning.list_secrets':     { http: 'GET /api/provisioning/secrets',                                       mcp: { tool: 'provisioning', action: 'list_secrets' } },
+  'provisioning.set_secret':       { http: 'PUT /api/provisioning/secrets/:name',                                 mcp: { tool: 'provisioning', action: 'set_secret' } },
+  'provisioning.delete_secret':    { http: 'DELETE /api/provisioning/secrets/:name',                              mcp: { tool: 'provisioning', action: 'delete_secret' } },
+  'provisioning.seed':             { http: 'POST /api/provisioning/seed',                                         mcp: { tool: 'provisioning', action: 'seed' } },
+
   // health
   'health':  { http: 'GET /api/health',  mcp: null },
 };
@@ -354,6 +375,14 @@ ${todoistEnabled ? `
 ### Todoist
 Tasks default to ${todoistDest}. Use labels = account slug (\`["bank-of-america"]\`) so per-account views can filter.
 ` : ''}
+### Provisioning (Homelab Infrastructure)
+An in-process broker that stands up homelab/cloud infrastructure (Terraform + PAN-OS/AWS lifecycle), ported from panw-broker. This is the single user's lab — not per-tenant CRM data. Terraform state lives in Postgres (native \`pg\` backend), runtime state + jobs in the \`provisioning_*\` tables.
+- **Discover, then act.** ${ref('provisioning.list_deployments')} lists what's deployable; ${ref('provisioning.get_deployment')} returns a deployment's resources, ordered steps, inferred inputs, and **\`requiredEnv\`** — the secret names it needs.
+- **Secrets resolve by name.** Deployment config references a secret by env-var name (e.g. \`PANW_PANORAMA_AUTH_CODE\`); store the value once with ${ref('provisioning.set_secret')} (AES-256-GCM at rest, **write-only** — ${ref('provisioning.list_secrets')} returns names/descriptions, never values). Satisfy a deployment's \`requiredEnv\` before deploying.
+- **Lifecycle is asynchronous.** ${ref('provisioning.deploy')} / ${ref('provisioning.deprovision')} (whole deployment), ${ref('provisioning.up')} / ${ref('provisioning.down')} (one resource), and ${ref('provisioning.run_action')} (a resource-specific step like verify-connected-resources) **enqueue a durable job and return it immediately** — they do NOT wait for terraform. Poll ${ref('provisioning.get_job')} until \`status\` is \`succeeded\` / \`failed\` / \`canceled\`; log lines stream into the job. Jobs run **one at a time**. ${ref('provisioning.cancel_job')} requests cancellation — a queued job cancels at once, a running one has its terraform child terminated.
+- **Seed before you deploy.** ${ref('provisioning.seed')} idempotently imports the shipped \`database/*.yaml\` config (also runs on API boot). deploy/up against an unseeded deployment is rejected with a clear error.
+- **Reads + power are immediate.** ${ref('provisioning.list_resources')} / ${ref('provisioning.get_resource')} show runtime state; ${ref('provisioning.power_state')} refreshes from the cloud provider; ${ref('provisioning.start')} / ${ref('provisioning.stop')} toggle power (refused with 409 while a lifecycle job is active).
+
 ### Backups
 Backups are **instance-wide** (one dump captures every tenant's data), not per-user — these endpoints intentionally don't scope by the calling user. A dump is a full \`pg_dump -Fc\` of the database, which means **every settings table is included** (\`app_settings\`, \`user_agent_settings\`, \`user_internal_domains\`, \`user_memories\`, \`user_theme_settings\`, \`themes\`) alongside the operational tables. Host-side operator config (\`.env\`, \`outreach/cookies.json\`) lives outside the DB and is **not** captured. Use ${ref('backup.import_from_path')} to register an externally-produced dump that already sits on the API container's filesystem (e.g. an operator scp'd it onto the host bind mount); files uploaded from a browser go through \`POST /api/backup/import\` (octet-stream body, not exposed via MCP). ${ref('backup.restore')} is destructive: \`pg_restore --clean --if-exists\` drops and recreates every object. Only call when intentionally rolling back.${isMcp ? '' : `
 

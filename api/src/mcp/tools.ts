@@ -26,6 +26,7 @@ import type { InternalDomainsService } from '../services/internal-domains/intern
 import type { AgentSettingsService } from '../services/agent/agent-settings.js';
 import type { MemoriesService } from '../services/memories/memories.js';
 import type { ThreadsService } from '../services/threads/threads.js';
+import type { ProvisioningService } from '../services/provisioning/index.js';
 
 /**
  * The service bag handed to `registerTools` — built identically in
@@ -58,6 +59,7 @@ export interface Services {
   agentSettingsService: AgentSettingsService;
   memoriesService: MemoriesService;
   threadsService: ThreadsService;
+  provisioningService: ProvisioningService;
 }
 
 /** Resolves the current user id for a tool call (constant until auth lands). */
@@ -69,13 +71,91 @@ export type ResolveUserId = () => number | Promise<number>;
  * Until per-session auth lands it's a constant (the default user).
  */
 export function registerTools(server: McpServer, services: Services, resolveUserId: ResolveUserId) {
-  const { accountsService, contactsService, meetingsService, searchService, todoistService, exportService, outreachService, eventsService, opportunitiesService, productsService, productCategoriesService, vendorsService, vendorProductsService, accountDetailsService, vendorHeatmapService, importExportService, notesImportService, notesService, backupService, contactEnrichmentService, internalDomainsService, agentSettingsService, memoriesService, threadsService } = services;
+  const { accountsService, contactsService, meetingsService, searchService, todoistService, exportService, outreachService, eventsService, opportunitiesService, productsService, productCategoriesService, vendorsService, vendorProductsService, accountDetailsService, vendorHeatmapService, importExportService, notesImportService, notesService, backupService, contactEnrichmentService, internalDomainsService, agentSettingsService, memoriesService, threadsService, provisioningService } = services;
 
   const todoistDest = () => {
     const project = process.env.TODOIST_DEFAULT_PROJECT || 'Inbox';
     const section = process.env.TODOIST_DEFAULT_SECTION || '';
     return section ? `the "${project} > ${section}" section` : `the "${project}" project`;
   };
+
+  // ── provisioning (homelab infra broker) ───────────────────────────────
+
+  server.tool(
+    'provisioning',
+    'Provision and manage homelab/cloud infrastructure (the ported panw-broker: Terraform + PAN-OS/AWS lifecycle). Discovery and reads are immediate; lifecycle verbs are **async** — they enqueue a durable job a background worker runs, so you get a job back and must poll `get_job` until status is `succeeded`/`failed`/`canceled` (logs stream into the job). Actions: list_deployments (what is deployable), get_deployment (resources, steps, inputs, and `requiredEnv` secret names), list_resources / get_resource (runtime state), power_state (refresh from the cloud), start / stop (quick power toggle — refused while a job runs), deploy / deprovision (run/tear-down a whole deployment\'s steps), up (one resource) / down (destroy one resource), run_action (a resource-specific action like verify-connected-resources), list_jobs / get_job / cancel_job, list_secrets / set_secret / delete_secret (encrypted at rest; values are write-only and referenced by name from deployment config), seed (idempotently import the shipped database/*.yaml config). A deployment must be seeded before you can deploy/up it. Secrets needed by a deployment are its `requiredEnv`.',
+    {
+      action: z.enum(['list_deployments', 'get_deployment', 'list_resources', 'get_resource', 'power_state', 'start', 'stop', 'deploy', 'deprovision', 'up', 'down', 'run_action', 'list_jobs', 'get_job', 'cancel_job', 'list_secrets', 'set_secret', 'delete_secret', 'seed']),
+      deployment: z.string().optional().describe('Deployment slug (e.g. aws-gp-lab-trusted-users) — for get_deployment, deploy, deprovision, up, run_action.'),
+      target: z.string().optional().describe('Resource hostname/name/id — for get_resource, power_state, start, stop, up, down, run_action.'),
+      resource_action: z.string().optional().describe('Resource-specific action name — for run_action (e.g. verify-connected-resources).'),
+      job_id: z.string().optional().describe('Job id — for get_job, cancel_job.'),
+      name: z.string().optional().describe('Secret name (UPPER_SNAKE, e.g. PANW_PANORAMA_AUTH_CODE) — for set_secret, delete_secret.'),
+      value: z.string().optional().describe('Secret value — for set_secret (write-only; never returned).'),
+      description: z.string().optional().describe('Optional secret description — for set_secret.'),
+      status: z.enum(['queued', 'running', 'succeeded', 'failed', 'canceled']).optional().describe('Filter list_jobs by status.'),
+      limit: z.number().optional().describe('Max jobs for list_jobs (default 50).'),
+      params: z.record(z.any()).optional().describe('Deploy-time step toggles (the deployment\'s `when` inputs) — for deploy/deprovision/up/down/run_action.'),
+    },
+    async ({ action, deployment, target, resource_action, job_id, name, value, description, status, limit, params }) => {
+      switch (action) {
+        case 'list_deployments':
+          return callService(() => provisioningService.listDeployments());
+        case 'get_deployment':
+          if (!deployment) return errorResponse('get_deployment requires `deployment` (a deployment slug). Use action list_deployments to see slugs.');
+          return callService(() => provisioningService.getDeployment(deployment), { notFoundMsg: `No deployment "${deployment}".` });
+        case 'list_resources':
+          return callService(() => provisioningService.listResources());
+        case 'get_resource':
+          if (!target) return errorResponse('get_resource requires `target` (resource id, hostname, or name).');
+          return callService(() => provisioningService.getResource(target), { notFoundMsg: `No resource "${target}".` });
+        case 'power_state':
+          if (!target) return errorResponse('power_state requires `target`.');
+          return callService(() => provisioningService.refreshPowerState(target));
+        case 'start':
+          if (!target) return errorResponse('start requires `target`.');
+          return callService(() => provisioningService.startResource(target));
+        case 'stop':
+          if (!target) return errorResponse('stop requires `target`.');
+          return callService(() => provisioningService.stopResource(target));
+        case 'deploy':
+          if (!deployment) return errorResponse('deploy requires `deployment`. Returns a queued job — poll get_job.');
+          return callService(() => provisioningService.enqueueJob({ kind: 'deploy', deployment, params }));
+        case 'deprovision':
+          if (!deployment) return errorResponse('deprovision requires `deployment`. Returns a queued job — poll get_job.');
+          return callService(() => provisioningService.enqueueJob({ kind: 'deprovision', deployment, params }));
+        case 'up':
+          if (!deployment || !target) return errorResponse('up requires `deployment` and `target` (the resource). Returns a queued job.');
+          return callService(() => provisioningService.enqueueJob({ kind: 'up', deployment, target, params }));
+        case 'down':
+          if (!target) return errorResponse('down requires `target` (resource id/hostname/name). Returns a queued job.');
+          return callService(() => provisioningService.enqueueJob({ kind: 'down', target, params }));
+        case 'run_action':
+          if (!deployment || !target || !resource_action) return errorResponse('run_action requires `deployment`, `target`, and `resource_action`. Returns a queued job.');
+          return callService(() => provisioningService.enqueueJob({ kind: 'run-action', deployment, target, resourceAction: resource_action, params }));
+        case 'list_jobs':
+          return callService(() => provisioningService.listJobs({ status, limit }));
+        case 'get_job':
+          if (!job_id) return errorResponse('get_job requires `job_id`.');
+          return callService(() => provisioningService.getJob(job_id), { notFoundMsg: `No job "${job_id}".` });
+        case 'cancel_job':
+          if (!job_id) return errorResponse('cancel_job requires `job_id`.');
+          return callService(() => provisioningService.requestCancel(job_id), { notFoundMsg: `No job "${job_id}".` });
+        case 'list_secrets':
+          return callService(() => provisioningService.listSecrets());
+        case 'set_secret':
+          if (!name || !value) return errorResponse('set_secret requires `name` (UPPER_SNAKE) and `value`.');
+          return callService(() => provisioningService.setSecret(name, value, description));
+        case 'delete_secret':
+          if (!name) return errorResponse('delete_secret requires `name`.');
+          return callService(() => provisioningService.deleteSecret(name).then((deleted) => (deleted ? { name, deleted } : null)), { notFoundMsg: `No secret "${name}".` });
+        case 'seed':
+          return callService(() => provisioningService.seed());
+        default:
+          return errorResponse(`Unknown provisioning action: ${action}`);
+      }
+    },
+  );
 
   // ── accounts ──────────────────────────────────────────────────────────
 

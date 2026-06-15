@@ -46,11 +46,13 @@ export interface BrokerState {
   resources: Record<string, ResourceRecord>;
 }
 
+export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
+
 export interface JobRecord {
   id: string;
   action: string;
   hostname?: string;
-  status: "running" | "succeeded" | "failed";
+  status: JobStatus;
   startedAt: string;
   finishedAt?: string;
   logs: string[];
