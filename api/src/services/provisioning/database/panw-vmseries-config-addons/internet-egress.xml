@@ -1,0 +1,215 @@
+<panw-vmseries-config-add-on name="internet-egress">
+  <!--
+    Standalone firewall internet-egress baseline.
+
+    This is the direct-firewall equivalent of the GP lab Panorama add-on:
+    ethernet1/1 is untrust with DHCP and the default route, ethernet1/2 is trust
+    with DHCP and no default route, and trust traffic is NATed out ethernet1/1.
+
+    Variables resolved by VmSeriesResourceAdapter:
+      ${deploymentName}   -> deployment.name
+      ${firewallHostname} -> resource.hostname
+      ${hostname}         -> resource.hostname
+      ${vsys}             -> vsys1
+  -->
+  <set xpath="/config/devices/entry[@name='localhost.localdomain']/network">
+    <interface>
+      <ethernet>
+        <entry name="ethernet1/1">
+          <layer3>
+            <ndp-proxy>
+              <enabled>no</enabled>
+            </ndp-proxy>
+            <sdwan-link-settings>
+              <upstream-nat>
+                <enable>no</enable>
+                <static-ip/>
+              </upstream-nat>
+              <enable>no</enable>
+              <ipv6-enable>no</ipv6-enable>
+            </sdwan-link-settings>
+            <lldp>
+              <enable>no</enable>
+            </lldp>
+            <dhcp-client>
+              <create-default-route>yes</create-default-route>
+              <default-route-metric>10</default-route-metric>
+            </dhcp-client>
+          </layer3>
+        </entry>
+        <entry name="ethernet1/2">
+          <layer3>
+            <ndp-proxy>
+              <enabled>no</enabled>
+            </ndp-proxy>
+            <sdwan-link-settings>
+              <upstream-nat>
+                <enable>no</enable>
+                <static-ip/>
+              </upstream-nat>
+              <enable>no</enable>
+              <ipv6-enable>no</ipv6-enable>
+            </sdwan-link-settings>
+            <lldp>
+              <enable>no</enable>
+            </lldp>
+            <dhcp-client>
+              <create-default-route>no</create-default-route>
+              <default-route-metric>100</default-route-metric>
+            </dhcp-client>
+          </layer3>
+        </entry>
+      </ethernet>
+    </interface>
+    <virtual-router>
+      <entry name="default-vr">
+        <ecmp>
+          <algorithm>
+            <ip-modulo/>
+          </algorithm>
+        </ecmp>
+        <protocol>
+          <bgp>
+            <routing-options>
+              <graceful-restart>
+                <enable>yes</enable>
+              </graceful-restart>
+            </routing-options>
+            <enable>no</enable>
+          </bgp>
+          <rip>
+            <enable>no</enable>
+          </rip>
+          <ospf>
+            <enable>no</enable>
+          </ospf>
+          <ospfv3>
+            <enable>no</enable>
+          </ospfv3>
+        </protocol>
+        <interface>
+          <member>ethernet1/1</member>
+          <member>ethernet1/2</member>
+        </interface>
+      </entry>
+    </virtual-router>
+  </set>
+
+  <set xpath="/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='${vsys}']">
+    <zone>
+      <entry name="untrust">
+        <network>
+          <layer3>
+            <member>ethernet1/1</member>
+          </layer3>
+        </network>
+      </entry>
+      <entry name="trust">
+        <network>
+          <layer3>
+            <member>ethernet1/2</member>
+          </layer3>
+        </network>
+      </entry>
+    </zone>
+    <import>
+      <network>
+        <interface>
+          <member>ethernet1/1</member>
+          <member>ethernet1/2</member>
+        </interface>
+      </network>
+    </import>
+  </set>
+
+  <set xpath="/config/devices/entry[@name='localhost.localdomain']/deviceconfig/system">
+    <dns-setting>
+      <servers>
+        <primary>1.1.1.1</primary>
+        <secondary>8.8.8.8</secondary>
+      </servers>
+    </dns-setting>
+    <ntp-servers>
+      <primary-ntp-server>
+        <ntp-server-address>1.pool.ntp.org</ntp-server-address>
+        <authentication-type>
+          <none/>
+        </authentication-type>
+      </primary-ntp-server>
+      <secondary-ntp-server>
+        <ntp-server-address>2.pool.ntp.org</ntp-server-address>
+        <authentication-type>
+          <none/>
+        </authentication-type>
+      </secondary-ntp-server>
+    </ntp-servers>
+  </set>
+
+  <set xpath="/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='${vsys}']/rulebase">
+    <security>
+      <rules>
+        <entry name="to-internet">
+          <to>
+            <member>untrust</member>
+          </to>
+          <from>
+            <member>trust</member>
+          </from>
+          <source>
+            <member>any</member>
+          </source>
+          <destination>
+            <member>any</member>
+          </destination>
+          <source-user>
+            <member>any</member>
+          </source-user>
+          <category>
+            <member>any</member>
+          </category>
+          <application>
+            <member>any</member>
+          </application>
+          <service>
+            <member>application-default</member>
+          </service>
+          <source-hip>
+            <member>any</member>
+          </source-hip>
+          <destination-hip>
+            <member>any</member>
+          </destination-hip>
+          <action>allow</action>
+          <log-start>no</log-start>
+          <log-end>yes</log-end>
+        </entry>
+      </rules>
+    </security>
+    <nat>
+      <rules>
+        <entry name="to-internet">
+          <source-translation>
+            <dynamic-ip-and-port>
+              <interface-address>
+                <interface>ethernet1/1</interface>
+              </interface-address>
+            </dynamic-ip-and-port>
+          </source-translation>
+          <to>
+            <member>untrust</member>
+          </to>
+          <from>
+            <member>trust</member>
+          </from>
+          <source>
+            <member>any</member>
+          </source>
+          <destination>
+            <member>any</member>
+          </destination>
+          <service>any</service>
+        </entry>
+      </rules>
+    </nat>
+  </set>
+</panw-vmseries-config-add-on>

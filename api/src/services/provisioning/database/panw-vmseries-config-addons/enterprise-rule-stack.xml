@@ -1,0 +1,961 @@
+<panw-vmseries-config-add-on name="enterprise-rule-stack">
+  <!--
+    Enterprise standalone firewall template.
+
+    ethernet1/1 is the untrust interface and ethernet1/2 is the trust interface.
+    The policy model intentionally creates logical source zones for enterprise
+    micro-segmentation even when the first AWS lab only attaches one protected
+    subnet. Additional interfaces/VLANs can be mapped to the prebuilt zones by
+    future add-ons without changing the security/NAT rule stack.
+  -->
+  <set xpath="/config/devices/entry[@name='localhost.localdomain']/network">
+    <interface>
+      <ethernet>
+        <entry name="ethernet1/1">
+          <layer3>
+            <ndp-proxy>
+              <enabled>no</enabled>
+            </ndp-proxy>
+            <sdwan-link-settings>
+              <upstream-nat>
+                <enable>no</enable>
+                <static-ip/>
+              </upstream-nat>
+              <enable>no</enable>
+              <ipv6-enable>no</ipv6-enable>
+            </sdwan-link-settings>
+            <lldp>
+              <enable>no</enable>
+            </lldp>
+            <dhcp-client>
+              <create-default-route>yes</create-default-route>
+              <default-route-metric>10</default-route-metric>
+            </dhcp-client>
+          </layer3>
+        </entry>
+        <entry name="ethernet1/2">
+          <layer3>
+            <ndp-proxy>
+              <enabled>no</enabled>
+            </ndp-proxy>
+            <sdwan-link-settings>
+              <upstream-nat>
+                <enable>no</enable>
+                <static-ip/>
+              </upstream-nat>
+              <enable>no</enable>
+              <ipv6-enable>no</ipv6-enable>
+            </sdwan-link-settings>
+            <lldp>
+              <enable>no</enable>
+            </lldp>
+            <dhcp-client>
+              <create-default-route>no</create-default-route>
+              <default-route-metric>100</default-route-metric>
+            </dhcp-client>
+          </layer3>
+        </entry>
+      </ethernet>
+    </interface>
+    <virtual-router>
+      <entry name="default-vr">
+        <ecmp>
+          <algorithm>
+            <ip-modulo/>
+          </algorithm>
+        </ecmp>
+        <protocol>
+          <bgp>
+            <routing-options>
+              <graceful-restart>
+                <enable>yes</enable>
+              </graceful-restart>
+            </routing-options>
+            <enable>no</enable>
+          </bgp>
+          <rip>
+            <enable>no</enable>
+          </rip>
+          <ospf>
+            <enable>no</enable>
+          </ospf>
+          <ospfv3>
+            <enable>no</enable>
+          </ospfv3>
+        </protocol>
+        <interface>
+          <member>ethernet1/1</member>
+          <member>ethernet1/2</member>
+        </interface>
+      </entry>
+    </virtual-router>
+    <profiles>
+      <interface-management-profile>
+        <entry name="deny-data-plane-mgmt">
+          <ping>no</ping>
+          <telnet>no</telnet>
+          <ssh>no</ssh>
+          <http>no</http>
+          <http-ocsp>no</http-ocsp>
+          <https>no</https>
+          <response-pages>no</response-pages>
+          <userid-service>no</userid-service>
+          <userid-syslog-listener-ssl>no</userid-syslog-listener-ssl>
+          <userid-syslog-listener-udp>no</userid-syslog-listener-udp>
+        </entry>
+      </interface-management-profile>
+    </profiles>
+  </set>
+
+  <set xpath="/config/devices/entry[@name='localhost.localdomain']/deviceconfig/system">
+    <dns-setting>
+      <servers>
+        <primary>1.1.1.1</primary>
+        <secondary>8.8.8.8</secondary>
+      </servers>
+    </dns-setting>
+    <ntp-servers>
+      <primary-ntp-server>
+        <ntp-server-address>1.pool.ntp.org</ntp-server-address>
+        <authentication-type>
+          <none/>
+        </authentication-type>
+      </primary-ntp-server>
+      <secondary-ntp-server>
+        <ntp-server-address>2.pool.ntp.org</ntp-server-address>
+        <authentication-type>
+          <none/>
+        </authentication-type>
+      </secondary-ntp-server>
+    </ntp-servers>
+  </set>
+
+  <set xpath="/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='${vsys}']">
+    <zone>
+      <entry name="untrust">
+        <network>
+          <layer3>
+            <member>ethernet1/1</member>
+          </layer3>
+        </network>
+      </entry>
+      <entry name="corp-users">
+        <network>
+          <layer3>
+            <member>ethernet1/2</member>
+          </layer3>
+        </network>
+      </entry>
+      <entry name="privileged-admins">
+        <network>
+          <layer3/>
+        </network>
+      </entry>
+      <entry name="application-servers">
+        <network>
+          <layer3/>
+        </network>
+      </entry>
+      <entry name="database-servers">
+        <network>
+          <layer3/>
+        </network>
+      </entry>
+      <entry name="shared-services">
+        <network>
+          <layer3/>
+        </network>
+      </entry>
+      <entry name="guest">
+        <network>
+          <layer3/>
+        </network>
+      </entry>
+      <entry name="quarantine">
+        <network>
+          <layer3/>
+        </network>
+      </entry>
+    </zone>
+    <import>
+      <network>
+        <interface>
+          <member>ethernet1/1</member>
+          <member>ethernet1/2</member>
+        </interface>
+      </network>
+    </import>
+    <address>
+      <entry name="corp-users-net">
+        <ip-netmask>10.125.20.0/24</ip-netmask>
+      </entry>
+      <entry name="privileged-admins-net">
+        <ip-netmask>10.125.21.0/24</ip-netmask>
+      </entry>
+      <entry name="application-servers-net">
+        <ip-netmask>10.125.22.0/24</ip-netmask>
+      </entry>
+      <entry name="database-servers-net">
+        <ip-netmask>10.125.23.0/24</ip-netmask>
+      </entry>
+      <entry name="shared-services-net">
+        <ip-netmask>10.125.24.0/24</ip-netmask>
+      </entry>
+      <entry name="guest-net">
+        <ip-netmask>10.125.25.0/24</ip-netmask>
+      </entry>
+      <entry name="quarantine-net">
+        <ip-netmask>10.125.26.0/24</ip-netmask>
+      </entry>
+      <entry name="corp-dns-resolvers">
+        <ip-netmask>10.125.24.10-10.125.24.11</ip-netmask>
+      </entry>
+      <entry name="corp-domain-controllers">
+        <ip-netmask>10.125.24.20-10.125.24.21</ip-netmask>
+      </entry>
+      <entry name="patch-management">
+        <ip-netmask>10.125.24.30</ip-netmask>
+      </entry>
+      <entry name="backup-service">
+        <ip-netmask>10.125.24.40</ip-netmask>
+      </entry>
+      <entry name="enterprise-windows-endpoint">
+        <ip-netmask>10.125.20.0/24</ip-netmask>
+      </entry>
+    </address>
+    <address-group>
+      <entry name="trusted-user-segments">
+        <static>
+          <member>corp-users-net</member>
+          <member>privileged-admins-net</member>
+        </static>
+      </entry>
+      <entry name="server-segments">
+        <static>
+          <member>application-servers-net</member>
+          <member>database-servers-net</member>
+          <member>shared-services-net</member>
+        </static>
+      </entry>
+      <entry name="directory-and-dns">
+        <static>
+          <member>corp-dns-resolvers</member>
+          <member>corp-domain-controllers</member>
+        </static>
+      </entry>
+    </address-group>
+    <service>
+      <entry name="tcp-1433">
+        <protocol>
+          <tcp>
+            <port>1433</port>
+          </tcp>
+        </protocol>
+      </entry>
+      <entry name="tcp-3389">
+        <protocol>
+          <tcp>
+            <port>3389</port>
+          </tcp>
+        </protocol>
+      </entry>
+      <entry name="tcp-5985-5986">
+        <protocol>
+          <tcp>
+            <port>5985,5986</port>
+          </tcp>
+        </protocol>
+      </entry>
+    </service>
+    <service-group>
+      <entry name="windows-admin-services">
+        <members>
+          <member>tcp-3389</member>
+          <member>tcp-5985-5986</member>
+          <member>service-https</member>
+        </members>
+      </entry>
+    </service-group>
+  </set>
+
+  <set xpath="/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='${vsys}']/profiles">
+    <spyware>
+      <entry name="enterprise-anti-spyware">
+        <botnet-domains>
+          <lists>
+            <entry name="default-paloalto-dns">
+              <action>
+                <sinkhole/>
+              </action>
+            </entry>
+          </lists>
+          <sinkhole>
+            <ipv4-address>pan-sinkhole-default-ip</ipv4-address>
+            <ipv6-address>::1</ipv6-address>
+          </sinkhole>
+        </botnet-domains>
+        <rules>
+          <entry name="simple-critical-high">
+            <severity>
+              <member>critical</member>
+              <member>high</member>
+            </severity>
+            <threat-name>any</threat-name>
+            <category>any</category>
+            <packet-capture>single-packet</packet-capture>
+            <action>
+              <reset-both/>
+            </action>
+          </entry>
+          <entry name="simple-medium-low-info">
+            <severity>
+              <member>medium</member>
+              <member>low</member>
+              <member>informational</member>
+            </severity>
+            <threat-name>any</threat-name>
+            <category>any</category>
+            <packet-capture>disable</packet-capture>
+            <action>
+              <default/>
+            </action>
+          </entry>
+        </rules>
+      </entry>
+    </spyware>
+    <vulnerability>
+      <entry name="enterprise-vulnerability">
+        <rules>
+          <entry name="critical-high-reset">
+            <severity>
+              <member>critical</member>
+              <member>high</member>
+            </severity>
+            <cve>any</cve>
+            <threat-name>any</threat-name>
+            <host>any</host>
+            <category>any</category>
+            <packet-capture>single-packet</packet-capture>
+            <action>
+              <reset-both/>
+            </action>
+          </entry>
+          <entry name="medium-alert">
+            <severity>
+              <member>medium</member>
+            </severity>
+            <cve>any</cve>
+            <threat-name>any</threat-name>
+            <host>any</host>
+            <category>any</category>
+            <packet-capture>disable</packet-capture>
+            <action>
+              <alert/>
+            </action>
+          </entry>
+        </rules>
+      </entry>
+    </vulnerability>
+    <virus>
+      <entry name="enterprise-antivirus">
+        <decoder>
+          <entry name="smtp">
+            <action>default</action>
+            <wildfire-action>default</wildfire-action>
+          </entry>
+          <entry name="pop3">
+            <action>default</action>
+            <wildfire-action>default</wildfire-action>
+          </entry>
+          <entry name="imap">
+            <action>default</action>
+            <wildfire-action>default</wildfire-action>
+          </entry>
+          <entry name="http">
+            <action>default</action>
+            <wildfire-action>default</wildfire-action>
+          </entry>
+          <entry name="ftp">
+            <action>default</action>
+            <wildfire-action>default</wildfire-action>
+          </entry>
+          <entry name="smb">
+            <action>default</action>
+            <wildfire-action>default</wildfire-action>
+          </entry>
+        </decoder>
+      </entry>
+    </virus>
+    <file-blocking>
+      <entry name="enterprise-file-blocking">
+        <rules>
+          <entry name="block-risky-executables">
+            <application>
+              <member>any</member>
+            </application>
+            <file-type>
+              <member>exe</member>
+              <member>dll</member>
+              <member>scr</member>
+              <member>bat</member>
+              <member>hta</member>
+            </file-type>
+            <direction>both</direction>
+            <action>block</action>
+          </entry>
+          <entry name="alert-common-files">
+            <application>
+              <member>any</member>
+            </application>
+            <file-type>
+              <member>any</member>
+            </file-type>
+            <direction>both</direction>
+            <action>alert</action>
+          </entry>
+        </rules>
+      </entry>
+    </file-blocking>
+    <url-filtering>
+      <entry name="enterprise-url-filtering">
+        <credential-enforcement>
+          <mode>
+            <disabled/>
+          </mode>
+        </credential-enforcement>
+        <block>
+          <member>malware</member>
+          <member>phishing</member>
+          <member>command-and-control</member>
+          <member>extremism</member>
+        </block>
+        <alert>
+          <member>unknown</member>
+          <member>newly-registered-domain</member>
+          <member>grayware</member>
+          <member>parked</member>
+        </alert>
+        <allow>
+          <member>business-and-economy</member>
+          <member>computer-and-internet-info</member>
+          <member>content-delivery-networks</member>
+        </allow>
+      </entry>
+    </url-filtering>
+    <wildfire-analysis>
+      <entry name="enterprise-wildfire">
+        <rules>
+          <entry name="forward-portable-executables">
+            <application>
+              <member>any</member>
+            </application>
+            <file-type>
+              <member>pe</member>
+            </file-type>
+            <direction>both</direction>
+            <analysis>public-cloud</analysis>
+          </entry>
+        </rules>
+      </entry>
+    </wildfire-analysis>
+    <data-filtering>
+      <entry name="enterprise-data-filtering">
+        <rules/>
+      </entry>
+    </data-filtering>
+  </set>
+
+  <set xpath="/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='${vsys}']">
+    <profile-group>
+      <entry name="enterprise-security-profile-group">
+        <virus>
+          <member>enterprise-antivirus</member>
+        </virus>
+        <spyware>
+          <member>enterprise-anti-spyware</member>
+        </spyware>
+        <vulnerability>
+          <member>enterprise-vulnerability</member>
+        </vulnerability>
+        <url-filtering>
+          <member>enterprise-url-filtering</member>
+        </url-filtering>
+        <file-blocking>
+          <member>enterprise-file-blocking</member>
+        </file-blocking>
+        <wildfire-analysis>
+          <member>enterprise-wildfire</member>
+        </wildfire-analysis>
+        <data-filtering>
+          <member>enterprise-data-filtering</member>
+        </data-filtering>
+      </entry>
+    </profile-group>
+  </set>
+
+  <set xpath="/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='${vsys}']/rulebase">
+    <security>
+      <rules>
+        <entry name="deny-quarantine-all">
+          <to>
+            <member>any</member>
+          </to>
+          <from>
+            <member>quarantine</member>
+          </from>
+          <source>
+            <member>any</member>
+          </source>
+          <destination>
+            <member>any</member>
+          </destination>
+          <source-user>
+            <member>any</member>
+          </source-user>
+          <category>
+            <member>any</member>
+          </category>
+          <application>
+            <member>any</member>
+          </application>
+          <service>
+            <member>any</member>
+          </service>
+          <action>deny</action>
+          <log-start>yes</log-start>
+          <log-end>yes</log-end>
+          <description>Isolation segment cannot initiate traffic.</description>
+        </entry>
+        <entry name="allow-users-to-directory-dns">
+          <to>
+            <member>shared-services</member>
+          </to>
+          <from>
+            <member>corp-users</member>
+            <member>privileged-admins</member>
+          </from>
+          <source>
+            <member>trusted-user-segments</member>
+          </source>
+          <destination>
+            <member>directory-and-dns</member>
+          </destination>
+          <source-user>
+            <member>any</member>
+          </source-user>
+          <category>
+            <member>any</member>
+          </category>
+          <application>
+            <member>dns</member>
+            <member>kerberos</member>
+            <member>ldap</member>
+            <member>ms-ds-smb</member>
+            <member>ntp</member>
+          </application>
+          <service>
+            <member>application-default</member>
+          </service>
+          <profile-setting>
+            <group>
+              <member>enterprise-security-profile-group</member>
+            </group>
+          </profile-setting>
+          <action>allow</action>
+          <log-start>no</log-start>
+          <log-end>yes</log-end>
+          <description>Core identity, name resolution, and time services for managed clients.</description>
+        </entry>
+        <entry name="allow-users-to-approved-apps">
+          <to>
+            <member>application-servers</member>
+          </to>
+          <from>
+            <member>corp-users</member>
+          </from>
+          <source>
+            <member>corp-users-net</member>
+          </source>
+          <destination>
+            <member>application-servers-net</member>
+          </destination>
+          <source-user>
+            <member>any</member>
+          </source-user>
+          <category>
+            <member>any</member>
+          </category>
+          <application>
+            <member>ssl</member>
+            <member>web-browsing</member>
+            <member>ms-teams</member>
+          </application>
+          <service>
+            <member>application-default</member>
+          </service>
+          <profile-setting>
+            <group>
+              <member>enterprise-security-profile-group</member>
+            </group>
+          </profile-setting>
+          <action>allow</action>
+          <log-start>no</log-start>
+          <log-end>yes</log-end>
+          <description>Least-privilege user access to business applications.</description>
+        </entry>
+        <entry name="allow-apps-to-databases">
+          <to>
+            <member>database-servers</member>
+          </to>
+          <from>
+            <member>application-servers</member>
+          </from>
+          <source>
+            <member>application-servers-net</member>
+          </source>
+          <destination>
+            <member>database-servers-net</member>
+          </destination>
+          <source-user>
+            <member>any</member>
+          </source-user>
+          <category>
+            <member>any</member>
+          </category>
+          <application>
+            <member>mssql-db</member>
+            <member>mysql</member>
+            <member>postgresql</member>
+          </application>
+          <service>
+            <member>application-default</member>
+            <member>tcp-1433</member>
+          </service>
+          <profile-setting>
+            <group>
+              <member>enterprise-security-profile-group</member>
+            </group>
+          </profile-setting>
+          <action>allow</action>
+          <log-start>no</log-start>
+          <log-end>yes</log-end>
+          <description>Application tier to database tier only on approved database protocols.</description>
+        </entry>
+        <entry name="allow-admins-to-server-management">
+          <to>
+            <member>application-servers</member>
+            <member>database-servers</member>
+            <member>shared-services</member>
+          </to>
+          <from>
+            <member>privileged-admins</member>
+          </from>
+          <source>
+            <member>privileged-admins-net</member>
+          </source>
+          <destination>
+            <member>server-segments</member>
+          </destination>
+          <source-user>
+            <member>any</member>
+          </source-user>
+          <category>
+            <member>any</member>
+          </category>
+          <application>
+            <member>ssh</member>
+            <member>ms-rdp</member>
+            <member>winrm</member>
+            <member>ssl</member>
+          </application>
+          <service>
+            <member>application-default</member>
+            <member>windows-admin-services</member>
+          </service>
+          <profile-setting>
+            <group>
+              <member>enterprise-security-profile-group</member>
+            </group>
+          </profile-setting>
+          <action>allow</action>
+          <log-start>yes</log-start>
+          <log-end>yes</log-end>
+          <description>Audited privileged administration exception.</description>
+        </entry>
+        <entry name="allow-patch-and-backup-exceptions">
+          <to>
+            <member>any</member>
+          </to>
+          <from>
+            <member>shared-services</member>
+          </from>
+          <source>
+            <member>patch-management</member>
+            <member>backup-service</member>
+          </source>
+          <destination>
+            <member>server-segments</member>
+            <member>trusted-user-segments</member>
+          </destination>
+          <source-user>
+            <member>any</member>
+          </source-user>
+          <category>
+            <member>any</member>
+          </category>
+          <application>
+            <member>ssl</member>
+            <member>ms-update</member>
+            <member>ms-ds-smb</member>
+          </application>
+          <service>
+            <member>application-default</member>
+          </service>
+          <profile-setting>
+            <group>
+              <member>enterprise-security-profile-group</member>
+            </group>
+          </profile-setting>
+          <action>allow</action>
+          <log-start>yes</log-start>
+          <log-end>yes</log-end>
+          <description>Explicit operational exceptions for patching and backup workflows.</description>
+        </entry>
+        <entry name="allow-managed-users-internet">
+          <to>
+            <member>untrust</member>
+          </to>
+          <from>
+            <member>corp-users</member>
+            <member>privileged-admins</member>
+          </from>
+          <source>
+            <member>trusted-user-segments</member>
+          </source>
+          <destination>
+            <member>any</member>
+          </destination>
+          <source-user>
+            <member>any</member>
+          </source-user>
+          <category>
+            <member>business-and-economy</member>
+            <member>computer-and-internet-info</member>
+            <member>content-delivery-networks</member>
+            <member>financial-services</member>
+          </category>
+          <application>
+            <member>ssl</member>
+            <member>web-browsing</member>
+            <member>dns</member>
+            <member>ntp</member>
+          </application>
+          <service>
+            <member>application-default</member>
+          </service>
+          <profile-setting>
+            <group>
+              <member>enterprise-security-profile-group</member>
+            </group>
+          </profile-setting>
+          <action>allow</action>
+          <log-start>no</log-start>
+          <log-end>yes</log-end>
+          <description>Controlled outbound access for managed users.</description>
+        </entry>
+        <entry name="allow-guest-internet-only">
+          <to>
+            <member>untrust</member>
+          </to>
+          <from>
+            <member>guest</member>
+          </from>
+          <source>
+            <member>guest-net</member>
+          </source>
+          <destination>
+            <member>any</member>
+          </destination>
+          <source-user>
+            <member>any</member>
+          </source-user>
+          <category>
+            <member>any</member>
+          </category>
+          <application>
+            <member>ssl</member>
+            <member>web-browsing</member>
+            <member>dns</member>
+          </application>
+          <service>
+            <member>application-default</member>
+          </service>
+          <profile-setting>
+            <group>
+              <member>enterprise-security-profile-group</member>
+            </group>
+          </profile-setting>
+          <action>allow</action>
+          <log-start>no</log-start>
+          <log-end>yes</log-end>
+          <description>Guest traffic can only egress to the internet.</description>
+        </entry>
+        <entry name="deny-lateral-movement">
+          <to>
+            <member>corp-users</member>
+            <member>privileged-admins</member>
+            <member>application-servers</member>
+            <member>database-servers</member>
+            <member>shared-services</member>
+            <member>guest</member>
+          </to>
+          <from>
+            <member>corp-users</member>
+            <member>privileged-admins</member>
+            <member>application-servers</member>
+            <member>database-servers</member>
+            <member>shared-services</member>
+            <member>guest</member>
+          </from>
+          <source>
+            <member>any</member>
+          </source>
+          <destination>
+            <member>any</member>
+          </destination>
+          <source-user>
+            <member>any</member>
+          </source-user>
+          <category>
+            <member>any</member>
+          </category>
+          <application>
+            <member>any</member>
+          </application>
+          <service>
+            <member>any</member>
+          </service>
+          <action>deny</action>
+          <log-start>yes</log-start>
+          <log-end>yes</log-end>
+          <description>Default-deny east-west traffic unless explicitly permitted above.</description>
+        </entry>
+        <entry name="deny-inbound-from-internet">
+          <to>
+            <member>corp-users</member>
+            <member>privileged-admins</member>
+            <member>application-servers</member>
+            <member>database-servers</member>
+            <member>shared-services</member>
+          </to>
+          <from>
+            <member>untrust</member>
+          </from>
+          <source>
+            <member>any</member>
+          </source>
+          <destination>
+            <member>any</member>
+          </destination>
+          <source-user>
+            <member>any</member>
+          </source-user>
+          <category>
+            <member>any</member>
+          </category>
+          <application>
+            <member>any</member>
+          </application>
+          <service>
+            <member>any</member>
+          </service>
+          <action>deny</action>
+          <log-start>yes</log-start>
+          <log-end>yes</log-end>
+          <description>Explicit inbound deny from internet-facing zone.</description>
+        </entry>
+        <entry name="deny-default">
+          <to>
+            <member>any</member>
+          </to>
+          <from>
+            <member>any</member>
+          </from>
+          <source>
+            <member>any</member>
+          </source>
+          <destination>
+            <member>any</member>
+          </destination>
+          <source-user>
+            <member>any</member>
+          </source-user>
+          <category>
+            <member>any</member>
+          </category>
+          <application>
+            <member>any</member>
+          </application>
+          <service>
+            <member>any</member>
+          </service>
+          <action>deny</action>
+          <log-start>yes</log-start>
+          <log-end>yes</log-end>
+          <description>Catch-all deny with logging for policy tuning.</description>
+        </entry>
+      </rules>
+    </security>
+    <nat>
+      <rules>
+        <entry name="nat-managed-users-to-internet">
+          <source-translation>
+            <dynamic-ip-and-port>
+              <interface-address>
+                <interface>ethernet1/1</interface>
+              </interface-address>
+            </dynamic-ip-and-port>
+          </source-translation>
+          <to>
+            <member>untrust</member>
+          </to>
+          <from>
+            <member>corp-users</member>
+            <member>privileged-admins</member>
+            <member>guest</member>
+          </from>
+          <source>
+            <member>trusted-user-segments</member>
+            <member>guest-net</member>
+          </source>
+          <destination>
+            <member>any</member>
+          </destination>
+          <service>any</service>
+        </entry>
+        <entry name="nat-shared-services-to-internet">
+          <source-translation>
+            <dynamic-ip-and-port>
+              <interface-address>
+                <interface>ethernet1/1</interface>
+              </interface-address>
+            </dynamic-ip-and-port>
+          </source-translation>
+          <to>
+            <member>untrust</member>
+          </to>
+          <from>
+            <member>shared-services</member>
+          </from>
+          <source>
+            <member>patch-management</member>
+          </source>
+          <destination>
+            <member>any</member>
+          </destination>
+          <service>any</service>
+        </entry>
+      </rules>
+    </nat>
+  </set>
+</panw-vmseries-config-add-on>

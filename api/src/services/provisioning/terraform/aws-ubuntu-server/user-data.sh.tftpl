@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec > >(tee -a /var/log/panw-broker-bootstrap.log) 2>&1
+
+hostnamectl set-hostname "${hostname}"
+mkdir -p /var/lib/panw-broker
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y ca-certificates curl gnupg jq unzip ${join(" ", jsondecode(packages_json))}
+
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+apt-get install -y nodejs
+
+if ! command -v amazon-ssm-agent >/dev/null 2>&1 && command -v snap >/dev/null 2>&1; then
+  snap install amazon-ssm-agent --classic || true
+fi
+systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service 2>/dev/null || systemctl enable --now amazon-ssm-agent 2>/dev/null || true
+
+commands='${base64encode(join("\n", jsondecode(commands_json)))}'
+if [ -n "$commands" ]; then
+  printf "%s" "$commands" | base64 -d > /tmp/panw-broker-bootstrap-extra.sh
+  chmod +x /tmp/panw-broker-bootstrap-extra.sh
+  /tmp/panw-broker-bootstrap-extra.sh
+fi
+
+curl -fsSL --max-time 20 https://checkip.amazonaws.com/ | tee /var/lib/panw-broker/public-ip.txt
+codex --version | tee /var/lib/panw-broker/codex-version.txt
+claude --version | tee /var/lib/panw-broker/claude-version.txt || true
+
+date -u +"%Y-%m-%dT%H:%M:%SZ" > /var/lib/panw-broker/bootstrap.success

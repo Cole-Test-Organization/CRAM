@@ -1,0 +1,29 @@
+name: cortex-xdr
+description: Cortex XDR agent for Windows endpoint simulations.
+apps:
+  - id: cortex-xdr-agent
+    name: Cortex XDR Agent
+    method: msi
+    sourcePath: local-artifacts/windows/Windows-Proxmox_x64.msi
+    args:
+      - REBOOT=ReallySuppress
+    verify:
+      command: |
+        $Names = @('Cortex', 'XDR', 'Palo Alto', 'Traps')
+        $UninstallPaths = @(
+          'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+          'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+        )
+        $Installed = Get-ItemProperty -Path $UninstallPaths -ErrorAction SilentlyContinue |
+          Where-Object {
+            $DisplayName = [string] $_.DisplayName
+            $Names | Where-Object { $DisplayName -like "*$_*" }
+          } |
+          Select-Object -First 1
+        $Service = Get-Service -ErrorAction SilentlyContinue |
+          Where-Object {
+            $ServiceName = "$($_.Name) $($_.DisplayName)"
+            $Names | Where-Object { $ServiceName -like "*$_*" }
+          } |
+          Select-Object -First 1
+        if ($Installed -or $Service) { exit 0 } else { exit 1 }

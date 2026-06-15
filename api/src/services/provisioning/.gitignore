@@ -1,0 +1,10 @@
+# Provisioning service runtime — never commit these.
+# Runtime state + job records (written by FileStateRepository, pre-Phase-2).
+data/
+# Per-resource terraform working dirs, generated tfvars, bootstrap artifacts.
+work/
+# Terraform provider plugin caches + state. Stacks ship as source + .terraform.lock.hcl only.
+terraform/**/.terraform/
+terraform/**/*.tfstate
+terraform/**/*.tfstate.*
+terraform/**/crash.log

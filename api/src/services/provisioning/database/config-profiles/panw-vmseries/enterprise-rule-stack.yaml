@@ -1,0 +1,6 @@
+name: enterprise-rule-stack
+description: Standalone VM-Series enterprise baseline with segmented zones, least-privilege policies, exceptions, NAT, and logging.
+configAddOns:
+  - name: enterprise-rule-stack
+    file: database/panw-vmseries-config-addons/enterprise-rule-stack.xml
+    commit: true

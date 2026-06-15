@@ -1,0 +1,530 @@
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+$Hostname = ${hostname}
+$AdminUsername = ${admin_username}
+$AdminPassword = ${admin_password}
+$InstallSsmAgent = ${install_ssm_agent}
+$InstallPython = ${install_python}
+$PythonInstallUrl = ${python_install_url}
+$KoiScriptUrl = ${koi_script_url}
+$KoiScriptInlineBase64 = ${koi_script_inline_b64}
+$KoiScriptSha256 = ${koi_script_sha256}
+
+$Root = "C:\ProgramData\panw-broker"
+$BootstrapLog = Join-Path $Root "bootstrap.log"
+$KoiLog = Join-Path $Root "koi.log"
+$KoiScriptPath = Join-Path $Root "koi.py"
+$SuccessMarker = Join-Path $Root "koi.success"
+$FailureMarker = Join-Path $Root "koi.failed"
+$AppsRoot = Join-Path $Root "apps"
+$InstallerRoot = Join-Path $Root "installers"
+$ResumeScriptPath = Join-Path $Root "bootstrap-resume.ps1"
+$ResumeTaskName = "panw-broker-bootstrap-resume"
+$RenamePendingMarker = Join-Path $Root "rename-pending"
+
+New-Item -ItemType Directory -Force -Path $Root | Out-Null
+New-Item -ItemType Directory -Force -Path $AppsRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $InstallerRoot | Out-Null
+Start-Transcript -Path $BootstrapLog -Append
+$BootstrapMutex = New-Object System.Threading.Mutex($false, "Global\panw-broker-bootstrap")
+$BootstrapLockAcquired = $false
+$RestartRequired = $false
+
+function Write-Marker {
+  param(
+    [string] $Path,
+    [string] $Message
+  )
+  $Message | Set-Content -Path $Path -Encoding UTF8
+}
+
+function Get-UsablePython {
+  $Command = Get-Command python.exe -ErrorAction SilentlyContinue
+  if ($Command -and $Command.Source -notlike "*\WindowsApps\python.exe") {
+    return $Command.Source
+  }
+
+  $CommonPaths = @(
+    "C:\Program Files\Python314\python.exe",
+    "C:\Program Files\Python313\python.exe",
+    "C:\Program Files\Python312\python.exe",
+    "C:\Program Files\Python311\python.exe",
+    "C:\Python314\python.exe",
+    "C:\Python313\python.exe",
+    "C:\Python312\python.exe",
+    "C:\Python311\python.exe"
+  )
+
+  foreach ($Path in $CommonPaths) {
+    if (Test-Path $Path) {
+      return $Path
+    }
+  }
+
+  return $null
+}
+
+function Install-SSMAgent {
+  $Agent = "C:\Program Files\Amazon\SSM\amazon-ssm-agent.exe"
+  if (-not (Test-Path $Agent)) {
+    $Installer = Join-Path $Root "AmazonSSMAgentSetup.exe"
+    Invoke-WebRequest `
+      -UseBasicParsing `
+      -Uri "https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/windows_amd64/AmazonSSMAgentSetup.exe" `
+      -OutFile $Installer
+    Start-Process -FilePath $Installer -ArgumentList "/quiet" -Wait
+  }
+
+  Set-Service -Name AmazonSSMAgent -StartupType Automatic
+  Start-Service -Name AmazonSSMAgent
+}
+
+function Set-LocalAdminCredential {
+  if (-not $AdminPassword) {
+    Write-Host "No Windows admin password configured; leaving local admin credentials unchanged."
+    return
+  }
+
+  $TargetUsername = if ($AdminUsername) { $AdminUsername } else { "Administrator" }
+  $SecurePassword = ConvertTo-SecureString $AdminPassword -AsPlainText -Force
+  $ExistingUser = Get-LocalUser -Name $TargetUsername -ErrorAction SilentlyContinue
+
+  if ($ExistingUser) {
+    Set-LocalUser -Name $TargetUsername -Password $SecurePassword
+    Enable-LocalUser -Name $TargetUsername
+    Write-Host "Local admin login $TargetUsername updated."
+  } else {
+    New-LocalUser `
+      -Name $TargetUsername `
+      -Password $SecurePassword `
+      -FullName $TargetUsername `
+      -Description "panw-broker endpoint login" `
+      -PasswordNeverExpires `
+      -AccountNeverExpires | Out-Null
+    Write-Host "Local admin login $TargetUsername created."
+  }
+
+  try {
+    Add-LocalGroupMember -Group "Administrators" -Member $TargetUsername -ErrorAction Stop
+    Write-Host "Local admin login $TargetUsername added to Administrators."
+  } catch {
+    if ($_.Exception.Message -notmatch "already.*member") {
+      throw
+    }
+    Write-Host "Local admin login $TargetUsername is already in Administrators."
+  }
+}
+
+function Test-HostnameMatches {
+  if (-not $Hostname) {
+    return $true
+  }
+  $CurrentName = [System.Net.Dns]::GetHostName()
+  return [bool]($CurrentName -ieq $Hostname)
+}
+
+function Set-EndpointHostname {
+  if (-not $Hostname) {
+    Write-Host "No hostname configured; leaving Windows computer name unchanged."
+    return $false
+  }
+
+  $CurrentName = [System.Net.Dns]::GetHostName()
+  if ($CurrentName -ieq $Hostname) {
+    Write-Host "Windows computer name is already $Hostname."
+    return $false
+  }
+
+  Write-Host "Renaming Windows computer from $CurrentName to $Hostname."
+  Rename-Computer -NewName $Hostname -Force
+  return $true
+}
+
+function Register-ResumeTask {
+  # Persist this bootstrap script and register a one-shot SYSTEM scheduled task that
+  # re-runs it after the post-rename reboot. This guarantees Koi only ever runs once the
+  # machine reports its final hostname, so it never registers under the EC2AMAZ-* name.
+  $ScriptSource = $PSCommandPath
+  if (-not $ScriptSource -or -not (Test-Path $ScriptSource)) {
+    $ScriptSource = $MyInvocation.ScriptName
+  }
+  if ($ScriptSource -and (Test-Path $ScriptSource)) {
+    Copy-Item -Path $ScriptSource -Destination $ResumeScriptPath -Force
+  } else {
+    throw "Cannot locate the running bootstrap script to schedule a post-reboot resume."
+  }
+
+  $Action = New-ScheduledTaskAction `
+    -Execute "powershell.exe" `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ResumeScriptPath`""
+  $Trigger = New-ScheduledTaskTrigger -AtStartup
+  $Principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+  $Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+
+  Register-ScheduledTask `
+    -TaskName $ResumeTaskName `
+    -Action $Action `
+    -Trigger $Trigger `
+    -Principal $Principal `
+    -Settings $Settings `
+    -Force | Out-Null
+  Write-Host "Registered post-reboot resume task $ResumeTaskName."
+}
+
+function Unregister-ResumeTask {
+  $Existing = Get-ScheduledTask -TaskName $ResumeTaskName -ErrorAction SilentlyContinue
+  if ($Existing) {
+    Unregister-ScheduledTask -TaskName $ResumeTaskName -Confirm:$false -ErrorAction SilentlyContinue
+    Write-Host "Removed post-reboot resume task $ResumeTaskName."
+  }
+  if (Test-Path $ResumeScriptPath) {
+    Remove-Item -Force $ResumeScriptPath -ErrorAction SilentlyContinue
+  }
+}
+
+function Start-DeferredReboot {
+  # Launch a detached process that waits a few seconds and then reboots. Returning from this
+  # SSM run first lets the originating SSM command report Success instead of being killed
+  # mid-reboot (which would surface as a false bootstrap failure). The ONSTART resume task
+  # then finishes the install (apps + Koi) under the corrected hostname after the reboot.
+  Write-Host "Scheduling deferred reboot to apply hostname change before Koi runs."
+  Start-Process -FilePath "powershell.exe" `
+    -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "Start-Sleep -Seconds 20; Restart-Computer -Force") `
+    -WindowStyle Hidden
+}
+
+function Install-Python {
+  if (-not $PythonInstallUrl) {
+    throw "Python is not available and python_install_url is empty."
+  }
+
+  $Installer = Join-Path $Root "python-installer.exe"
+  Invoke-WebRequest -UseBasicParsing -Uri $PythonInstallUrl -OutFile $Installer
+  Start-Process `
+    -FilePath $Installer `
+    -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1 Include_test=0 Include_launcher=1" `
+    -Wait
+
+  $MachinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+  $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $env:Path = "$MachinePath;$UserPath"
+}
+
+function Refresh-ProcessPath {
+  $MachinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+  $UserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $env:Path = "$MachinePath;$UserPath"
+}
+
+function Normalize-AppId {
+  param([string] $Value)
+  return ($Value -replace "[^A-Za-z0-9_.-]", "-")
+}
+
+function Get-AppLogPath {
+  param([object] $App)
+  $AppId = Normalize-AppId $App.id
+  return Join-Path $AppsRoot "$AppId.log"
+}
+
+function Invoke-LoggedCommand {
+  param(
+    [string] $AppId,
+    [string] $Command,
+    [bool] $AllowFailure = $false
+  )
+
+  $LogPath = Join-Path $AppsRoot "$(Normalize-AppId $AppId).log"
+  $CommandPath = Join-Path $AppsRoot "$(Normalize-AppId $AppId)-command.ps1"
+  ">>> $Command" | Tee-Object -FilePath $LogPath -Append | Out-Host
+  $ScriptContent = @(
+    '$ErrorActionPreference = "Stop"',
+    '$global:LASTEXITCODE = 0',
+    $Command,
+    'if ($global:LASTEXITCODE -ne 0) { exit $global:LASTEXITCODE }'
+  ) -join [Environment]::NewLine
+  Set-Content -Path $CommandPath -Value $ScriptContent -Encoding UTF8
+  $PreviousErrorActionPreference = $ErrorActionPreference
+  if ($AllowFailure) {
+    $ErrorActionPreference = "Continue"
+  }
+  try {
+    $Output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $CommandPath 2>&1
+    $ExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $PreviousErrorActionPreference
+  }
+  $Output | Tee-Object -FilePath $LogPath -Append | Out-Host
+  if ($ExitCode -ne 0 -and -not $AllowFailure) {
+    throw "Command failed for $AppId with exit code $ExitCode. See $LogPath."
+  }
+  return $ExitCode
+}
+
+function Test-AppInstalled {
+  param([object] $App)
+  if (-not $App.verify -or -not $App.verify.command) {
+    return $false
+  }
+  $ExitCode = Invoke-LoggedCommand -AppId $App.id -Command $App.verify.command -AllowFailure $true
+  return $ExitCode -eq 0
+}
+
+function Install-Chocolatey {
+  if (Get-Command choco.exe -ErrorAction SilentlyContinue) {
+    return
+  }
+  $Command = "Set-ExecutionPolicy Bypass -Scope Process -Force; " +
+    "[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; " +
+    "iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))"
+  Invoke-LoggedCommand -AppId "chocolatey" -Command $Command
+  Refresh-ProcessPath
+}
+
+function Install-ChocolateyApp {
+  param([object] $App)
+  Install-Chocolatey
+  $Package = [string] $App.package
+  $ExtraArgs = @($App.args) -join " "
+  Invoke-LoggedCommand -AppId $App.id -Command "choco install $Package -y --no-progress $ExtraArgs"
+  Refresh-ProcessPath
+}
+
+function Install-DownloadedApp {
+  param([object] $App)
+
+  $AppId = Normalize-AppId $App.id
+  $Extension = if ($App.method -eq "msi") { "msi" } else { "exe" }
+  $InstallerPath = Join-Path $InstallerRoot "$AppId.$Extension"
+  Invoke-WebRequest -UseBasicParsing -Uri ([string] $App.url) -OutFile $InstallerPath
+  $Args = @($App.args)
+
+  if ($App.method -eq "msi") {
+    $MsiArgs = @("/i", "`"$InstallerPath`"", "/qn", "/norestart") + $Args
+    $Process = Start-Process -FilePath "msiexec.exe" -ArgumentList $MsiArgs -Wait -PassThru
+  } else {
+    $Process = Start-Process -FilePath $InstallerPath -ArgumentList $Args -Wait -PassThru
+  }
+
+  $AllowedExitCodes = @(0)
+  if ($App.method -eq "msi") {
+    $AllowedExitCodes += 3010
+  }
+  if ($App.allowedExitCodes) {
+    $AllowedExitCodes += @($App.allowedExitCodes | ForEach-Object { [int] $_ })
+  }
+  if (-not ($AllowedExitCodes -contains $Process.ExitCode)) {
+    throw "Installer for $($App.id) exited with code $($Process.ExitCode)."
+  }
+  if ($Process.ExitCode -eq 3010) {
+    Write-Host "Installer for $($App.id) requested a restart."
+    $script:RestartRequired = $true
+  }
+  Refresh-ProcessPath
+}
+
+function Install-PowerShellApp {
+  param([object] $App)
+
+  if ($App.environment) {
+    foreach ($Property in $App.environment.PSObject.Properties) {
+      [Environment]::SetEnvironmentVariable($Property.Name, [string] $Property.Value, "Process")
+    }
+  }
+
+  Invoke-LoggedCommand -AppId $App.id -Command ([string] $App.command)
+  Refresh-ProcessPath
+}
+
+function Install-Application {
+  param([object] $App)
+
+  if (-not $App.id -or -not $App.method) {
+    throw "Application entries must include id and method."
+  }
+
+  Write-Host "Preparing application $($App.id)"
+  if (Test-AppInstalled -App $App) {
+    Write-Host "Application $($App.id) is already installed; skipping."
+    return
+  }
+
+  switch ([string] $App.method) {
+    "chocolatey" { Install-ChocolateyApp -App $App }
+    "exe" { Install-DownloadedApp -App $App }
+    "msi" { Install-DownloadedApp -App $App }
+    "powershell" { Install-PowerShellApp -App $App }
+    default { throw "Unsupported application install method $($App.method) for $($App.id)" }
+  }
+
+  if (-not (Test-AppInstalled -App $App)) {
+    throw "Application $($App.id) verification failed after install."
+  }
+  Write-Host "Application $($App.id) installed and verified."
+}
+
+function Install-Applications {
+  $Applications = @()
+  $RawApplications = @'
+${applications_json}
+'@
+  if ($RawApplications) {
+    $ParsedApplications = $RawApplications | ConvertFrom-Json
+    if ($null -ne $ParsedApplications) {
+      $Applications = @($ParsedApplications)
+    }
+  }
+
+  if (-not $Applications.Count) {
+    Write-Host "No application profiles selected."
+    return
+  }
+
+  foreach ($App in $Applications) {
+    Install-Application -App $App
+  }
+}
+
+function Write-KoiScript {
+  if ($KoiScriptUrl) {
+    Invoke-WebRequest -UseBasicParsing -Uri $KoiScriptUrl -OutFile $KoiScriptPath
+  } elseif ($KoiScriptInlineBase64) {
+    $Bytes = [Convert]::FromBase64String($KoiScriptInlineBase64)
+    [IO.File]::WriteAllBytes($KoiScriptPath, $Bytes)
+  } else {
+    Write-Host "No Koi script configured; skipping Koi execution."
+    return $false
+  }
+
+  if ($KoiScriptSha256) {
+    $Actual = (Get-FileHash -Algorithm SHA256 -Path $KoiScriptPath).Hash.ToLowerInvariant()
+    $Expected = $KoiScriptSha256.ToLowerInvariant()
+    if ($Actual -ne $Expected) {
+      throw "Koi script SHA-256 mismatch. Expected $Expected but found $Actual."
+    }
+  }
+
+  return $true
+}
+
+function Convert-JsonArray {
+  param([string] $Json)
+  if (-not $Json) {
+    return @()
+  }
+  $Value = $Json | ConvertFrom-Json
+  if ($null -eq $Value) {
+    return @()
+  }
+  if ($Value -is [array]) {
+    return @($Value)
+  }
+  return @($Value)
+}
+
+function Set-ProcessEnvironment {
+  param([string] $Json)
+  if (-not $Json) {
+    return
+  }
+
+  $Values = $Json | ConvertFrom-Json
+  if ($null -eq $Values) {
+    return
+  }
+
+  foreach ($Property in $Values.PSObject.Properties) {
+    [Environment]::SetEnvironmentVariable($Property.Name, [string] $Property.Value, "Process")
+  }
+}
+
+try {
+  $BootstrapLockAcquired = $BootstrapMutex.WaitOne([TimeSpan]::FromMinutes(20))
+  if (-not $BootstrapLockAcquired) {
+    throw "Timed out waiting for another panw-broker bootstrap run to finish."
+  }
+
+  Write-Host "Starting Windows endpoint bootstrap for $Hostname"
+  Set-LocalAdminCredential
+
+  if ($InstallSsmAgent) {
+    Install-SSMAgent
+  }
+
+  # Phase 1: get the hostname right BEFORE Koi (and before app installs) so that Koi,
+  # which registers using the OS-reported hostname, never registers under the EC2AMAZ-*
+  # name. Rename-Computer only takes effect after a reboot, so when a rename is needed we
+  # register a resume task, trigger a deferred reboot, and exit this pass cleanly without
+  # running Koi. The resume task re-enters this script after the reboot to finish Phase 2.
+  if (-not (Test-HostnameMatches)) {
+    Register-ResumeTask
+    $RestartRequired = Set-EndpointHostname
+    if ($RestartRequired) {
+      Start-DeferredReboot
+      # Mark rename-pending only once the reboot is actually scheduled. Its presence tells the
+      # broker the box is intentionally rebooting, so a transient probe failure is not fatal.
+      Write-Marker -Path $RenamePendingMarker -Message "Rename to $Hostname pending reboot at $(Get-Date -Format o)."
+      Write-Host "Hostname rename requires a reboot. Deferred reboot scheduled; resuming bootstrap after restart."
+      return
+    }
+  }
+
+  # Phase 2: hostname already matches (fresh box with matching name, or post-reboot resume).
+  if (Test-Path $RenamePendingMarker) {
+    Remove-Item -Force $RenamePendingMarker -ErrorAction SilentlyContinue
+  }
+  Unregister-ResumeTask
+
+  $Python = Get-UsablePython
+  if (-not $Python -and $InstallPython) {
+    Install-Python
+    $Python = Get-UsablePython
+  }
+  if (-not $Python) {
+    throw "python.exe is not available after bootstrap."
+  }
+
+  Install-Applications
+
+  $HasKoiScript = Write-KoiScript
+  if ($HasKoiScript) {
+    Set-ProcessEnvironment @'
+${koi_environment_json}
+'@
+
+    $KoiArguments = Convert-JsonArray @'
+${koi_arguments_json}
+'@
+
+    Write-Host "Running Koi script with $Python under hostname $([System.Net.Dns]::GetHostName())"
+    & $Python $KoiScriptPath @KoiArguments *> $KoiLog
+    if ($LASTEXITCODE -ne 0) {
+      throw "Koi script exited with code $LASTEXITCODE. See $KoiLog."
+    }
+
+    Write-Marker -Path $SuccessMarker -Message "Koi completed successfully under hostname $([System.Net.Dns]::GetHostName()) at $(Get-Date -Format o)."
+  } else {
+    Write-Marker -Path $SuccessMarker -Message "Windows endpoint bootstrap completed without a Koi script at $(Get-Date -Format o)."
+  }
+
+  if (Test-Path $FailureMarker) {
+    Remove-Item -Force $FailureMarker
+  }
+  Write-Host "Windows endpoint bootstrap completed."
+} catch {
+  Write-Marker -Path $FailureMarker -Message $_.Exception.Message
+  Write-Error $_
+  throw
+} finally {
+  if ($BootstrapLockAcquired) {
+    $BootstrapMutex.ReleaseMutex()
+  }
+  $BootstrapMutex.Dispose()
+  Stop-Transcript
+}
+
+# The post-rename reboot is owned by the deferred-reboot scheduled task (see Start-DeferredReboot),
+# so this SSM run exits 0 and the OS reboots a few seconds later. No inline Restart-Computer here:
+# rebooting inline would kill the SSM command mid-run and report a false bootstrap failure.
