@@ -30,6 +30,9 @@ import { VendorHeatmapService } from './services/accounts/vendor-heatmap.js';
 import { ImportExportService } from './services/import-export/import-export.js';
 import { NotesImportService } from './services/notes/notes-import.js';
 import { CalendarImportService } from './services/calendar-import/calendar-import.js';
+import { KrispWebhookService } from './services/krisp-webhook/krisp-webhook.js';
+import { MergeService } from './services/merge/merge.js';
+import { MeetingMergeHandler } from './services/merge/handlers/meetings.js';
 import { NotesService } from './services/notes/notes.js';
 import { BackupService } from './services/backup/backup.js';
 import { ContactEnrichmentService } from './services/contacts/contact-enrichment.js';
@@ -59,6 +62,8 @@ import accountDetailsRoutes from './routes/accounts/account-details.js';
 import importExportRoutes from './routes/import-export/import-export.js';
 import notesImportRoutes from './routes/notes/notes-import.js';
 import calendarImportRoutes from './routes/calendar-import/calendar-import.js';
+import krispWebhookRoutes from './routes/krisp-webhook/krisp-webhook.js';
+import mergeRoutes from './routes/merge/merge.js';
 import noteRoutes from './routes/notes/notes.js';
 import backupRoutes from './routes/backup/backup.js';
 import internalDomainRoutes from './routes/internal-domains/internal-domains.js';
@@ -118,6 +123,8 @@ const vendorHeatmapService = new VendorHeatmapService();
 const importExportService = new ImportExportService({ contactsService, accountsService });
 const notesImportService = new NotesImportService({ meetingsService, accountsService, agentSettingsService });
 const calendarImportService = new CalendarImportService({ meetingsService, accountsService, contactsService, internalDomainsService });
+const krispWebhookService = new KrispWebhookService({ meetingsService });
+const mergeService = new MergeService({ meetings: new MeetingMergeHandler({ meetingsService }) });
 const notesService = new NotesService();
 const backupService = new BackupService();
 const themesService = new ThemesService();
@@ -154,8 +161,10 @@ await fastify.register(swagger, {
       { name: 'threads', description: 'Open workstreams per account, each with tasks (assignee + due date) and a contact pool' },
       { name: 'export', description: 'Markdown export' },
       { name: 'import-export', description: 'Portable JSON bundles for moving accounts between tenants' },
-      { name: 'notes-import', description: 'Bulk-import a notes directory (or .zip): per-file local-LLM extraction → account resolution → meetings, with parked/triage fallback' },
+      { name: 'notes-import', description: 'Bulk-import a notes directory (or .zip with text/.docx/text-PDF conversion): per-file local-LLM extraction → account resolution → meetings, with parked/triage fallback' },
       { name: 'calendar-import', description: 'Ingest a day of Google Calendar events (forwarded via tunnel): domain-classify attendees → contacts + account, one meeting per non-declined event' },
+      { name: 'krisp-webhook', description: 'Receive Krisp webhook deliveries (notes / transcript / outline) and import the notes: time-match the existing meeting and append, or park a new meeting for review' },
+      { name: 'merge', description: 'Generic merge of two same-type records (currently meetings): preview a plan, then apply selected fields/relations; the source is tombstoned (soft-deleted)' },
       { name: 'backup', description: 'Database backup configuration, pg_dump scheduling, list/restore/download' },
       { name: 'themes', description: 'GUI themes — built-in palettes plus per-user custom themes and the active-theme pointer' },
       { name: 'memories', description: 'Per-user long-lived preferences/rules/facts injected into the agent\'s system prompt at session start' },
@@ -192,6 +201,8 @@ await fastify.register(async (api) => {
   await api.register(importExportRoutes, { importExportService });
   await api.register(notesImportRoutes, { notesImportService });
   await api.register(calendarImportRoutes, { calendarImportService });
+  await api.register(krispWebhookRoutes, { krispWebhookService });
+  await api.register(mergeRoutes, { mergeService });
   await api.register(noteRoutes, { notesService });
   await api.register(backupRoutes, { backupService });
   await api.register(internalDomainRoutes, { internalDomainsService });

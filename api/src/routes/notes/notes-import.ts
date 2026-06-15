@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { filesFromZip } from '../../services/notes/notes-import.js';
+import { noteFilesFromZip, SUPPORTED_NOTE_FILE_DESCRIPTION } from '../../services/_shared/_note-file-conversion.js';
 import type { NotesImportService } from '../../services/notes/notes-import.js';
 
 // Notes-import HTTP surface. Two intakes, one pipeline:
@@ -7,7 +7,8 @@ import type { NotesImportService } from '../../services/notes/notes-import.js';
 //       The GUI reads a chosen directory client-side (<input webkitdirectory>)
 //       and posts the text files. Canonical input; also the MCP-reachable shape.
 //   - POST /api/notes-import/upload-zip — raw application/octet-stream .zip.
-//       Server unpacks text entries into the same files[] list.
+//       Server unpacks text entries and converts supported document formats into
+//       the same files[] list.
 // Both return { jobId } immediately; poll GET /api/notes-import/jobs/:jobId.
 //
 // Bodies are large (a directory of notes), so this plugin raises the body limit
@@ -59,11 +60,12 @@ export default async function notesImportRoutes(fastify: FastifyInstance, { note
     }
   });
 
-  // Zip upload — server unpacks text entries, then same pipeline.
+  // Zip upload — server normalizes text-ish entries and supported documents into
+  // files[] text records, then uses the same pipeline as JSON intake.
   fastify.post<{ Body: Buffer }>('/notes-import/upload-zip', {
     bodyLimit: BODY_LIMIT,
     schema: {
-      description: 'Import notes from an uploaded .zip. Send the raw archive as application/octet-stream. The server extracts text entries (.md/.markdown/.txt/.org/.rst; binaries, dotfiles, and __MACOSX junk are ignored) into the same files[] list as POST /api/notes-import and enqueues the job. Returns { jobId, file_count }. Poll GET /api/notes-import/jobs/:jobId. Exporting from Google Drive? A raw folder download is all .docx/.pdf, which get skipped — run Google Takeout with Documents set to Plain Text (.txt), or download docs individually as Markdown (.md), before zipping.',
+      description: 'Import notes from an uploaded .zip. Send the raw archive as application/octet-stream. The server extracts text entries (.md/.markdown/.txt/.org/.rst) and converts supported document entries (.docx and text-based .pdf) into the same files[] list as POST /api/notes-import, then enqueues the normal notes-import pipeline. Returns { jobId, file_count, converted_count, skipped_count, summary }. Poll GET /api/notes-import/jobs/:jobId. This supports zipped Google Drive folder downloads when the files are exported as .docx or text-based .pdf; scanned/image-only PDFs are skipped because they have no extractable text.',
       tags: ['notes-import'],
       consumes: ['application/octet-stream'],
     },
@@ -73,22 +75,32 @@ export default async function notesImportRoutes(fastify: FastifyInstance, { note
       reply.code(400);
       return { error: 'Empty body. POST the raw .zip bytes with Content-Type: application/octet-stream.' };
     }
-    let files;
+    let extracted;
     try {
-      files = filesFromZip(buf);
+      extracted = await noteFilesFromZip(buf);
     } catch (err) {
       const e = err as { statusCode?: number; code?: string; message?: string };
       reply.code(400);
       return { error: `Could not read zip: ${e.message}` };
     }
+    const { files, summary } = extracted;
     if (files.length === 0) {
       reply.code(400);
-      return { error: 'No text notes found in the archive (looked for .md/.markdown/.txt/.org/.rst).' };
+      return {
+        error: `No supported notes found in the archive (looked for ${SUPPORTED_NOTE_FILE_DESCRIPTION}).`,
+        summary,
+      };
     }
     try {
       const jobId = notesImportService.enqueue(request.userId, { files });
       reply.code(202);
-      return { jobId, file_count: files.length };
+      return {
+        jobId,
+        file_count: files.length,
+        converted_count: summary.converted_files,
+        skipped_count: summary.skipped_files,
+        summary,
+      };
     } catch (err) {
       const e = err as { statusCode?: number; code?: string; message?: string };
       if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }

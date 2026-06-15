@@ -26,6 +26,7 @@ import type { InternalDomainsService } from '../services/internal-domains/intern
 import type { AgentSettingsService } from '../services/agent/agent-settings.js';
 import type { MemoriesService } from '../services/memories/memories.js';
 import type { ThreadsService } from '../services/threads/threads.js';
+import type { MergeService } from '../services/merge/merge.js';
 
 /**
  * The service bag handed to `registerTools` — built identically in
@@ -58,6 +59,7 @@ export interface Services {
   agentSettingsService: AgentSettingsService;
   memoriesService: MemoriesService;
   threadsService: ThreadsService;
+  mergeService: MergeService;
 }
 
 /** Resolves the current user id for a tool call (constant until auth lands). */
@@ -69,7 +71,7 @@ export type ResolveUserId = () => number | Promise<number>;
  * Until per-session auth lands it's a constant (the default user).
  */
 export function registerTools(server: McpServer, services: Services, resolveUserId: ResolveUserId) {
-  const { accountsService, contactsService, meetingsService, searchService, todoistService, exportService, outreachService, eventsService, opportunitiesService, productsService, productCategoriesService, vendorsService, vendorProductsService, accountDetailsService, vendorHeatmapService, importExportService, notesImportService, notesService, backupService, contactEnrichmentService, internalDomainsService, agentSettingsService, memoriesService, threadsService } = services;
+  const { accountsService, contactsService, meetingsService, searchService, todoistService, exportService, outreachService, eventsService, opportunitiesService, productsService, productCategoriesService, vendorsService, vendorProductsService, accountDetailsService, vendorHeatmapService, importExportService, notesImportService, notesService, backupService, contactEnrichmentService, internalDomainsService, agentSettingsService, memoriesService, threadsService, mergeService } = services;
 
   const todoistDest = () => {
     const project = process.env.TODOIST_DEFAULT_PROJECT || 'Inbox';
@@ -406,7 +408,7 @@ export function registerTools(server: McpServer, services: Services, resolveUser
 
   server.tool(
     'notes_import',
-    'Bulk-import a directory of notes (markdown/plain text from Obsidian, Apple/Google Notes, a folder of call summaries, …). Each file is processed ONE AT A TIME by the local model to extract metadata (date, title, account, attendees), then resolved to an account and written as a meeting. Account resolution: a confident match links the note cleanly; an unknown company auto-creates a flagged account (needs_review) and links it; an ambiguous near-match parks the note (internal + needs_review) so you place it via triage instead of minting a near-duplicate; an internal/no-company note parks too. Async + serial (one local-LLM call at a time). Actions: enqueue (pass files=[{path, content}] — read the directory client-side; returns a jobId), get_job (poll by jobId — status queued→running→completed, stage shows progress, results[] has a per-file outcome, counts aggregates them), list_jobs (recent jobs). Idempotent: re-importing the same file is skipped on a filename match. (Uploading a raw .zip is HTTP-only — POST /api/notes-import/upload-zip — since MCP can\'t carry binary; from here, send the unpacked files[].)',
+    'Bulk-import a directory of notes (markdown/plain text from Obsidian, Apple/Google Notes, a folder of call summaries, …). Each file is processed ONE AT A TIME by the local model to extract metadata (date, title, account, attendees), then resolved to an account and written as a meeting. Account resolution: a confident match links the note cleanly; an unknown company auto-creates a flagged account (needs_review) and links it; an ambiguous near-match parks the note (internal + needs_review) so you place it via triage instead of minting a near-duplicate; an internal/no-company note parks too. Async + serial (one local-LLM call at a time). Actions: enqueue (pass files=[{path, content}] — read/convert the directory client-side; returns a jobId), get_job (poll by jobId — status queued→running→completed, stage shows progress, results[] has a per-file outcome, counts aggregates them), list_jobs (recent jobs). Idempotent: re-importing the same file is skipped on a filename match. (Uploading a raw .zip is HTTP-only — POST /api/notes-import/upload-zip — since MCP can\'t carry binary; the HTTP zip endpoint extracts text files and converts .docx/text-based .pdf entries, including zipped Google Drive folder downloads, into the same files[] shape before enqueueing.)',
     {
       action: z.enum(['enqueue', 'get_job', 'list_jobs']),
       files: z.array(z.object({
@@ -422,7 +424,7 @@ export function registerTools(server: McpServer, services: Services, resolveUser
       switch (action) {
         case 'enqueue':
           if (!Array.isArray(files) || files.length === 0) {
-            return errorResponse('enqueue requires files — a non-empty array of { path, content }. Read the notes directory client-side and send each text file. (To import a .zip, use the HTTP endpoint POST /api/notes-import/upload-zip; MCP can\'t carry binary.)');
+            return errorResponse('enqueue requires files — a non-empty array of { path, content }. Read or convert the notes directory client-side and send each text file. (To import a .zip, use the HTTP endpoint POST /api/notes-import/upload-zip; MCP can\'t carry binary, but the HTTP zip endpoint can convert .docx and text-based .pdf files.)');
           }
           return callService(async () => ({ jobId: notesImportService.enqueue(userId, { files }) }));
         case 'get_job':
@@ -1222,6 +1224,29 @@ export function registerTools(server: McpServer, services: Services, resolveUser
         case 'delete':
           if (!filename) return errorResponse('delete requires filename (one of the entries from action="list"). Removes the file from disk.');
           return callService(() => backupService.deleteBackup(filename));
+        default:
+          return errorResponse(`Unknown action: ${action}`);
+      }
+    }
+  );
+
+  server.tool(
+    'merge',
+    "Merge two same-type records into one — object-agnostic de-duplication. The BASE survives; the SOURCE is folded into it and soft-deleted (tombstoned, recoverable). Two actions: preview (returns a plan — scalar fields with both values, append fields like notes, collections like attendees) and apply (commits using `choices`). choices: fields={<key>:'base'|'source'} pulls a field from the source (default keeps base); append={body:'base'|'source'|'both'} (default 'both' appends the source notes); collections={attendees:[sourceAttendeeId,…]} brings over chosen relation items. Omitted choices use the non-destructive default. Use this to combine duplicate meetings (e.g. a parked Krisp note onto the real calendar meeting). Supported entities: meetings. Find ids via the meetings tool (action='list').",
+    {
+      action: z.enum(['preview', 'apply']),
+      entity: z.enum(['meetings']).describe('Record type to merge.'),
+      base_id: z.number().describe('The record that survives (the keeper).'),
+      source_id: z.number().describe('The record to fold in and tombstone.'),
+      choices: z.record(z.any()).optional().describe("apply only — what to keep: { fields:{<key>:'base'|'source'}, append:{body:'base'|'source'|'both'}, collections:{attendees:[id,…]} }. Omit for the all-non-destructive default."),
+    },
+    async ({ action, entity, base_id, source_id, choices }) => {
+      const userId = await resolveUserId();
+      switch (action) {
+        case 'preview':
+          return callService(() => mergeService.preview(userId, entity, base_id, source_id));
+        case 'apply':
+          return callService(() => mergeService.apply(userId, entity, base_id, source_id, choices || {}));
         default:
           return errorResponse(`Unknown action: ${action}`);
       }

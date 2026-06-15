@@ -4,7 +4,7 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-06-08T20:14:02.223Z
+- **Generated:** 2026-06-14T00:42:38.420Z
 - **Tables:** 34
 - **Enums:** 0
 - **Views:** 0
@@ -535,6 +535,8 @@
 | `starts_at` | `timestamp with time zone` | YES | — |  |
 | `ends_at` | `timestamp with time zone` | YES | — |  |
 | `location` | `text` | YES | — |  |
+| `krisp_meeting_id` | `text` | YES | — |  |
+| `deleted_at` | `timestamp with time zone` | YES | — |  |
 
 **Primary key:** `id`
 
@@ -549,11 +551,13 @@
 - `idx_meetings_date` — `CREATE INDEX idx_meetings_date ON public.meetings USING btree (date)`
 - `idx_meetings_internal` — `CREATE INDEX idx_meetings_internal ON public.meetings USING btree (internal) WHERE (internal = true)`
 - `idx_meetings_needs_review` — `CREATE INDEX idx_meetings_needs_review ON public.meetings USING btree (needs_review) WHERE (needs_review = true)`
+- `idx_meetings_not_deleted` — `CREATE INDEX idx_meetings_not_deleted ON public.meetings USING btree (id) WHERE (deleted_at IS NULL)`
 - `idx_meetings_search` — `CREATE INDEX idx_meetings_search ON public.meetings USING gin (search_vector)`
 - `idx_meetings_starts_at` — `CREATE INDEX idx_meetings_starts_at ON public.meetings USING btree (starts_at) WHERE (starts_at IS NOT NULL)`
 - `idx_meetings_user` — `CREATE INDEX idx_meetings_user ON public.meetings USING btree (user_id)`
-- `meetings_account_filename_uniq` *(unique)* — `CREATE UNIQUE INDEX meetings_account_filename_uniq ON public.meetings USING btree (account_id, filename) WHERE (account_id IS NOT NULL)`
-- `meetings_internal_filename_uniq` *(unique)* — `CREATE UNIQUE INDEX meetings_internal_filename_uniq ON public.meetings USING btree (user_id, filename) WHERE (account_id IS NULL)`
+- `meetings_account_filename_uniq` *(unique)* — `CREATE UNIQUE INDEX meetings_account_filename_uniq ON public.meetings USING btree (account_id, filename) WHERE ((account_id IS NOT NULL) AND (deleted_at IS NULL))`
+- `meetings_internal_filename_uniq` *(unique)* — `CREATE UNIQUE INDEX meetings_internal_filename_uniq ON public.meetings USING btree (user_id, filename) WHERE ((account_id IS NULL) AND (deleted_at IS NULL))`
+- `meetings_krisp_meeting_id_uniq` *(unique)* — `CREATE UNIQUE INDEX meetings_krisp_meeting_id_uniq ON public.meetings USING btree (user_id, krisp_meeting_id) WHERE ((krisp_meeting_id IS NOT NULL) AND (deleted_at IS NULL))`
 
 **Row-Level Security:** enabled (forced)
 

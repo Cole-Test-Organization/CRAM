@@ -40,21 +40,15 @@
 // fire two local-LLM calls at once (one small box, limited VRAM).
 
 import crypto from 'crypto';
-import AdmZip from 'adm-zip';
 import * as localProvider from '../../agent/providers/local.js';
 import { deriveFilename } from '../_shared/_slug.js';
 import { logger as rootLogger } from '../../lib/logger.js';
 import { sleep, parseLooseJson } from '../_shared/_llm.js';
 import { normalizeDomain } from '../_shared/_domain.js';
 import { badRequest } from '../../lib/http-error.js';
+import type { NoteFile } from '../_shared/_note-file-conversion.js';
 
 const logger = rootLogger.child({ component: 'notes-import' });
-
-// A single text note staged for import: its source path and full contents.
-interface NoteFile {
-  path: string;
-  content: string;
-}
 
 // One participant the model pulled out of a note.
 interface Attendee {
@@ -111,10 +105,6 @@ const LLM_TIMEOUT_MS = Number(process.env.NOTES_IMPORT_LLM_TIMEOUT_MS) || 120000
 const LLM_MAX_ATTEMPTS = Number(process.env.NOTES_IMPORT_LLM_RETRIES) || 3;
 const LLM_RETRY_BASE_MS = Number(process.env.NOTES_IMPORT_LLM_RETRY_BASE_MS) || 4000;
 const LLM_RETRY_MAX_MS = 30000;
-
-// Text-ish extensions we'll pull out of an uploaded archive. Everything else in
-// the zip (images, PDFs, .DS_Store, …) is ignored.
-const TEXT_EXTENSIONS = new Set(['.md', '.markdown', '.mdown', '.txt', '.text', '.org', '.rst']);
 
 const EXTRACT_SYSTEM_PROMPT = `You are a data extractor for a CRM's notes importer. You receive ONE note file — its filename and full text — and return a single JSON object of metadata. Return ONLY the JSON: no prose, no commentary, no markdown code fences.
 
@@ -177,25 +167,6 @@ export function normalizeExtraction(obj: any): ExtractionRecord {
     }
   }
   return rec;
-}
-
-// Turn an uploaded zip buffer into the canonical files[] list. Only text-ish
-// entries are kept; directories, oversized entries, and binaries are skipped.
-export function filesFromZip(buffer: Buffer): NoteFile[] {
-  const zip = new AdmZip(buffer);
-  const out: NoteFile[] = [];
-  for (const entry of zip.getEntries()) {
-    if (entry.isDirectory) continue;
-    const path = entry.entryName;
-    // Skip macOS/junk metadata and dotfiles.
-    if (/(^|\/)(__MACOSX\/|\.DS_Store$|\._)/.test(path)) continue;
-    const dot = path.lastIndexOf('.');
-    const ext = dot === -1 ? '' : path.slice(dot).toLowerCase();
-    if (!TEXT_EXTENSIONS.has(ext)) continue;
-    const content = entry.getData().toString('utf8');
-    out.push({ path, content });
-  }
-  return out;
 }
 
 export class NotesImportService {

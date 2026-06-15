@@ -3,9 +3,8 @@ import { A } from '@solidjs/router';
 import { api, type NotesImportJob, type NotesImportResult, type NotesImportOutcome } from '../lib/api';
 import Button from './Button';
 
-// Text extensions we'll read from a chosen folder. Mirrors the server-side zip
-// filter — binaries, images, PDFs, and dotfiles are skipped client-side so we
-// never ship them up.
+// Text extensions we'll read from a chosen folder. Binary document conversion
+// happens server-side for .zip uploads so the folder path can stay lightweight.
 const TEXT_EXT = ['.md', '.markdown', '.mdown', '.txt', '.text', '.org', '.rst'];
 const MAX_FILE_BYTES = 2 * 1024 * 1024; // skip any single file bigger than this
 
@@ -42,7 +41,7 @@ export default function NotesImportPanel() {
   const [phase, setPhase] = createSignal<'idle' | 'reading' | 'submitting' | 'tracking'>('idle');
   const [job, setJob] = createSignal<NotesImportJob | null>(null);
   const [error, setError] = createSignal('');
-  const [readInfo, setReadInfo] = createSignal<{ kept: number; skipped: number; bytes: number } | null>(null);
+  const [readInfo, setReadInfo] = createSignal<{ kept: number; skipped: number; bytes: number; converted?: number } | null>(null);
   // The job we're tracking, kept so the error block's Retry can re-enter polling.
   const [trackingId, setTrackingId] = createSignal<string | null>(null);
 
@@ -121,9 +120,9 @@ export default function NotesImportPanel() {
         files.push({ path, content });
         bytes += f.size;
       }
-      setReadInfo({ kept: files.length, skipped, bytes });
+      setReadInfo({ kept: files.length, skipped, bytes, converted: 0 });
       if (files.length === 0) {
-        setError('No text notes (.md / .txt / .org / .rst) found in that folder.');
+        setError('No text notes (.md / .txt / .org / .rst) found in that folder. For .docx or .pdf files, zip the folder and use the zip import.');
         setPhase('idle');
         return;
       }
@@ -140,7 +139,13 @@ export default function NotesImportPanel() {
     reset();
     setPhase('submitting');
     try {
-      const { jobId } = await api.importNotesZip(file);
+      const { jobId, file_count, skipped_count, converted_count } = await api.importNotesZip(file);
+      setReadInfo({
+        kept: file_count,
+        skipped: skipped_count || 0,
+        converted: converted_count || 0,
+        bytes: file.size,
+      });
       track(jobId);
     } catch (e: any) {
       setError(e?.message || String(e));
@@ -197,7 +202,7 @@ export default function NotesImportPanel() {
           <h3 class="text-[15px] font-bold uppercase tracking-widest text-surf-300 mb-3 font-[family-name:var(--font-display)]">Import a folder</h3>
           <p class="text-base-300 text-[12px] mb-4">
             Pick a directory. Text notes (.md, .txt, .org, .rst) are read in your browser and sent up; everything else
-            is ignored. Nothing leaves your machine except the note text.
+            is ignored. For Word docs or PDFs, zip the folder and use the zip import.
           </p>
           <input
             ref={(el) => { el.setAttribute('webkitdirectory', ''); el.setAttribute('directory', ''); }}
@@ -217,7 +222,7 @@ export default function NotesImportPanel() {
           <Show when={readInfo()}>
             {(info) => (
               <div class="text-[11px] text-base-400 mt-3">
-                {info().kept} note(s) read{info().skipped ? `, ${info().skipped} skipped` : ''} · {humanBytes(info().bytes)}
+                {info().kept} note(s) read{info().converted ? `, ${info().converted} converted` : ''}{info().skipped ? `, ${info().skipped} skipped` : ''} · {humanBytes(info().bytes)}
               </div>
             )}
           </Show>
@@ -227,14 +232,13 @@ export default function NotesImportPanel() {
         <div class="panel panel-accent p-5">
           <h3 class="text-[15px] font-bold uppercase tracking-widest text-surf-300 mb-3 font-[family-name:var(--font-display)]">Import a .zip</h3>
           <p class="text-base-300 text-[12px] mb-4">
-            Upload a zipped notes folder. The server unpacks the text entries (binaries, images, and
-            <code> __MACOSX</code> junk are ignored) and runs the same pipeline.
+            Upload a zipped notes folder. The server reads text files and converts <code>.docx</code> plus
+            text-based <code>.pdf</code> files, then runs the same import pipeline.
           </p>
           <p class="text-base-400 text-[11px] mb-4">
-            <span class="text-papaya-300 font-semibold">From Google Drive?</span> A raw folder download is
-            all <code>.docx</code>/<code>.pdf</code> and imports nothing — export with{' '}
-            <span class="text-base-300 font-semibold">Google Takeout → Documents → Plain Text (.txt)</span>,
-            or download individual docs as Markdown.
+            <span class="text-papaya-300 font-semibold">From Google Drive?</span> Download the Drive folder as a
+            <code> .zip</code> and upload it here. Native Docs exported as <code>.docx</code> and text PDFs are converted
+            before import; scanned PDFs are skipped.
           </p>
           <input
             ref={zipInput}

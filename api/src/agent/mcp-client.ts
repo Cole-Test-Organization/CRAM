@@ -35,6 +35,8 @@ import { InternalDomainsService } from '../services/internal-domains/internal-do
 import { AgentSettingsService } from '../services/agent/agent-settings.js';
 import { MemoriesService } from '../services/memories/memories.js';
 import { ThreadsService } from '../services/threads/threads.js';
+import { MergeService } from '../services/merge/merge.js';
+import { MeetingMergeHandler } from '../services/merge/handlers/meetings.js';
 
 import { registerTools } from '../mcp/tools.js';
 import type { Services } from '../mcp/tools.js';
@@ -94,6 +96,7 @@ export async function buildMcpSession({ userId }: { userId?: number } = {}) {
     agentSettingsService,
     memoriesService,
     threadsService: new ThreadsService(),
+    mergeService: new MergeService({ meetings: new MeetingMergeHandler({ meetingsService }) }),
   };
 
   // Until per-session auth lands, every call resolves to the default user —

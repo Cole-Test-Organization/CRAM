@@ -241,6 +241,15 @@ export const api = {
   reassignMeetingAccount: (id: number, opts: { account_id?: number; internal?: boolean }) =>
     post<any>(`/meetings/${id}/reassign-account`, opts),
 
+  // Generic merge (object-agnostic; entity dispatched server-side). previewMerge
+  // returns a plan (scalar/append fields + relation collections) for the resolver
+  // UI; applyMerge commits the user's choices, tombstoning the source record.
+  previewMerge: (entity: string, base_id: number, source_id: number) =>
+    post<any>(`/merge/${entity}/preview`, { base_id, source_id }),
+
+  applyMerge: (entity: string, base_id: number, source_id: number, choices: any) =>
+    post<any>(`/merge/${entity}`, { base_id, source_id, choices }),
+
   // From-emails flow: resolve a list of attendee emails into known contacts +
   // account candidates, then submit the user's choices to create the meeting
   // (and optionally fire off background contact enrichment). The resolve step
@@ -537,7 +546,13 @@ export const api = {
       try { msg = JSON.parse(body).error || msg; } catch {}
       throw new Error(msg);
     }
-    return res.json() as Promise<{ jobId: string; file_count: number }>;
+    return res.json() as Promise<{
+      jobId: string;
+      file_count: number;
+      converted_count?: number;
+      skipped_count?: number;
+      summary?: unknown;
+    }>;
   },
   getNotesImportJob: (jobId: string) =>
     get<NotesImportJob>(`/notes-import/jobs/${encodeURIComponent(jobId)}`),

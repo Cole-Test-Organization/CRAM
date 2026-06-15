@@ -7,6 +7,7 @@ import ListRows from '../components/ListRows';
 import TodayTimeline from '../components/TodayTimeline';
 import SelectionToolbar from '../components/SelectionToolbar';
 import { createSelection } from '../components/createSelection';
+import MergeModal from '../components/MergeModal';
 import { buildMeetingsExport } from '../lib/meetingExport';
 
 type Props = {
@@ -24,6 +25,8 @@ export default function MeetingsList(props: Props = {}) {
   const [filter, setFilter] = createSignal('');
   const [reviewOnly, setReviewOnly] = createSignal(false);
   const [modalOpen, setModalOpen] = createSignal(false);
+  const [mergeOpen, setMergeOpen] = createSignal(false);
+  const [mergePair, setMergePair] = createSignal<[number, number] | null>(null);
   const navigate = useNavigate();
 
   const isEmbedded = () => props.accountId !== undefined && props.accountId !== null;
@@ -66,6 +69,16 @@ export default function MeetingsList(props: Props = {}) {
     props.onAfterDelete?.();
   };
 
+  // Snapshot the two selected ids when opening the merge resolver so the modal's
+  // pair is stable even if the selection changes underneath.
+  const openMerge = () => {
+    const ids = sel.idList();
+    if (ids.length === 2) {
+      setMergePair([ids[0], ids[1]]);
+      setMergeOpen(true);
+    }
+  };
+
   return (
     <div>
       <div class="flex flex-col gap-3 mb-6 md:flex-row md:items-center">
@@ -74,6 +87,9 @@ export default function MeetingsList(props: Props = {}) {
         </Show>
         <div class="flex items-center gap-4 flex-wrap md:ml-auto">
           <span class="text-base-300 text-[12px] uppercase tracking-wider">{filtered().length} meeting{filtered().length === 1 ? '' : 's'}</span>
+          <Show when={sel.count() === 2}>
+            <button class="press press-ghost press-sm md:press-md" onClick={openMerge} title="Merge the two selected meetings">⇄ Merge 2</button>
+          </Show>
           <Button variant="primary" size={isEmbedded() ? 'sm' : 'md'} onClick={() => setModalOpen(true)}>+ New Meeting</Button>
         </div>
       </div>
@@ -144,6 +160,15 @@ export default function MeetingsList(props: Props = {}) {
             navigate(`/meetings/${m.id}`);
           }
         }}
+      />
+
+      <MergeModal
+        open={mergeOpen()}
+        entity="meetings"
+        idA={mergePair()?.[0] ?? null}
+        idB={mergePair()?.[1] ?? null}
+        onClose={() => setMergeOpen(false)}
+        onMerged={() => { sel.clear(); refetch(); props.onAfterDelete?.(); }}
       />
     </div>
   );
