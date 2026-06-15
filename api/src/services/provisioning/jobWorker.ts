@@ -83,16 +83,30 @@ export class ProvisioningJobWorker {
     }
   }
 
-  // Atomically promote the oldest queued job to 'running'. SKIP LOCKED so a second
-  // replica grabs a different row (never the same one); NOT EXISTS so we never run
-  // two jobs for the user at once (serial — terraform applies must not race).
+  // Atomically promote the oldest queued job to 'running'. The broker_state row is
+  // the per-user mutex: FOR UPDATE serializes claim attempts across replicas, then
+  // active_job_id is set in the same transaction as the job claim. SKIP LOCKED
+  // still protects the claimed job row itself; the state-row lock is what prevents
+  // two replicas from each seeing "no running job" and claiming different rows.
   private async claim(): Promise<Record<string, unknown> | null> {
     return withUser(this.userId, async (c) => {
+      await c.query(
+        `INSERT INTO broker_state (user_id, active_job_id)
+         VALUES ($1, NULL)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [this.userId],
+      );
+
+      const state = await c.query<{ active_job_id: string | null }>(
+        `SELECT active_job_id FROM broker_state WHERE user_id = $1 FOR UPDATE`,
+        [this.userId],
+      );
+      if (state.rows[0]?.active_job_id) return null;
+
       const res = await c.query(
         `WITH claimable AS (
            SELECT id FROM provisioning_jobs
             WHERE status = 'queued'
-              AND NOT EXISTS (SELECT 1 FROM provisioning_jobs r WHERE r.status = 'running')
             ORDER BY created_at
             FOR UPDATE SKIP LOCKED
             LIMIT 1
@@ -105,7 +119,14 @@ export class ProvisioningJobWorker {
          RETURNING j.*`,
         [this.workerId],
       );
-      return res.rows[0] ?? null;
+      const row = res.rows[0] ?? null;
+      if (!row) return null;
+
+      await c.query(
+        `UPDATE broker_state SET active_job_id = $2 WHERE user_id = $1`,
+        [this.userId, row.id],
+      );
+      return row;
     });
   }
 

@@ -33,6 +33,90 @@ export type NotesImportJob = {
   completedAt: string | null;
 };
 
+// ── Provisioning / Homelab shapes ────────────────────────────────────────
+export type ProvisioningJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
+
+export type ProvisioningDeploymentSummary = {
+  id: string;
+  configPath: string;
+  name: string;
+  provider: string | null;
+  projectName: string | null;
+  resourceKinds: string[];
+  resourceCount: number;
+  stepCount: number;
+  deployable: boolean;
+};
+
+export type ProvisioningDeploymentDescriptor = ProvisioningDeploymentSummary & {
+  providerProfile: string | null;
+  resources: Array<{
+    kind: string;
+    name: string | null;
+    hostname: string;
+    provider: string | null;
+  }>;
+  steps: Array<{
+    name: string;
+    action: string;
+    targets: string[];
+    resourceAction?: string;
+    description?: string;
+    enabled?: boolean;
+    when?: { param: string; enablesWhen: string | number | boolean };
+  }>;
+  inputs: Array<{
+    name: string;
+    type: 'string' | 'number' | 'boolean';
+    default?: string | number | boolean;
+    enablesWhen: string | number | boolean;
+    affectsSteps: string[];
+    source: string;
+  }>;
+  requiredEnv: string[];
+};
+
+export type ProvisioningResource = {
+  id: string;
+  deploymentId: string;
+  name: string | null;
+  hostname: string;
+  kind: string | null;
+  lifecycleStatus: string;
+  configPath: string;
+  provider: string | null;
+  vmId: number | null;
+  providerResourceId: string | null;
+  terraformStatePath: string | null;
+  outputs: Record<string, unknown> | null;
+  lastJobId: string | null;
+  powerState: string | null;
+  powerStateCheckedAt: string | null;
+  updatedAt: string;
+};
+
+export type ProvisioningJob = {
+  id: string;
+  action: string;
+  target: string | null;
+  deployment: string | null;
+  resourceAction: string | null;
+  status: ProvisioningJobStatus;
+  cancelRequested: boolean;
+  params: Record<string, unknown> | null;
+  error: string | null;
+  createdAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  logs?: string[];
+};
+
+export type ProvisioningSecretSummary = {
+  name: string;
+  description: string | null;
+  updatedAt: string;
+};
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -659,6 +743,45 @@ export const api = {
     }
     return res.json() as Promise<{ filename: string; size_bytes: number; created_at: string; original_name: string | null; duration_ms: number }>;
   },
+
+  // Provisioning / Homelab (async Terraform-backed lifecycle).
+  listProvisioningDeployments: () =>
+    get<ProvisioningDeploymentSummary[]>('/provisioning/deployments'),
+  getProvisioningDeployment: (id: string) =>
+    get<ProvisioningDeploymentDescriptor>(`/provisioning/deployments/${encodeURIComponent(id)}`),
+  listProvisioningResources: () =>
+    get<ProvisioningResource[]>('/provisioning/resources'),
+  getProvisioningResource: (id: string) =>
+    get<ProvisioningResource>(`/provisioning/resources/${encodeURIComponent(id)}`),
+  refreshProvisioningPowerState: (id: string) =>
+    get<ProvisioningResource>(`/provisioning/resources/${encodeURIComponent(id)}/power-state`),
+  startProvisioningResource: (id: string) =>
+    post<ProvisioningResource>(`/provisioning/resources/${encodeURIComponent(id)}/start`, {}),
+  stopProvisioningResource: (id: string) =>
+    post<ProvisioningResource>(`/provisioning/resources/${encodeURIComponent(id)}/stop`, {}),
+  deployProvisioningDeployment: (id: string, params?: Record<string, unknown>) =>
+    post<ProvisioningJob>(`/provisioning/deployments/${encodeURIComponent(id)}/deploy`, { params: params ?? {} }),
+  deprovisionProvisioningDeployment: (id: string, params?: Record<string, unknown>) =>
+    post<ProvisioningJob>(`/provisioning/deployments/${encodeURIComponent(id)}/deprovision`, { params: params ?? {} }),
+  upProvisioningResource: (deploymentId: string, target: string, params?: Record<string, unknown>) =>
+    post<ProvisioningJob>(`/provisioning/deployments/${encodeURIComponent(deploymentId)}/resources/${encodeURIComponent(target)}/up`, { params: params ?? {} }),
+  downProvisioningResource: (id: string, params?: Record<string, unknown>) =>
+    post<ProvisioningJob>(`/provisioning/resources/${encodeURIComponent(id)}/down`, { params: params ?? {} }),
+  runProvisioningAction: (deploymentId: string, target: string, action: string, params?: Record<string, unknown>) =>
+    post<ProvisioningJob>(`/provisioning/deployments/${encodeURIComponent(deploymentId)}/resources/${encodeURIComponent(target)}/actions/${encodeURIComponent(action)}`, { params: params ?? {} }),
+  listProvisioningJobs: (params?: { status?: ProvisioningJobStatus; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return get<ProvisioningJob[]>(`/provisioning/jobs${q ? '?' + q : ''}`);
+  },
+  getProvisioningJob: (id: string) =>
+    get<ProvisioningJob>(`/provisioning/jobs/${encodeURIComponent(id)}`),
+  cancelProvisioningJob: (id: string) =>
+    post<ProvisioningJob>(`/provisioning/jobs/${encodeURIComponent(id)}/cancel`, {}),
+  listProvisioningSecrets: () =>
+    get<ProvisioningSecretSummary[]>('/provisioning/secrets'),
 
   // Themes — built-in palettes + user-authored custom themes, plus the
   // per-user "active theme" pointer. The GUI applies whichever theme is

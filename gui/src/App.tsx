@@ -15,6 +15,8 @@ import Products from './pages/Products';
 import Agent from './pages/Agent';
 import ImportExport from './pages/ImportExport';
 import Settings from './pages/Settings';
+import HomelabList from './pages/HomelabList';
+import HomelabDetail from './pages/HomelabDetail';
 
 export default function App() {
   return (
@@ -32,6 +34,8 @@ export default function App() {
       <Route path="/opportunities" component={() => <OpportunitiesList />} />
       <Route path="/opportunities/:id" component={OpportunityDetail} />
       <Route path="/products" component={Products} />
+      <Route path="/homelab" component={HomelabList} />
+      <Route path="/homelab/:id" component={HomelabDetail} />
       <Route path="/agent" component={Agent} />
       <Route path="/import-export" component={ImportExport} />
       <Route path="/import-notes" component={() => <Navigate href="/import-export" />} />

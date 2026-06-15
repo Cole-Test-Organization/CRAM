@@ -21,7 +21,7 @@ const EXPECTED_TOOLS = [
   'account_details', 'accounts', 'agent_settings', 'backup', 'contacts', 'events',
   'export_markdown', 'import_export', 'internal_domains', 'meetings', 'memories',
   'notes', 'notes_import', 'opportunities', 'outreach', 'product_categories',
-  'products', 'search', 'threads', 'vendor_products', 'vendors',
+  'products', 'provisioning', 'search', 'threads', 'vendor_products', 'vendors',
 ].sort();
 
 let session;
@@ -60,6 +60,9 @@ describe('MCP — tool set + parity', () => {
     for (const a of ['link_product', 'unlink_product']) assert.ok(actionsOf('opportunities').includes(a));
     assert.ok(actionsOf('vendors').includes('restore'));
     assert.ok(actionsOf('account_details').includes('vendor_heatmap'));
+    for (const a of ['list_deployments', 'get_deployment', 'deploy', 'get_job', 'cancel_job', 'list_secrets']) {
+      assert.ok(actionsOf('provisioning').includes(a), `provisioning tool missing action "${a}"`);
+    }
     for (const a of ['list', 'create', 'update', 'delete', 'add_task', 'update_task', 'delete_task', 'link_contact', 'unlink_contact']) {
       assert.ok(actionsOf('threads').includes(a), `threads tool missing action "${a}"`);
     }
@@ -99,6 +102,7 @@ describe('MCP — wiring (every tool reaches its service)', () => {
       ['notes', { action: 'list', account_id: ACME_ID }],
       ['account_details', { action: 'get', account_id: ACME_ID }],
       ['threads', { action: 'list', account_id: ACME_ID }],
+      ['provisioning', { action: 'list_deployments' }],
     ];
     const unwired = [];
     for (const [name, args] of reads) {
