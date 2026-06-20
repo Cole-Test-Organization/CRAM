@@ -1,4 +1,4 @@
-import { createEffect, createResource, createSignal, For, onCleanup, Show } from 'solid-js';
+import { createEffect, createResource, createSignal, For, onCleanup, Show, untrack } from 'solid-js';
 import { api, type ProvisioningDeploymentDescriptor, type ProvisioningDeploymentSummary, type ProvisioningJob, type ProvisioningJobStatus, type ProvisioningResource } from '../lib/api';
 import Button from '../components/Button';
 import Modal from '../components/Modal';
@@ -19,6 +19,21 @@ export function StatusPill(props: { status: string | null | undefined }) {
   return <StatusBadge status={props.status || null} label={label()} tone={statusTone(props.status)} />;
 }
 
+export function StreamStatusPill(props: { error?: string; status: string }) {
+  const live = () => props.status === 'live';
+  const label = () => props.status.replace(/[-_]/g, ' ');
+  return (
+    <span
+      title={props.error || undefined}
+      class={`text-[10px] uppercase tracking-widest border px-2 py-1 font-semibold ${
+        live() ? 'border-surf-300 text-surf-300' : 'border-base-600 text-base-400'
+      }`}
+    >
+      {label()}
+    </span>
+  );
+}
+
 export function formatDateTime(value: string | null | undefined): string {
   if (!value) return 'not started';
   const date = new Date(value);
@@ -36,6 +51,9 @@ export function isActiveJob(job: ProvisioningJob | null | undefined): boolean {
 
 export function JobMonitor(props: {
   jobId: string | null;
+  liveConnected?: boolean;
+  liveJob?: ProvisioningJob | null;
+  onJobUpdate?: (job: ProvisioningJob) => void;
   onSettled?: () => void;
   onClear?: () => void;
 }) {
@@ -51,16 +69,23 @@ export function JobMonitor(props: {
     }
   };
 
+  const handleSettled = (next: ProvisioningJob) => {
+    if (!isActiveJob(next) && settledJobId !== next.id) {
+      settledJobId = next.id;
+      props.onSettled?.();
+    }
+  };
+
   const fetchJob = async (id: string) => {
     try {
       const next = await api.getProvisioningJob(id);
       setJob(next);
+      props.onJobUpdate?.(next);
       setError('');
-      if (isActiveJob(next)) {
+      if (isActiveJob(next) && !props.liveConnected) {
         pollTimer = setTimeout(() => fetchJob(id), 2000);
-      } else if (settledJobId !== id) {
-        settledJobId = id;
-        props.onSettled?.();
+      } else {
+        handleSettled(next);
       }
     } catch (err: any) {
       setError(err?.message || 'Failed to load job');
@@ -74,7 +99,24 @@ export function JobMonitor(props: {
     settledJobId = null;
     setJob(null);
     setError('');
-    if (id) fetchJob(id);
+    if (!id) return;
+    const live = untrack(() => props.liveJob);
+    if (live?.id === id) {
+      setJob(live);
+      handleSettled(live);
+    } else {
+      fetchJob(id);
+    }
+  });
+
+  createEffect(() => {
+    const id = props.jobId;
+    const live = props.liveJob;
+    if (!id || !live || live.id !== id) return;
+    clearTimer();
+    setJob(live);
+    setError('');
+    handleSettled(live);
   });
 
   onCleanup(clearTimer);
@@ -83,7 +125,9 @@ export function JobMonitor(props: {
     const current = job();
     if (!current || !isActiveJob(current)) return;
     try {
-      setJob(await api.cancelProvisioningJob(current.id));
+      const next = await api.cancelProvisioningJob(current.id);
+      setJob(next);
+      props.onJobUpdate?.(next);
     } catch (err: any) {
       setError(err?.message || 'Failed to cancel job');
     }
@@ -99,6 +143,9 @@ export function JobMonitor(props: {
               <Show when={job()}>
                 {(j) => <StatusPill status={j().status} />}
               </Show>
+              <span class={`text-[10px] uppercase tracking-widest border px-2 py-1 ${props.liveConnected ? 'border-surf-300 text-surf-300' : 'border-base-600 text-base-400'}`}>
+                {props.liveConnected ? 'Live' : 'Polling'}
+              </span>
             </div>
             <Show when={job()} fallback={<div class="text-base-300 text-[12px] mt-2">Loading job...</div>}>
               {(j) => (
@@ -221,7 +268,7 @@ export function LaunchModal(props: {
     <Modal
       open={props.open}
       onClose={props.onClose}
-      title="Launch Homelab Job"
+      title="Launch Broker Job"
       size="lg"
       footer={
         <>

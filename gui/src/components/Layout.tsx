@@ -132,7 +132,7 @@ export default function Layout(props: ParentProps) {
                     {link("/meetings", "Meetings")}
                     {link("/contacts", "Contacts")}
                     {link("/events", "Events")}
-                    {link("/homelab", "Homelab")}
+                    {link("/broker", "Broker")}
                     {link("/agent", "Agent")}
                     {link("/import-export", "Import / Export")}
                     {link("/settings", "Settings")}

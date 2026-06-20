@@ -6,6 +6,8 @@
 // routes don't scope by request.userId.
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { ProvisioningService } from '../../services/provisioning/index.js';
+import type { BrokerEvent } from '../../services/provisioning/events.js';
+import type { JobRecord } from '../../services/provisioning/types/index.js';
 
 const TAG = 'provisioning';
 const paramsBody = {
@@ -20,6 +22,53 @@ function fail(reply: FastifyReply, err: unknown) {
   return { error: e.message ?? 'Internal error' };
 }
 
+function streamEnvelope(type: string, data: unknown) {
+  return {
+    type,
+    ts: new Date().toISOString(),
+    data,
+  };
+}
+
+function writeSse(reply: FastifyReply, type: string, data: unknown): void {
+  if (reply.raw.writableEnded || reply.raw.destroyed) return;
+  reply.raw.write(`data: ${JSON.stringify(streamEnvelope(type, data))}\n\n`);
+}
+
+function eventPayload(event: BrokerEvent): unknown {
+  switch (event.type) {
+    case 'active-job':
+      return { activeJobId: event.activeJobId };
+    case 'job':
+      return jobRecordPayload(event.job);
+    case 'resource':
+      return event.resource;
+    case 'state':
+      return {
+        activeJobId: event.state.activeJobId ?? null,
+        resources: Object.values(event.state.resources ?? {}),
+      };
+  }
+}
+
+function jobRecordPayload(job: JobRecord) {
+  return {
+    id: job.id,
+    action: job.action,
+    target: job.hostname ?? null,
+    deployment: null,
+    resourceAction: null,
+    status: job.status,
+    cancelRequested: false,
+    params: null,
+    error: job.error ?? null,
+    createdAt: null,
+    startedAt: job.startedAt ?? null,
+    finishedAt: job.finishedAt ?? null,
+    logs: job.logs ?? [],
+  };
+}
+
 export default async function provisioningRoutes(
   fastify: FastifyInstance,
   { provisioningService }: { provisioningService: ProvisioningService },
@@ -28,6 +77,60 @@ export default async function provisioningRoutes(
   fastify.get('/provisioning/deployments', {
     schema: { description: 'List every available deployment (summary): provider, resource kinds, whether it is `deployable` (has steps) vs resource-only.', tags: [TAG] },
   }, async () => provisioningService.listDeployments());
+
+  fastify.get('/provisioning/events', {
+    schema: {
+      description: 'Server-Sent Events stream for broker progress. Sends an initial snapshot, then job/resource/active-job updates as deployment state changes.',
+      tags: [TAG],
+      produces: ['text/event-stream'],
+    },
+  }, async (request, reply) => {
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+
+    let snapshotSent = false;
+    let closed = false;
+    const pending: BrokerEvent[] = [];
+    const heartbeat = setInterval(() => {
+      if (!reply.raw.writableEnded && !reply.raw.destroyed) {
+        reply.raw.write(`: heartbeat ${new Date().toISOString()}\n\n`);
+      }
+    }, 25000);
+    const unsubscribe = provisioningService.subscribeEvents((event) => {
+      if (!snapshotSent) {
+        pending.push(event);
+        return;
+      }
+      writeSse(reply, event.type, eventPayload(event));
+    });
+    const closedPromise = new Promise<void>((resolve) => {
+      request.raw.on('close', () => {
+        closed = true;
+        resolve();
+      });
+    });
+    const cleanup = () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    };
+
+    try {
+      writeSse(reply, 'snapshot', await provisioningService.getEventSnapshot());
+      snapshotSent = true;
+      for (const event of pending.splice(0)) {
+        writeSse(reply, event.type, eventPayload(event));
+      }
+    } catch (err) {
+      snapshotSent = true;
+      writeSse(reply, 'error', { message: err instanceof Error ? err.message : String(err) });
+    }
+    if (!closed) await closedPromise;
+    cleanup();
+  });
 
   fastify.get<{ Params: { id: string } }>('/provisioning/deployments/:id', {
     schema: {

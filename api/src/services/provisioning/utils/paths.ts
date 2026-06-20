@@ -3,20 +3,27 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-// projectRoot is the provisioning service's data/config/work root. The source
-// runs in place under tsx (no dist/), so the default is the provisioning service
-// dir itself (one level up from utils/). Override with PROVISIONING_ROOT when
-// data/work should live on a container volume or elsewhere.
+// projectRoot is the provisioning service's shipped config/artifact root. The
+// source runs in place under tsx (no dist/), so the default is the provisioning
+// service dir itself (one level up from utils/). Override with PROVISIONING_ROOT
+// only when the shipped database/terraform artifacts live elsewhere.
 export const projectRoot = process.env.PROVISIONING_ROOT
   ? path.resolve(process.env.PROVISIONING_ROOT)
   : path.resolve(here, "..");
-export const dataDir = path.join(projectRoot, "data");
+
+// Runtime data must not live under the watched source tree in dev. Terraform
+// writes vars, provider caches, and lock metadata while jobs run; keeping those
+// files under src makes nodemon restart the API and interrupts active jobs.
+export const runtimeRoot = process.env.PROVISIONING_RUNTIME_ROOT
+  ? path.resolve(process.env.PROVISIONING_RUNTIME_ROOT)
+  : projectRoot;
+export const dataDir = path.join(runtimeRoot, "data");
 export const databaseDir = path.join(projectRoot, "database");
 export const databaseDeploymentsDir = path.join(databaseDir, "deployments");
 export const databaseLegacyFirewallsDir = path.join(databaseDir, "legacy-firewalls");
 export const databaseProviderProfilesDir = path.join(databaseDir, "provider-profiles");
 export const databaseResourceProfilesDir = path.join(databaseDir, "resource-profiles");
-export const workDir = path.join(projectRoot, "work");
+export const workDir = path.join(runtimeRoot, "work");
 export const defaultConfigPath = path.join(
   "database",
   "legacy-firewalls",

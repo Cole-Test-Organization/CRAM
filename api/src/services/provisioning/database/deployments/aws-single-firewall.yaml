@@ -3,7 +3,7 @@ providerProfile: aws-lab
 provider:
   projectName: single-firewall-lab
   vpcCidr: 10.120.0.0/16
-  panosVersionMajor: "11.2.11"
+  panosVersionMajor: "11.2"
 steps:
   - name: aws-network-up
     action: up

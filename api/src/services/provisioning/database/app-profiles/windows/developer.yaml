@@ -19,7 +19,7 @@ apps:
   - id: nodejs-lts
     name: Node.js LTS
     method: msi
-    url: https://nodejs.org/dist/latest-v24.x/node-v24.16.0-x64.msi
+    url: https://nodejs.org/dist/latest-v24.x/node-v24.17.0-x64.msi
     verify:
       command: if (Get-Command node.exe -ErrorAction SilentlyContinue) { node --version; exit 0 } else { exit 1 }
 

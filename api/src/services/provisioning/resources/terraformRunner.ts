@@ -150,17 +150,16 @@ export async function destroyTerraformResource<TResource extends ResourceConfig>
   record: ResourceRecord,
   log: LogFn,
 ): Promise<void> {
-  if (!record.terraformStatePath) {
-    throw new Error(`No Terraform state path recorded for ${record.hostname}`);
-  }
-
   const profile = await context.configLoader.loadTerraformResourceProfile(
     context.deployment,
     context.resource,
   );
   assertProfileMatches(profile, context.deployment, context.resource);
 
-  const workspace = record.terraformStatePath;
+  const workspace = record.terraformStatePath ?? terraformWorkspace(context.deployment.name, context.resource.hostname);
+  if (!record.terraformStatePath) {
+    log(`No Terraform workspace recorded for ${record.hostname}; using expected workspace ${workspace}.`);
+  }
   const tfWorkDir = path.join(workDir, context.resource.hostname, "terraform");
   const varsPath = path.join(tfWorkDir, "terraform.tfvars.json");
   await mkdir(tfWorkDir, { recursive: true });
@@ -195,17 +194,16 @@ export async function readTerraformResourceOutputs<TResource extends ResourceCon
   record: ResourceRecord,
   log: LogFn,
 ): Promise<Record<string, unknown>> {
-  if (!record.terraformStatePath) {
-    throw new Error(`No Terraform state path recorded for ${record.hostname}`);
-  }
-
   const profile = await context.configLoader.loadTerraformResourceProfile(
     context.deployment,
     context.resource,
   );
   assertProfileMatches(profile, context.deployment, context.resource);
 
-  const workspace = record.terraformStatePath;
+  const workspace = record.terraformStatePath ?? terraformWorkspace(context.deployment.name, context.resource.hostname);
+  if (!record.terraformStatePath) {
+    log(`No Terraform workspace recorded for ${record.hostname}; using expected workspace ${workspace}.`);
+  }
   const tfWorkDir = path.join(workDir, context.resource.hostname, "terraform");
   const env = withPgBackend(await resolveTerraformEnv(profile, context, tfWorkDir));
   await terraformInit(profile.terraform.stack, env, log);
@@ -418,15 +416,12 @@ async function readReferencedTerraformOutputs(
   if (!targetResource) {
     throw new Error(`Cannot read Terraform outputs for ${record.hostname}: resource is not in deployment config`);
   }
-  if (!record.terraformStatePath) {
-    throw new Error(`Cannot read Terraform outputs for ${record.hostname}: no Terraform state path recorded`);
-  }
 
   const profile = await context.configLoader.loadTerraformResourceProfile(
     context.deployment,
     targetResource,
   );
-  const workspace = record.terraformStatePath;
+  const workspace = record.terraformStatePath ?? terraformWorkspace(context.deployment.name, targetResource.hostname);
   const tfWorkDir = path.join(workDir, targetResource.hostname, "terraform");
   const env = withPgBackend(await resolveTerraformEnv(profile, {
     configPath: context.configPath,

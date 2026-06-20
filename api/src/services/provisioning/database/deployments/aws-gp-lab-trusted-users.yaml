@@ -2,7 +2,7 @@ name: aws-gp-lab-trusted-users
 providerProfile: aws-lab
 provider:
   projectName: gp-lab-trusted-users
-  panosVersionMajor: "11.2.11"
+  panosVersionMajor: "11.2"
 steps:
   - name: aws-apply-network
     action: up

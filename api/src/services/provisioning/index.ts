@@ -2,6 +2,7 @@ export { ProvisioningService } from "./provisioningService.js";
 export type {
   EnqueueJobInput,
   JobKind,
+  ProvisioningEventSnapshot,
   ProvisioningServiceOptions,
 } from "./provisioningService.js";
 export { ProvisioningJobWorker } from "./jobWorker.js";

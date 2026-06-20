@@ -22,6 +22,8 @@ export interface ProvisioningJobWorkerOptions {
   pollMs?: number;
   /** How often a running job checks for a cancel request (ms). */
   cancelPollMs?: number;
+  /** How often to publish an in-memory running-job event when no log line changed. */
+  progressEventMs?: number;
 }
 
 // Durable DB-claim worker that replaces the broker's in-memory `activeJobId` lock.
@@ -37,6 +39,7 @@ export class ProvisioningJobWorker {
   private readonly secretResolver: SecretResolver;
   private readonly pollMs: number;
   private readonly cancelPollMs: number;
+  private readonly progressEventMs: number;
   private readonly workerId = `provisioning-${process.pid}-${randomUUID().slice(0, 8)}`;
   private running = false;
   private loopPromise: Promise<void> | null = null;
@@ -48,6 +51,7 @@ export class ProvisioningJobWorker {
     this.secretResolver = options.secretResolver;
     this.pollMs = options.pollMs ?? 1500;
     this.cancelPollMs = options.cancelPollMs ?? 2000;
+    this.progressEventMs = options.progressEventMs ?? 5000;
   }
 
   async start(): Promise<void> {
@@ -154,8 +158,12 @@ export class ProvisioningJobWorker {
       job.logs.push(`[${new Date().toLocaleTimeString()}] ${line}`);
       void persist();
     };
+    const publishProgress = (): void => {
+      this.store.events.publish({ type: "job", job: structuredClone(job) });
+    };
 
     await this.store.setActiveJob(job.id);
+    publishProgress();
     const abort = new AbortController();
     installJobSignal(abort.signal);
     installSecretOverlay(await this.secretResolver.hydrateAll());
@@ -172,6 +180,7 @@ export class ProvisioningJobWorker {
         })
         .catch(() => undefined);
     }, this.cancelPollMs);
+    const progressTimer = setInterval(publishProgress, this.progressEventMs);
 
     logger.info({ jobId: job.id, action: job.action, target: job.hostname }, "running provisioning job");
     try {
@@ -189,6 +198,7 @@ export class ProvisioningJobWorker {
       }
     } finally {
       clearInterval(cancelTimer);
+      clearInterval(progressTimer);
       clearJobSignal();
       clearSecretOverlay();
       job.finishedAt = nowIso();

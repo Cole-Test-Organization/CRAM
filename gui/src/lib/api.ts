@@ -782,6 +782,8 @@ export const api = {
     post<ProvisioningJob>(`/provisioning/jobs/${encodeURIComponent(id)}/cancel`, {}),
   listProvisioningSecrets: () =>
     get<ProvisioningSecretSummary[]>('/provisioning/secrets'),
+  setProvisioningSecret: (name: string, data: { value: string; description?: string }) =>
+    put<{ name: string }>(`/provisioning/secrets/${encodeURIComponent(name)}`, data),
 
   // Themes — built-in palettes + user-authored custom themes, plus the
   // per-user "active theme" pointer. The GUI applies whichever theme is

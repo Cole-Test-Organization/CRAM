@@ -20,7 +20,7 @@ import type {
 import type { PanoramaConfigPushConfig } from "../../../types/panw.js";
 import type { ConnectedDevice, VmAuthKeyResult } from "../../../types/panosClient.js";
 import type { LogFn } from "../../../types/logging.js";
-import { requireEnv } from "../../../utils/index.js";
+import { optionalEnv, requireEnv } from "../../../utils/index.js";
 import { PanosApiClient } from "./client.js";
 import { setInitialAdminPassword } from "./ssh.js";
 
@@ -453,7 +453,7 @@ async function readActiveFirewallLicense(client: PanosApiClient): Promise<string
 function resolveDeactivationApiKey(resource: PanwVmseriesResourceConfig): string | null {
   if (resource.license.deactivationApiKey) return resource.license.deactivationApiKey;
   if (resource.license.deactivationApiKeyEnv) {
-    return process.env[resource.license.deactivationApiKeyEnv] ?? null;
+    return optionalEnv(resource.license.deactivationApiKeyEnv) ?? null;
   }
   return null;
 }
@@ -745,7 +745,7 @@ function resolveBootstrapSettings(config: PanosBootstrapConfig | undefined): Res
   const adminPassword =
     config?.adminPassword ??
     envValue(config?.adminPasswordEnv) ??
-    process.env.PANOS_ADMIN_PASSWORD ??
+    optionalEnv("PANOS_ADMIN_PASSWORD") ??
     null;
   if (!adminPassword) {
     throw new Error(
@@ -756,7 +756,7 @@ function resolveBootstrapSettings(config: PanosBootstrapConfig | undefined): Res
   const initialAdminPassword =
     config?.initialAdminPassword ??
     envValue(config?.initialAdminPasswordEnv) ??
-    process.env.PANOS_INITIAL_ADMIN_PASSWORD ??
+    optionalEnv("PANOS_INITIAL_ADMIN_PASSWORD") ??
     "admin";
 
   return {
@@ -805,7 +805,7 @@ function stringValue(value: unknown): string | null {
 }
 
 function envValue(name?: string | null): string | null {
-  return name ? process.env[name] ?? null : null;
+  return name ? optionalEnv(name) ?? null : null;
 }
 
 function errorMessage(error: unknown): string {

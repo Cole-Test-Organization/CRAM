@@ -69,6 +69,21 @@ services:
       # In-container path the scheduled pg_dump writes to. Must live under the
       # /backups bind mount below — the host source of that mount is BACKUP_HOST_DIR.
       - BACKUP_DIR=${BACKUP_DIR:-/backups}
+      # Provisioning broker — AES master key that decrypts the provisioning_secrets
+      # table at deploy time. The secrets themselves live in Postgres, not here; set
+      # PROVISIONING_SECRETS_KEY in .env (openssl rand -base64 32). In-container the
+      # local .env→table seed stays off (no broker .env to read; secrets are DB-managed).
+      - PROVISIONING_SECRETS_KEY=${PROVISIONING_SECRETS_KEY:-}
+      - PROVISIONING_SEED_SECRETS_ON_BOOT=${PROVISIONING_SEED_SECRETS_ON_BOOT:-false}
+      - PROVISIONING_TF_PG_CONN=${PROVISIONING_TF_PG_CONN:-postgres://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-devpassword}@db:5432/${POSTGRES_DB:-crm}?sslmode=disable}
+      - PROVISIONING_RUNTIME_ROOT=${PROVISIONING_RUNTIME_ROOT:-/app/api/.provisioning-runtime}
+      # AWS provider auth for provisioning: Terraform/AWS CLI read the mounted
+      # shared credentials/config files using this profile.
+      - AWS_PROFILE=${AWS_PROFILE:-default}
+      - AWS_SDK_LOAD_CONFIG=${AWS_SDK_LOAD_CONFIG:-1}
+      # PAN-OS first-login bootstrap uses this private key as the pair for the
+      # AWS key pair public key stored in provisioning secrets.
+      - PANOS_SSH_PRIVATE_KEY=/root/.ssh/panw-broker-bootstrap
     # Makes host.docker.internal resolve to the Docker host on Linux. No-op on
     # Mac/Windows Docker Desktop (host.docker.internal works there natively).
     extra_hosts:
@@ -85,6 +100,12 @@ services:
       # (e.g. /Volumes/Backups/crm) — it does not have to live under the repo.
       # Defaults to ./backups so a fresh clone "just works" without .env edits.
       - ${BACKUP_HOST_DIR:-./backups}:/backups
+      # Shared AWS credentials/config for provisioning. Read-only; selected by
+      # AWS_PROFILE above.
+      - ${HOME}/.aws:/root/.aws:ro
+      # Dedicated PAN-OS bootstrap key. Mount only this key, not the whole
+      # ~/.ssh directory.
+      - ${HOME}/.ssh/panw-broker-bootstrap:/root/.ssh/panw-broker-bootstrap:ro
     ports:
       # BIND_ADDRESS = host interface to bind to. 127.0.0.1 (default) keeps the
       # app on this machine only; 0.0.0.0 exposes it on the LAN. Set in .env.
@@ -118,6 +139,21 @@ services:
       - TODOIST_DEFAULT_PROJECT=${TODOIST_DEFAULT_PROJECT:-Inbox}
       - TODOIST_DEFAULT_SECTION=${TODOIST_DEFAULT_SECTION:-}
       - BACKUP_DIR=${BACKUP_DIR:-/backups}
+      # Provisioning broker — AES master key that decrypts the provisioning_secrets
+      # table at deploy time. The secrets themselves live in Postgres, not here; set
+      # PROVISIONING_SECRETS_KEY in .env (openssl rand -base64 32). In-container the
+      # local .env→table seed stays off (no broker .env to read; secrets are DB-managed).
+      - PROVISIONING_SECRETS_KEY=${PROVISIONING_SECRETS_KEY:-}
+      - PROVISIONING_SEED_SECRETS_ON_BOOT=${PROVISIONING_SEED_SECRETS_ON_BOOT:-false}
+      - PROVISIONING_TF_PG_CONN=${PROVISIONING_TF_PG_CONN:-postgres://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-devpassword}@db:5432/${POSTGRES_DB:-crm}?sslmode=disable}
+      - PROVISIONING_RUNTIME_ROOT=${PROVISIONING_RUNTIME_ROOT:-/app/api/.provisioning-runtime}
+      # AWS provider auth for provisioning: Terraform/AWS CLI read the mounted
+      # shared credentials/config files using this profile.
+      - AWS_PROFILE=${AWS_PROFILE:-default}
+      - AWS_SDK_LOAD_CONFIG=${AWS_SDK_LOAD_CONFIG:-1}
+      # PAN-OS first-login bootstrap uses this private key as the pair for the
+      # AWS key pair public key stored in provisioning secrets.
+      - PANOS_SSH_PRIVATE_KEY=/root/.ssh/panw-broker-bootstrap
     # Makes host.docker.internal resolve to the Docker host on Linux. No-op on
     # Mac/Windows Docker Desktop (where the name resolves natively).
     extra_hosts:
@@ -140,6 +176,12 @@ services:
       - ./outreach/.ratelimit.json:/app/outreach/.ratelimit.json
       - ./events/src:/app/events/src
       - ${BACKUP_HOST_DIR:-./backups}:/backups
+      # Shared AWS credentials/config for provisioning. Read-only; selected by
+      # AWS_PROFILE above.
+      - ${HOME}/.aws:/root/.aws:ro
+      # Dedicated PAN-OS bootstrap key. Mount only this key, not the whole
+      # ~/.ssh directory.
+      - ${HOME}/.ssh/panw-broker-bootstrap:/root/.ssh/panw-broker-bootstrap:ro
     ports:
       # BIND_ADDRESS = host interface to bind to (see app service / .env).
       - "${BIND_ADDRESS:-127.0.0.1}:3200:3200"

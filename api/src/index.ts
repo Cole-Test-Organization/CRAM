@@ -260,6 +260,29 @@ if (process.env.PROVISIONING_SEED_ON_BOOT !== 'false') {
     logger.warn({ err: (err as Error).message }, 'Provisioning config seed failed (continuing)');
   }
 }
+
+// Local-dev bootstrap: copy the broker's deployment secrets from .env into the
+// encrypted provisioning_secrets table (seed-if-absent). Production manages these as
+// encrypted rows via the GUI/API — set PROVISIONING_SEED_SECRETS_ON_BOOT=false there.
+// No-op without PROVISIONING_SECRETS_KEY; best-effort so it never blocks startup.
+if (process.env.PROVISIONING_SEED_SECRETS_ON_BOOT !== 'false') {
+  try {
+    const secretSeed = await provisioningService.seedSecretsFromEnv({
+      overwrite: process.env.PROVISIONING_SECRETS_SEED_OVERWRITE === 'true',
+    });
+    if (!secretSeed.keyConfigured) {
+      logger.info('Skipped provisioning secret seed — PROVISIONING_SECRETS_KEY not set');
+    } else {
+      logger.info(
+        { seeded: secretSeed.seeded, present: secretSeed.skipped.length, absent: secretSeed.absent.length },
+        'Seeded provisioning secrets from .env',
+      );
+    }
+  } catch (err) {
+    logger.warn({ err: (err as Error).message }, 'Provisioning secret seed failed (continuing)');
+  }
+}
+
 await provisioningWorker.start();
 
 await fastify.listen({ port: config.port, host: config.host });

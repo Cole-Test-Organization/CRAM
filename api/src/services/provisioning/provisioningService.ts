@@ -4,8 +4,15 @@ import { ResourceBroker } from "./resourceBroker.js";
 import { PostgresStateRepository } from "./state/postgresStateRepository.js";
 import { PostgresConfigRepository } from "./config/postgresConfigRepository.js";
 import { seedProvisioningConfig, type SeedResult } from "./config/seed.js";
-import { SecretsService, SecretResolver, type SecretSummary } from "./secrets/index.js";
+import {
+  SecretsService,
+  SecretResolver,
+  seedProvisioningSecrets,
+  type SecretSummary,
+  type SeedSecretsResult,
+} from "./secrets/index.js";
 import { createDefaultResourceAdapterRegistry } from "./resources/index.js";
+import type { BrokerEventListener } from "./events.js";
 import { rowToJobView, type JobSpec, type JobView } from "./jobView.js";
 import type {
   DeploymentDescriptor,
@@ -36,6 +43,12 @@ export interface ProvisioningServiceOptions {
   store?: PostgresStateRepository;
   config?: PostgresConfigRepository;
   secrets?: SecretsService;
+}
+
+export interface ProvisioningEventSnapshot {
+  activeJobId: string | null;
+  resources: ResourceRecord[];
+  jobs: JobView[];
 }
 
 function httpError(statusCode: number, message: string): Error {
@@ -91,6 +104,19 @@ export class ProvisioningService {
     return this.broker.getResource(target);
   }
 
+  async getEventSnapshot(): Promise<ProvisioningEventSnapshot> {
+    const state = await this.store.getState();
+    return {
+      activeJobId: state.activeJobId ?? null,
+      resources: Object.values(state.resources ?? {}),
+      jobs: await this.listJobs({ limit: 50 }),
+    };
+  }
+
+  subscribeEvents(listener: BrokerEventListener): () => void {
+    return this.broker.subscribeEvents(listener);
+  }
+
   // Provider-read-only against the cloud; patches power_state so subscribers see
   // fresh status. skipActiveJobCheck so status reads work during a lifecycle job.
   async refreshPowerState(target: string): Promise<ResourceRecord> {
@@ -124,6 +150,16 @@ export class ProvisioningService {
   // ── config seed (idempotent import of the shipped database/*.yaml) ──────────
   async seed(): Promise<SeedResult> {
     return seedProvisioningConfig(this.userId);
+  }
+
+  // Local-dev bootstrap: copy the broker's deployment secrets from .env into the
+  // encrypted provisioning_secrets table. Seed-if-absent unless overwrite is set;
+  // no-op without the AES master key. Values are never logged. Production manages
+  // secrets via the GUI/encrypted table, not .env.
+  async seedSecretsFromEnv(
+    options: { envFile?: string; overwrite?: boolean } = {},
+  ): Promise<SeedSecretsResult> {
+    return seedProvisioningSecrets(this.userId, { ...options, secrets: this.secrets });
   }
 
   // ── jobs (enqueue → worker executes; poll + cancel) ─────────────────────────

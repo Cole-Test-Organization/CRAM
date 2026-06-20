@@ -13,6 +13,7 @@ import type {
   ResourceAdapterContext,
   ResourceUpResult,
 } from "../../types.js";
+import { optionalEnv } from "../../../utils/index.js";
 import { GenericTerraformResourceAdapter } from "../../genericTerraformResourceAdapter.js";
 import { PanwBootstrapService } from "../shared/bootstrapService.js";
 
@@ -251,7 +252,7 @@ export class PanoramaResourceAdapter implements ResourceAdapter<PanoramaResource
 
 function resolvePanoramaSerial(resource: PanoramaResourceConfig): string | null {
   if (resource.license.serial) return resource.license.serial;
-  if (resource.license.serialEnv) return process.env[resource.license.serialEnv] ?? null;
+  if (resource.license.serialEnv) return optionalEnv(resource.license.serialEnv) ?? null;
   return null;
 }
 

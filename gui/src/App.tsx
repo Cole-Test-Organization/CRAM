@@ -1,4 +1,4 @@
-import { Router, Route, Navigate } from '@solidjs/router';
+import { Router, Route, Navigate, useParams } from '@solidjs/router';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import AccountList from './pages/AccountList';
@@ -17,6 +17,12 @@ import ImportExport from './pages/ImportExport';
 import Settings from './pages/Settings';
 import HomelabList from './pages/HomelabList';
 import HomelabDetail from './pages/HomelabDetail';
+import BrokerSecrets from './pages/BrokerSecrets';
+
+function LegacyHomelabDetailRedirect() {
+  const params = useParams<{ id: string }>();
+  return <Navigate href={`/broker/${params.id}`} />;
+}
 
 export default function App() {
   return (
@@ -34,8 +40,11 @@ export default function App() {
       <Route path="/opportunities" component={() => <OpportunitiesList />} />
       <Route path="/opportunities/:id" component={OpportunityDetail} />
       <Route path="/products" component={Products} />
-      <Route path="/homelab" component={HomelabList} />
-      <Route path="/homelab/:id" component={HomelabDetail} />
+      <Route path="/broker" component={HomelabList} />
+      <Route path="/broker/secrets" component={BrokerSecrets} />
+      <Route path="/broker/:id" component={HomelabDetail} />
+      <Route path="/homelab" component={() => <Navigate href="/broker" />} />
+      <Route path="/homelab/:id" component={LegacyHomelabDetailRedirect} />
       <Route path="/agent" component={Agent} />
       <Route path="/import-export" component={ImportExport} />
       <Route path="/import-notes" component={() => <Navigate href="/import-export" />} />

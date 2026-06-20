@@ -1,9 +1,10 @@
 import { A, useParams } from '@solidjs/router';
 import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
 import { api, type ProvisioningJob, type ProvisioningResource } from '../lib/api';
+import { createProvisioningEventStream } from '../lib/provisioningEvents';
 import BackLink from '../components/BackLink';
 import Button from '../components/Button';
-import { formatDateTime, JobMonitor, LaunchModal, resourceTitle, StatusPill } from './HomelabCommon';
+import { formatDateTime, JobMonitor, LaunchModal, resourceTitle, StatusPill, StreamStatusPill } from './HomelabCommon';
 
 export default function HomelabDetail() {
   const params = useParams<{ id: string }>();
@@ -14,20 +15,19 @@ export default function HomelabDetail() {
 
   const [deployments] = createResource(() => api.listProvisioningDeployments());
   const [deployment] = createResource(() => params.id, (id) => api.getProvisioningDeployment(id));
-  const [resources, { refetch: refetchResources }] = createResource(() => api.listProvisioningResources());
-  const [jobs, { refetch: refetchJobs }] = createResource(() => api.listProvisioningJobs({ limit: 50 }));
+  const stream = createProvisioningEventStream({ jobsLimit: 50 });
 
-  const deploymentResources = createMemo(() => (resources() || []).filter((r) => r.deploymentId === params.id));
-  const deploymentJobs = createMemo(() => (jobs() || []).filter((j) => j.deployment === params.id || deploymentResources().some((r) => r.hostname === j.target || r.id === j.target)).slice(0, 10));
+  const deploymentResources = createMemo(() => stream.resources().filter((r) => r.deploymentId === params.id));
+  const deploymentJobs = createMemo(() => stream.jobs().filter((j) => j.deployment === params.id || deploymentResources().some((r) => r.hostname === j.target || r.id === j.target)).slice(0, 10));
 
   const refreshAll = () => {
-    refetchResources();
-    refetchJobs();
+    void stream.refresh();
   };
 
   const launched = (job: ProvisioningJob) => {
+    stream.upsertJob(job);
+    stream.setActiveJobId(job.id);
     setMonitorJobId(job.id);
-    refetchJobs();
   };
 
   const runJob = async (label: string, runner: () => Promise<ProvisioningJob>) => {
@@ -56,10 +56,12 @@ export default function HomelabDetail() {
     setBusy(`${action}-${resource.id}`);
     setActionError('');
     try {
-      if (action === 'start') await api.startProvisioningResource(resource.id);
-      else if (action === 'stop') await api.stopProvisioningResource(resource.id);
-      else await api.refreshProvisioningPowerState(resource.id);
-      refetchResources();
+      const next = action === 'start'
+        ? await api.startProvisioningResource(resource.id)
+        : action === 'stop'
+          ? await api.stopProvisioningResource(resource.id)
+          : await api.refreshProvisioningPowerState(resource.id);
+      stream.upsertResource(next);
     } catch (err: any) {
       setActionError(err?.message || `Failed to ${action} ${resourceTitle(resource)}`);
     } finally {
@@ -69,7 +71,7 @@ export default function HomelabDetail() {
 
   return (
     <div>
-      <BackLink fallbackHref="/homelab" fallbackLabel="Homelab" />
+      <BackLink fallbackHref="/broker" fallbackLabel="Broker" />
 
       <Show when={deployment()} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
         {(d) => (
@@ -89,6 +91,7 @@ export default function HomelabDetail() {
                 </div>
               </div>
               <div class="flex gap-2 flex-wrap">
+                <StreamStatusPill status={stream.connectionStatus()} error={stream.error()} />
                 <Button variant="ghost" size="sm" onClick={refreshAll}>Refresh</Button>
                 <Button variant="primary" size="sm" onClick={() => setLaunchOpen(true)}>Launch</Button>
                 <Show when={d().deployable}>
@@ -107,6 +110,9 @@ export default function HomelabDetail() {
               <div class="mb-5">
                 <JobMonitor
                   jobId={monitorJobId()}
+                  liveConnected={stream.connectionStatus() === 'live'}
+                  liveJob={stream.jobById(monitorJobId())}
+                  onJobUpdate={stream.upsertJob}
                   onClear={() => setMonitorJobId(null)}
                   onSettled={refreshAll}
                 />
@@ -222,7 +228,7 @@ export default function HomelabDetail() {
                 <section>
                   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
                     <h2 class="text-[14px] uppercase tracking-widest font-bold text-surf-300">Recent Jobs</h2>
-                    <Button variant="ghost" size="sm" onClick={() => refetchJobs()}>Refresh</Button>
+                    <Button variant="ghost" size="sm" onClick={() => void stream.refresh()}>Refresh</Button>
                   </div>
                   <div class="panel panel-accent">
                     <For each={deploymentJobs()} fallback={<div class="text-base-400 text-center p-8 text-sm italic">No jobs for this deployment.</div>}>
@@ -258,7 +264,7 @@ export default function HomelabDetail() {
             </div>
 
             <div class="mt-5">
-              <A href="/homelab" class="text-surf-300 hover:underline text-[12px] uppercase tracking-wider">Back to Homelab</A>
+              <A href="/broker" class="text-surf-300 hover:underline text-[12px] uppercase tracking-wider">Back to Broker</A>
             </div>
 
             <LaunchModal

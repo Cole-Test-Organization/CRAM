@@ -2,7 +2,7 @@ import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { BootstrapResult, PanwVmseriesConfig } from "../../../types/index.js";
 import type { LogFn } from "../../../types/logging.js";
-import { ensureDir, requireEnv, runCommand } from "../../../utils/index.js";
+import { ensureDir, optionalEnv, requireEnv, runCommand } from "../../../utils/index.js";
 import { workDir } from "../../../utils/paths.js";
 
 export function resolveAuthCode(config: Pick<PanwVmseriesConfig, "license">): string {
@@ -117,7 +117,7 @@ function resolvedBootstrapString(
 
 function resolveOptionalSecret(value?: string | null, envName?: string | null): string | null {
   if (value) return value;
-  if (envName) return process.env[envName] ?? null;
+  if (envName) return optionalEnv(envName) ?? null;
   return null;
 }
 
