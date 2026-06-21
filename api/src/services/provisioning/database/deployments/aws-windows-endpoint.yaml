@@ -3,25 +3,29 @@ providerProfile: aws-lab
 provider:
   projectName: windows-endpoint-lab
   vpcCidr: 10.110.0.0/16
+inputs:
+  - name: windowsAppProfile
+    label: Windows app profile
+    description: Optional software baseline to install during Windows bootstrap.
+    type: string
+    default: ""
+    options:
+      - label: No extra apps
+        value: ""
+      - label: Developer workstation
+        value: developer
 resources:
   - kind: windows-endpoint
     name: hcwilk-broker-test
     hostname: hcwilk-broker-test
     vm:
       instanceType: m5.2xlarge
-    appProfiles:
-      - developer
     bootstrap:
       adminUsername: hcwilk-broker
       adminPasswordEnv: WINDOWS_ENDPOINT_ADMIN_PASSWORD
       installSsmAgent: true
       installPython: true
       pythonInstallUrl: https://www.python.org/ftp/python/3.14.5/python-3.14.5-amd64.exe
-    koi:
-      scriptPath: mdm.pyz-1.72.9.ps1
-      scriptSha256: 2b4dcb0ee1cf7bb2b6589b1b45b3ee676e46b399b9025a27f415bf15540c94cb
-      arguments: []
-      environment: {}
     placement:
       provider: aws
       availabilityZoneIndex: 0

@@ -25,8 +25,9 @@ export class WindowsEndpointResourceAdapter implements ResourceAdapter<ResourceC
     deployment: DeploymentConfig,
     configLoader: ResourceAdapterContext["configLoader"],
     configRef: string,
+    params?: Record<string, unknown>,
   ): Promise<DeploymentConfig> {
-    const withAppProfiles = await expandWindowsAppProfiles(deployment, configLoader, configRef);
+    const withAppProfiles = await expandWindowsAppProfiles(deployment, configLoader, configRef, params);
     return await this.inlineKoiScripts(withAppProfiles, configLoader, configRef);
   }
 

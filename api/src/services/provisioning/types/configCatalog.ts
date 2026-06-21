@@ -11,19 +11,26 @@ import type { ProviderType } from "./common.js";
 
 /**
  * A deployment-time input the operator can set. Today the only discoverable
- * inputs are step-toggles: a `when:` clause that gates whether a step runs
- * (`source: "step-condition"`). When deployments move to the database, declared
- * inputs will populate the same shape with `source: "declared"`.
+ * inputs can be declared by deployment config, or inferred as step-toggles from
+ * a `when:` clause that gates whether a step runs (`source: "step-condition"`).
  */
+export interface DeploymentInputOption {
+  label: string;
+  value: boolean | string | number;
+}
+
 export interface DeploymentInput {
   name: string;
+  label?: string;
+  description?: string;
   type: "boolean" | "string" | "number";
   default?: boolean | string | number;
+  options?: DeploymentInputOption[];
   /** Value that activates the gated steps (param === enablesWhen runs them). */
-  enablesWhen: boolean | string | number;
+  enablesWhen?: boolean | string | number;
   /** Names of the steps this input gates. */
   affectsSteps: string[];
-  source: "step-condition";
+  source: "declared" | "step-condition";
 }
 
 export interface DeploymentResourceSummary {

@@ -33,7 +33,7 @@ export interface EnqueueJobInput {
   target?: string | null;
   /** Resource-action name — required for run-action. */
   resourceAction?: string | null;
-  /** Deploy-time step toggles (the broker's `when` params). */
+  /** Deploy-time inputs: declared launch values plus step toggles (`when` params). */
   params?: Record<string, unknown> | null;
 }
 

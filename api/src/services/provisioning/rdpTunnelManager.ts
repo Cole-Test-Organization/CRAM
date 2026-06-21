@@ -29,6 +29,7 @@ export interface RdpTunnelOpenOptions {
   port?: number | null;
   remotePort?: number | null;
   ttlSeconds?: number | null;
+  advertisedHost?: string | null;
 }
 
 export interface RdpTunnelView {
@@ -69,10 +70,10 @@ export class RdpTunnelManager {
     DEFAULT_INTERNAL_PORTS,
   );
   private readonly bindAddress = process.env.PROVISIONING_RDP_TUNNEL_BIND_ADDRESS || "0.0.0.0";
-  private readonly advertisedHost =
-    process.env.PROVISIONING_RDP_TUNNEL_HOST ||
-    process.env.PROVISIONING_BROKER_HOST ||
-    fallbackAdvertisedHost(this.bindAddress);
+  private readonly configuredAdvertisedHost =
+    normalizeAdvertisedHost(process.env.PROVISIONING_RDP_TUNNEL_HOST) ||
+    normalizeAdvertisedHost(process.env.PROVISIONING_BROKER_HOST);
+  private readonly fallbackAdvertisedHost = this.configuredAdvertisedHost ?? fallbackAdvertisedHost(this.bindAddress);
   private readonly defaultTtlSeconds = parsePositiveInteger(
     process.env.PROVISIONING_RDP_TUNNEL_TTL_SECONDS,
     DEFAULT_TTL_SECONDS,
@@ -108,6 +109,9 @@ export class RdpTunnelManager {
     const ttlSeconds = options.ttlSeconds == null
       ? this.defaultTtlSeconds
       : sanitizeNonNegativeInteger(options.ttlSeconds, "ttlSeconds");
+    const advertisedHost = this.configuredAdvertisedHost ??
+      normalizeAdvertisedHost(options.advertisedHost) ??
+      this.fallbackAdvertisedHost;
     const id = `rdp_${safeId(resource.hostname)}`;
     const startedAt = new Date().toISOString();
     const expiresAt = ttlSeconds > 0
@@ -123,11 +127,11 @@ export class RdpTunnelManager {
       providerResourceId: resource.providerResourceId,
       status: "opening",
       bindAddress: this.bindAddress,
-      advertisedHost: this.advertisedHost,
+      advertisedHost,
       publicPort,
       internalPort,
       remotePort,
-      rdpEndpoint: `${this.advertisedHost}:${publicPort}`,
+      rdpEndpoint: `${formatEndpointHost(advertisedHost)}:${publicPort}`,
       username,
       startedAt,
       expiresAt,
@@ -403,6 +407,26 @@ function toView(tunnel: RdpTunnelRecord): RdpTunnelView {
 function fallbackAdvertisedHost(bindAddress: string): string {
   if (bindAddress && bindAddress !== "0.0.0.0" && bindAddress !== "::") return bindAddress;
   return "localhost";
+}
+
+function normalizeAdvertisedHost(value: string | null | undefined): string | null {
+  const host = value?.trim();
+  if (!host) return null;
+  const withoutProtocol = host.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  const authority = withoutProtocol.split("/")[0]?.trim();
+  if (!authority) return null;
+  if (authority.startsWith("[")) {
+    const end = authority.indexOf("]");
+    return end > 0 ? authority.slice(1, end) : authority;
+  }
+  const hasSingleColon = authority.indexOf(":") === authority.lastIndexOf(":");
+  return hasSingleColon && authority.includes(":")
+    ? authority.slice(0, authority.lastIndexOf(":"))
+    : authority;
+}
+
+function formatEndpointHost(host: string): string {
+  return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
 }
 
 function safeId(value: string): string {

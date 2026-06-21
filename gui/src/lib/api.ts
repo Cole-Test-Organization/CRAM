@@ -67,9 +67,12 @@ export type ProvisioningDeploymentDescriptor = ProvisioningDeploymentSummary & {
   }>;
   inputs: Array<{
     name: string;
+    label?: string;
+    description?: string;
     type: 'string' | 'number' | 'boolean';
     default?: string | number | boolean;
-    enablesWhen: string | number | boolean;
+    options?: Array<{ label: string; value: string | number | boolean }>;
+    enablesWhen?: string | number | boolean;
     affectsSteps: string[];
     source: string;
   }>;

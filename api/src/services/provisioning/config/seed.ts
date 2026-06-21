@@ -72,11 +72,11 @@ export async function seedProvisioningConfig(userId: number): Promise<SeedResult
     const resources = Array.isArray(dep.resources) ? (dep.resources as Dict[]) : [];
     await withUser(userId, async (c) => {
       const depRow = await c.query<{ id: number }>(
-        `INSERT INTO deployments (user_id, name, provider_type, provider_profile, provider_config, steps)
-         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
+        `INSERT INTO deployments (user_id, name, provider_type, provider_profile, provider_config, inputs, steps)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb)
          ON CONFLICT (user_id, name) DO UPDATE SET
            provider_type = EXCLUDED.provider_type, provider_profile = EXCLUDED.provider_profile,
-           provider_config = EXCLUDED.provider_config, steps = EXCLUDED.steps
+           provider_config = EXCLUDED.provider_config, inputs = EXCLUDED.inputs, steps = EXCLUDED.steps
          RETURNING id`,
         [
           userId,
@@ -84,6 +84,7 @@ export async function seedProvisioningConfig(userId: number): Promise<SeedResult
           providerType ?? "unknown",
           typeof dep.providerProfile === "string" ? dep.providerProfile : null,
           JSON.stringify(provider),
+          JSON.stringify(dep.inputs ?? []),
           JSON.stringify(dep.steps ?? []),
         ],
       );

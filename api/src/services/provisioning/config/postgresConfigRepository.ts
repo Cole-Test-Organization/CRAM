@@ -35,7 +35,7 @@ export class PostgresConfigRepository extends ConfigRepository {
   protected async readDeploymentConfig(id: string): Promise<DeploymentConfig | null> {
     return withUser(this.userId, async (c) => {
       const dep = await c.query(
-        `SELECT id, name, provider_type, provider_profile, provider_config, steps
+        `SELECT id, name, provider_type, provider_profile, provider_config, inputs, steps
            FROM deployments WHERE name = $1`,
         [id],
       );
@@ -53,6 +53,7 @@ export class PostgresConfigRepository extends ConfigRepository {
         providerProfile: d.provider_profile ?? null,
         provider: { type: d.provider_type, ...providerConfig } as ProviderConfig,
         resources: res.rows.map((r) => r.config),
+        inputs: (d.inputs ?? []) as DeploymentConfig["inputs"],
         steps: (d.steps ?? []) as DeploymentConfig["steps"],
       };
     });

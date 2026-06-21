@@ -182,12 +182,14 @@ export function JobMonitor(props: {
   );
 }
 
-type LaunchMode = 'deploy' | 'up';
+export type LaunchMode = 'deploy' | 'up';
 
 export function LaunchModal(props: {
   open: boolean;
   deployments: ProvisioningDeploymentSummary[];
   initialDeploymentId?: string | null;
+  initialMode?: LaunchMode | null;
+  initialTarget?: string | null;
   onClose: () => void;
   onLaunched: (job: ProvisioningJob) => void;
 }) {
@@ -211,6 +213,9 @@ export function LaunchModal(props: {
     if (!props.open) return;
     const preferred = props.initialDeploymentId || props.deployments[0]?.id || '';
     setDeploymentId(preferred);
+    setMode(props.initialMode ?? 'deploy');
+    setTarget(props.initialTarget ?? '');
+    setParamValues({});
     setError('');
   });
 
@@ -218,7 +223,12 @@ export function LaunchModal(props: {
     const d = detail();
     if (!d) return;
     if (!d.deployable) setMode('up');
-    if (!target() && d.resources.length) setTarget(d.resources[0].hostname);
+    if (
+      (!target() || !d.resources.some((resource) => resource.hostname === target())) &&
+      d.resources.length
+    ) {
+      setTarget(d.resources[0].hostname);
+    }
 
     const next: Record<string, string | number | boolean> = {};
     for (const input of d.inputs) {
@@ -330,31 +340,53 @@ export function LaunchModal(props: {
                   <div class="text-[11px] uppercase tracking-widest text-surf-300 font-bold mb-2">Inputs</div>
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <For each={d().inputs}>
-                      {(input) => (
-                        <Show
-                          when={input.type === 'boolean'}
-                          fallback={
-                            <FormField label={input.name}>
+                      {(input) => {
+                        const label = input.label || input.name;
+                        const description = input.description;
+                        return (
+                          <Show
+                            when={input.type === 'boolean'}
+                            fallback={
+                              <FormField label={label}>
+                                <Show
+                                  when={input.options?.length}
+                                  fallback={
+                                    <input
+                                      class={formInputClass}
+                                      type={input.type === 'number' ? 'number' : 'text'}
+                                      value={String(paramValues()[input.name] ?? '')}
+                                      onInput={(e) => setParamValues((v) => ({ ...v, [input.name]: input.type === 'number' ? Number(e.currentTarget.value) : e.currentTarget.value }))}
+                                    />
+                                  }
+                                >
+                                  <select
+                                    class={formSelectClass}
+                                    value={String(paramValues()[input.name] ?? '')}
+                                    onChange={(e) => setParamValues((v) => ({ ...v, [input.name]: e.currentTarget.value }))}
+                                  >
+                                    <For each={input.options}>
+                                      {(option) => <option value={String(option.value)}>{option.label}</option>}
+                                    </For>
+                                  </select>
+                                </Show>
+                                <Show when={description}>
+                                  <div class="text-[11px] text-base-400 mt-1">{description}</div>
+                                </Show>
+                              </FormField>
+                            }
+                          >
+                            <label class="flex items-center gap-2 border-2 border-base-600 bg-base-950 p-3 cursor-pointer">
                               <input
-                                class={formInputClass}
-                                type={input.type === 'number' ? 'number' : 'text'}
-                                value={String(paramValues()[input.name] ?? '')}
-                                onInput={(e) => setParamValues((v) => ({ ...v, [input.name]: input.type === 'number' ? Number(e.currentTarget.value) : e.currentTarget.value }))}
+                                type="checkbox"
+                                class="press-checkbox"
+                                checked={Boolean(paramValues()[input.name])}
+                                onChange={(e) => setParamValues((v) => ({ ...v, [input.name]: e.currentTarget.checked }))}
                               />
-                            </FormField>
-                          }
-                        >
-                          <label class="flex items-center gap-2 border-2 border-base-600 bg-base-950 p-3 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              class="press-checkbox"
-                              checked={Boolean(paramValues()[input.name])}
-                              onChange={(e) => setParamValues((v) => ({ ...v, [input.name]: e.currentTarget.checked }))}
-                            />
-                            <span class="text-[12px] text-base-100 font-semibold">{input.name}</span>
-                          </label>
-                        </Show>
-                      )}
+                              <span class="text-[12px] text-base-100 font-semibold">{label}</span>
+                            </label>
+                          </Show>
+                        );
+                      }}
                     </For>
                   </div>
                 </div>

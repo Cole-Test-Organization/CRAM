@@ -99,7 +99,7 @@ export function registerTools(server: McpServer, services: Services, resolveUser
       port: z.number().int().positive().optional().describe('LAN-facing RDP tunnel port from PROVISIONING_RDP_TUNNEL_PORTS — for open_rdp_tunnel.'),
       remote_port: z.number().int().positive().optional().describe('Remote Windows port for open_rdp_tunnel; defaults to 3389.'),
       ttl_seconds: z.number().int().nonnegative().optional().describe('Seconds before the broker closes the RDP tunnel; 0 disables TTL.'),
-      params: z.record(z.any()).optional().describe('Deploy-time step toggles (the deployment\'s `when` inputs) — for deploy/deprovision/up/down/run_action.'),
+      params: z.record(z.any()).optional().describe('Deploy-time inputs, including declared launch inputs and step toggles (`when` params) — for deploy/deprovision/up/down/run_action.'),
     },
     async ({ action, deployment, target, resource_action, tunnel_id, job_id, name, value, description, status, limit, port, remote_port, ttl_seconds, params }) => {
       switch (action) {

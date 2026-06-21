@@ -4,11 +4,13 @@ import { api, type ProvisioningJob, type ProvisioningRdpTunnel, type Provisionin
 import { createProvisioningEventStream } from '../lib/provisioningEvents';
 import BackLink from '../components/BackLink';
 import Button from '../components/Button';
-import { formatDateTime, JobMonitor, LaunchModal, resourceTitle, StatusPill, StreamStatusPill } from './HomelabCommon';
+import { formatDateTime, JobMonitor, LaunchModal, type LaunchMode, resourceTitle, StatusPill, StreamStatusPill } from './HomelabCommon';
 
 export default function HomelabDetail() {
   const params = useParams<{ id: string }>();
   const [launchOpen, setLaunchOpen] = createSignal(false);
+  const [launchMode, setLaunchMode] = createSignal<LaunchMode | null>(null);
+  const [launchTarget, setLaunchTarget] = createSignal<string | null>(null);
   const [monitorJobId, setMonitorJobId] = createSignal<string | null>(null);
   const [actionError, setActionError] = createSignal('');
   const [actionNotice, setActionNotice] = createSignal('');
@@ -50,6 +52,12 @@ export default function HomelabDetail() {
   const deprovision = async () => {
     if (!confirm(`Deprovision ${params.id}? This queues Terraform destroy work for tracked resources.`)) return;
     await runJob('deprovision', () => api.deprovisionProvisioningDeployment(params.id, {}));
+  };
+
+  const openLaunch = (mode: LaunchMode | null = null, target: string | null = null) => {
+    setLaunchMode(mode);
+    setLaunchTarget(target);
+    setLaunchOpen(true);
   };
 
   const downResource = async (resource: ProvisioningResource) => {
@@ -128,7 +136,7 @@ export default function HomelabDetail() {
               <div class="flex gap-2 flex-wrap">
                 <StreamStatusPill status={stream.connectionStatus()} error={stream.error()} />
                 <Button variant="ghost" size="sm" onClick={refreshAll}>Refresh</Button>
-                <Button variant="primary" size="sm" onClick={() => setLaunchOpen(true)}>Launch</Button>
+                <Button variant="primary" size="sm" onClick={() => openLaunch()}>Launch</Button>
                 <Show when={d().deployable}>
                   <Button variant="danger" size="sm" disabled={Boolean(busy())} onClick={deprovision}>
                     {busy() === 'deprovision' ? 'Queueing...' : 'Deprovision'}
@@ -183,8 +191,8 @@ export default function HomelabDetail() {
                               {(r) => <StatusPill status={r().lifecycleStatus} />}
                             </Show>
                             <div class="grid grid-cols-2 gap-2 w-full max-w-full min-w-0 md:flex md:w-auto md:max-w-none md:flex-wrap">
-                              <Button class="w-full md:w-auto" variant="ghost" size="sm" disabled={Boolean(busy())} onClick={() => runJob(`up-${resource.hostname}`, () => api.upProvisioningResource(d().id, resource.hostname, {}))}>
-                                {busy() === `up-${resource.hostname}` ? 'Queueing...' : 'Up'}
+                              <Button class="w-full md:w-auto" variant="ghost" size="sm" disabled={Boolean(busy())} onClick={() => openLaunch('up', resource.hostname)}>
+                                Up
                               </Button>
                               <Show when={runtime()}>
                                 {(r) => (
@@ -325,6 +333,8 @@ export default function HomelabDetail() {
               open={launchOpen()}
               deployments={deployments() || []}
               initialDeploymentId={d().id}
+              initialMode={launchMode()}
+              initialTarget={launchTarget()}
               onClose={() => setLaunchOpen(false)}
               onLaunched={launched}
             />

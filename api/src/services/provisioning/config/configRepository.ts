@@ -1,5 +1,6 @@
 import type {
   DeploymentConfig,
+  DeploymentInputConfig,
   DeploymentDescriptor,
   DeploymentInput,
   DeploymentStepConfig,
@@ -72,7 +73,7 @@ export abstract class ConfigRepository {
         provider: resource.placement?.provider ?? merged.type ?? null,
       })),
       steps: steps.map(toStepSummary),
-      inputs: inferInputs(steps),
+      inputs: deploymentInputs(raw.inputs, steps),
       // Walk the whole effective deployment (resources, steps, and the merged
       // provider profile) so deployment-level *Env refs are included, not just
       // the provider's.
@@ -169,11 +170,38 @@ function toStepSummary(step: DeploymentStepConfig): DeploymentStepSummary {
 }
 
 /**
- * Inputs the deploy form can set. Derived from step `when:` conditions — each
- * distinct `when.param` is a toggle that, when set to its `enablesWhen` value,
- * runs the steps it gates. (Step toggles are the only machine-discoverable
- * inputs today; declared inputs will extend this after the DB move.)
+ * Inputs the deploy form can set. Deployment YAML can declare operator inputs,
+ * and step `when:` conditions add inferred toggles for gated steps.
  */
+function deploymentInputs(
+  declared: DeploymentInputConfig[] | undefined,
+  steps: DeploymentStepConfig[],
+): DeploymentInput[] {
+  return [
+    ...declaredInputs(declared),
+    ...inferInputs(steps),
+  ];
+}
+
+function declaredInputs(inputs: DeploymentInputConfig[] | undefined): DeploymentInput[] {
+  if (!Array.isArray(inputs)) return [];
+  return inputs.map((input) => ({
+    name: input.name,
+    ...(input.label !== undefined ? { label: input.label } : {}),
+    ...(input.description !== undefined ? { description: input.description } : {}),
+    type: input.type,
+    ...(input.default !== undefined ? { default: input.default } : {}),
+    ...(input.options !== undefined ? {
+      options: input.options.map((option) => ({
+        label: option.label ?? String(option.value),
+        value: option.value,
+      })),
+    } : {}),
+    affectsSteps: [],
+    source: "declared" as const,
+  }));
+}
+
 function inferInputs(steps: DeploymentStepConfig[]): DeploymentInput[] {
   const byName = new Map<string, DeploymentInput>();
   for (const step of steps) {

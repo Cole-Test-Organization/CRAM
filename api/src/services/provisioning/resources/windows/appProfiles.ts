@@ -10,11 +10,12 @@ export async function expandWindowsAppProfiles(
   deployment: DeploymentConfig,
   profileLoader: WindowsAppProfileLoader,
   configRef: string,
+  params?: Record<string, unknown>,
 ): Promise<DeploymentConfig> {
   const resources = await Promise.all(
     deployment.resources.map(async (resource) => {
       if (resource.kind !== "windows-endpoint") return resource;
-      return await expandWindowsEndpointResource(resource, profileLoader, configRef);
+      return await expandWindowsEndpointResource(resource, profileLoader, configRef, params);
     }),
   );
 
@@ -28,8 +29,13 @@ async function expandWindowsEndpointResource(
   resource: WindowsEndpointResource,
   profileLoader: WindowsAppProfileLoader,
   configRef: string,
+  params?: Record<string, unknown>,
 ): Promise<ResourceConfig> {
-  const profileNames = stringList(resource.appProfiles, `${configRef} ${resource.hostname}.appProfiles`);
+  const profileNames = selectedProfileNames(
+    resource,
+    params,
+    `${configRef} ${resource.hostname}.appProfiles`,
+  );
   const profileApps: WindowsApplicationConfig[] = [];
 
   for (const profileName of profileNames) {
@@ -57,6 +63,21 @@ async function expandWindowsEndpointResource(
     ...resource,
     applications,
   };
+}
+
+function selectedProfileNames(
+  resource: WindowsEndpointResource,
+  params: Record<string, unknown> | undefined,
+  label: string,
+): string[] {
+  const requested = params?.windowsAppProfiles ?? params?.windowsAppProfile;
+  if (requested !== undefined && requested !== null) {
+    if (requested === "") return [];
+    if (typeof requested === "string") return [requested];
+    return stringList(requested, "params.windowsAppProfiles");
+  }
+
+  return stringList(resource.appProfiles, label);
 }
 
 function stringList(value: unknown, label: string): string[] {

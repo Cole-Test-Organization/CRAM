@@ -36,6 +36,7 @@ export interface ResourceAdapter<TResource extends ResourceConfig = ResourceConf
     deployment: DeploymentConfig,
     configLoader: ResourceAdapterContext<TResource>["configLoader"],
     configRef: string,
+    params?: Record<string, unknown>,
   ): Promise<DeploymentConfig>;
 
   initialState?(
@@ -85,6 +86,7 @@ export class ResourceAdapterRegistry {
     deployment: DeploymentConfig,
     configLoader: ResourceAdapterContext["configLoader"],
     configRef: string,
+    params?: Record<string, unknown>,
   ): Promise<DeploymentConfig> {
     let prepared = deployment;
     const preparedAdapters = new Set<ResourceAdapter>();
@@ -93,7 +95,7 @@ export class ResourceAdapterRegistry {
       const adapter = this.resolve(resource.kind);
       if (!adapter.prepareDeployment || preparedAdapters.has(adapter)) continue;
       preparedAdapters.add(adapter);
-      prepared = await adapter.prepareDeployment(prepared, configLoader, configRef);
+      prepared = await adapter.prepareDeployment(prepared, configLoader, configRef, params);
     }
 
     return prepared;

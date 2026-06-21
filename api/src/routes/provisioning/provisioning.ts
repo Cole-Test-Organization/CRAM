@@ -4,7 +4,7 @@
 // worker executes, so a slow terraform apply never holds a request open. The
 // service is pinned to the single default user (auth is out of scope), so these
 // routes don't scope by request.userId.
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ProvisioningService } from '../../services/provisioning/index.js';
 import type { BrokerEvent } from '../../services/provisioning/events.js';
 import type { JobRecord } from '../../services/provisioning/types/index.js';
@@ -12,7 +12,7 @@ import type { JobRecord } from '../../services/provisioning/types/index.js';
 const TAG = 'provisioning';
 const paramsBody = {
   type: 'object',
-  properties: { params: { type: 'object', additionalProperties: true, description: 'Deploy-time step toggles (the deployment\'s `when` inputs).' } },
+  properties: { params: { type: 'object', additionalProperties: true, description: 'Deploy-time inputs, including declared launch inputs and step toggles (`when` params).' } },
   additionalProperties: false,
 } as const;
 const rdpTunnelBody = {
@@ -42,6 +42,33 @@ function streamEnvelope(type: string, data: unknown) {
 function writeSse(reply: FastifyReply, type: string, data: unknown): void {
   if (reply.raw.writableEnded || reply.raw.destroyed) return;
   reply.raw.write(`data: ${JSON.stringify(streamEnvelope(type, data))}\n\n`);
+}
+
+function firstHeader(value: string | string[] | undefined): string | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value ?? null;
+}
+
+function hostFromAuthority(value: string | null): string | null {
+  const raw = value?.split(',')[0]?.trim();
+  if (!raw) return null;
+  const withoutProtocol = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+  const authority = withoutProtocol.split('/')[0]?.trim();
+  if (!authority) return null;
+  if (authority.startsWith('[')) {
+    const end = authority.indexOf(']');
+    return end > 0 ? authority.slice(1, end) : authority;
+  }
+  const hasSingleColon = authority.indexOf(':') === authority.lastIndexOf(':');
+  return hasSingleColon && authority.includes(':')
+    ? authority.slice(0, authority.lastIndexOf(':'))
+    : authority;
+}
+
+function advertisedTunnelHost(request: FastifyRequest): string | null {
+  return hostFromAuthority(firstHeader(request.headers['x-forwarded-host'])) ??
+    hostFromAuthority(firstHeader(request.headers.host)) ??
+    hostFromAuthority(request.hostname);
 }
 
 function eventPayload(event: BrokerEvent): unknown {
@@ -143,7 +170,7 @@ export default async function provisioningRoutes(
 
   fastify.get<{ Params: { id: string } }>('/provisioning/deployments/:id', {
     schema: {
-      description: 'Full descriptor for one deployment: resources, ordered steps, inferred inputs, and the required secret env names (`requiredEnv`).',
+      description: 'Full descriptor for one deployment: resources, ordered steps, launch inputs, and the required secret env names (`requiredEnv`).',
       tags: [TAG],
       params: { type: 'object', required: ['id'], properties: { id: { type: 'string', description: 'Deployment slug (e.g. aws-gp-lab-trusted-users)' } } },
     },
@@ -205,6 +232,7 @@ export default async function provisioningRoutes(
         port: request.body?.port,
         remotePort: request.body?.remotePort,
         ttlSeconds: request.body?.ttlSeconds,
+        advertisedHost: advertisedTunnelHost(request),
       });
     } catch (err) { return fail(reply, err); }
   });

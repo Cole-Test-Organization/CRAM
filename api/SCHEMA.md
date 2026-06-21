@@ -4,8 +4,8 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-06-08T20:14:02.223Z
-- **Tables:** 34
+- **Generated:** 2026-06-21T20:53:47.453Z
+- **Tables:** 35
 - **Enums:** 0
 - **Views:** 0
 
@@ -37,6 +37,7 @@
 - [`provisioned_resources`](#provisioned_resources)
 - [`provisioning_job_logs`](#provisioning_job_logs)
 - [`provisioning_jobs`](#provisioning_jobs)
+- [`provisioning_secrets`](#provisioning_secrets)
 - [`resource_profiles`](#resource_profiles)
 - [`tasks`](#tasks)
 - [`themes`](#themes)
@@ -411,6 +412,7 @@
 | `steps` | `jsonb` | YES | — |  |
 | `created_at` | `timestamp with time zone` | NO | `now()` |  |
 | `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+| `inputs` | `jsonb` | YES | — |  |
 
 **Primary key:** `id`
 
@@ -535,6 +537,8 @@
 | `starts_at` | `timestamp with time zone` | YES | — |  |
 | `ends_at` | `timestamp with time zone` | YES | — |  |
 | `location` | `text` | YES | — |  |
+| `krisp_meeting_id` | `text` | YES | — |  |
+| `deleted_at` | `timestamp with time zone` | YES | — |  |
 
 **Primary key:** `id`
 
@@ -549,11 +553,13 @@
 - `idx_meetings_date` — `CREATE INDEX idx_meetings_date ON public.meetings USING btree (date)`
 - `idx_meetings_internal` — `CREATE INDEX idx_meetings_internal ON public.meetings USING btree (internal) WHERE (internal = true)`
 - `idx_meetings_needs_review` — `CREATE INDEX idx_meetings_needs_review ON public.meetings USING btree (needs_review) WHERE (needs_review = true)`
+- `idx_meetings_not_deleted` — `CREATE INDEX idx_meetings_not_deleted ON public.meetings USING btree (id) WHERE (deleted_at IS NULL)`
 - `idx_meetings_search` — `CREATE INDEX idx_meetings_search ON public.meetings USING gin (search_vector)`
 - `idx_meetings_starts_at` — `CREATE INDEX idx_meetings_starts_at ON public.meetings USING btree (starts_at) WHERE (starts_at IS NOT NULL)`
 - `idx_meetings_user` — `CREATE INDEX idx_meetings_user ON public.meetings USING btree (user_id)`
-- `meetings_account_filename_uniq` *(unique)* — `CREATE UNIQUE INDEX meetings_account_filename_uniq ON public.meetings USING btree (account_id, filename) WHERE (account_id IS NOT NULL)`
-- `meetings_internal_filename_uniq` *(unique)* — `CREATE UNIQUE INDEX meetings_internal_filename_uniq ON public.meetings USING btree (user_id, filename) WHERE (account_id IS NULL)`
+- `meetings_account_filename_uniq` *(unique)* — `CREATE UNIQUE INDEX meetings_account_filename_uniq ON public.meetings USING btree (account_id, filename) WHERE ((account_id IS NOT NULL) AND (deleted_at IS NULL))`
+- `meetings_internal_filename_uniq` *(unique)* — `CREATE UNIQUE INDEX meetings_internal_filename_uniq ON public.meetings USING btree (user_id, filename) WHERE ((account_id IS NULL) AND (deleted_at IS NULL))`
+- `meetings_krisp_meeting_id_uniq` *(unique)* — `CREATE UNIQUE INDEX meetings_krisp_meeting_id_uniq ON public.meetings USING btree (user_id, krisp_meeting_id) WHERE ((krisp_meeting_id IS NOT NULL) AND (deleted_at IS NULL))`
 
 **Row-Level Security:** enabled (forced)
 
@@ -877,6 +883,7 @@
 | `finished_at` | `timestamp with time zone` | YES | — |  |
 | `created_at` | `timestamp with time zone` | NO | `now()` |  |
 | `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+| `cancel_requested` | `boolean` | NO | `false` |  |
 
 **Primary key:** `id`
 
@@ -887,7 +894,7 @@
 
 **Check constraints:**
 
-- `provisioning_jobs_status_check`: `CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text])))`
+- `provisioning_jobs_status_check`: `CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'canceled'::text])))`
 
 **Indexes:**
 
@@ -897,6 +904,45 @@
 **Row-Level Security:** enabled (forced)
 
 - `provisioning_jobs_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+  - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+
+---
+
+### `provisioning_secrets`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `bigint` | NO | `nextval('provisioning_secrets_id_seq'::regclass)` | **PK** |
+| `user_id` | `bigint` | NO | — |  |
+| `name` | `text` | NO | — |  |
+| `description` | `text` | YES | — |  |
+| `ciphertext` | `bytea` | NO | — |  |
+| `iv` | `bytea` | NO | — |  |
+| `auth_tag` | `bytea` | NO | — |  |
+| `algo` | `text` | NO | `'aes-256-gcm'::text` |  |
+| `key_version` | `integer` | NO | `1` |  |
+| `created_at` | `timestamp with time zone` | NO | `now()` |  |
+| `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `id`
+
+**Unique constraints:**
+
+- `provisioning_secrets_user_id_name_key`: (`user_id`, `name`)
+
+**Foreign keys:**
+
+- `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Indexes:**
+
+- `idx_provisioning_secrets_user` — `CREATE INDEX idx_provisioning_secrets_user ON public.provisioning_secrets USING btree (user_id)`
+- `provisioning_secrets_user_id_name_key` *(unique)* — `CREATE UNIQUE INDEX provisioning_secrets_user_id_name_key ON public.provisioning_secrets USING btree (user_id, name)`
+
+**Row-Level Security:** enabled (forced)
+
+- `provisioning_secrets_isolation` — ALL, PERMISSIVE, roles: public
   - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
   - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
 

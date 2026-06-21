@@ -109,21 +109,26 @@ export class ResourceBroker {
     return profile;
   }
 
-  private async loadDeploymentConfig(configRef: string): Promise<DeploymentConfig> {
+  private async loadDeploymentConfig(
+    configRef: string,
+    params?: Record<string, unknown>,
+  ): Promise<DeploymentConfig> {
     const deployment = await this.config.getRawDeploymentConfig(configRef);
     if (!deployment) throw new Error(`deployment config ${configRef} not found`);
-    return await this.prepareDeploymentConfig(deployment, configRef);
+    return await this.prepareDeploymentConfig(deployment, configRef, params);
   }
 
   private async prepareDeploymentConfig(
     deployment: DeploymentConfig,
     configRef: string,
+    params?: Record<string, unknown>,
   ): Promise<DeploymentConfig> {
     const withProvider = await this.applyProviderProfile(deployment, configRef);
     const withResourcePreparation = await this.resourceAdapters.prepareDeployment(
       withProvider,
       this,
       configRef,
+      params,
     );
     validateDeploymentConfig(withResourcePreparation, configRef);
     return withResourcePreparation;
@@ -196,7 +201,7 @@ export class ResourceBroker {
     options: ResourceBrokerRunOptions = {},
   ): Promise<ResourceRecord> {
     const configRef = toProjectRelativePath(configPath) ?? configPath;
-    const deployment = await this.loadDeploymentConfig(configRef);
+    const deployment = await this.loadDeploymentConfig(configRef, options.params);
     const resource = findResource(deployment, hostname);
     if (!options.skipActiveJobCheck) await this.ensureNoActiveJob();
 
@@ -272,7 +277,7 @@ export class ResourceBroker {
   ): Promise<ResourceRecord> {
     if (!options.skipActiveJobCheck) await this.ensureNoActiveJob();
     const configRef = toProjectRelativePath(configPath) ?? configPath;
-    const deployment = await this.loadDeploymentConfig(configRef);
+    const deployment = await this.loadDeploymentConfig(configRef, options.params);
     const targetRecord = await this.store.getResource(target);
     const configScopedTargetRecord =
       targetRecord &&
@@ -323,7 +328,7 @@ export class ResourceBroker {
   ): Promise<void> {
     if (!options.skipActiveJobCheck) await this.ensureNoActiveJob();
     const configRef = toProjectRelativePath(configPath) ?? configPath;
-    const deployment = await this.loadDeploymentConfig(configRef);
+    const deployment = await this.loadDeploymentConfig(configRef, options.params);
     if (!deployment.steps?.length) {
       throw new Error(`Deployment ${deployment.name} has no steps to run`);
     }
@@ -373,7 +378,7 @@ export class ResourceBroker {
   ): Promise<void> {
     if (!options.skipActiveJobCheck) await this.ensureNoActiveJob();
     const configRef = toProjectRelativePath(configPath) ?? configPath;
-    const deployment = await this.loadDeploymentConfig(configRef);
+    const deployment = await this.loadDeploymentConfig(configRef, options.params);
 
     let provisionStepCount = 0;
     for (const step of [...(deployment.steps ?? [])].reverse()) {
