@@ -31,7 +31,6 @@ resources:
       subnetCidr: 10.110.30.0/24
       rootVolumeGb: 128
       associatePublicIp: true
-      enableRdp: true
       enableWinrm: false
       enableSsm: true
       bootstrapMethod: ssm

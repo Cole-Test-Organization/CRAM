@@ -38,7 +38,7 @@ import { AgentSettingsService } from './services/agent/agent-settings.js';
 import { ThemesService } from './services/themes/themes.js';
 import { MemoriesService } from './services/memories/memories.js';
 import { ThreadsService } from './services/threads/threads.js';
-import { ProvisioningService, ProvisioningJobWorker } from './services/provisioning/index.js';
+import { createProvisioningRuntime, createProvisioningWorker } from './services/provisioning/index.js';
 
 // Routes
 import accountRoutes from './routes/accounts/accounts.js';
@@ -125,15 +125,12 @@ const backupService = new BackupService();
 const themesService = new ThemesService();
 const memoriesService = new MemoriesService();
 const threadsService = new ThreadsService();
-// Provisioning (homelab broker). This process owns the single DB-claim job worker;
-// the MCP server/agent build their own ProvisioningService for enqueue/reads only.
-const provisioningService = new ProvisioningService({ userId: defaultUserId });
-const provisioningWorker = new ProvisioningJobWorker({
-  userId: defaultUserId,
-  broker: provisioningService.broker,
-  store: provisioningService.store,
-  secretResolver: provisioningService.secretResolver,
-});
+// Provisioning (homelab broker). The runtime factory makes the shared broker,
+// Postgres repos, and secrets resolver explicit. This API process also owns the
+// single DB-claim worker; MCP processes build a runtime for reads/enqueue only.
+const provisioningRuntime = createProvisioningRuntime({ userId: defaultUserId });
+const provisioningService = provisioningRuntime.service;
+const provisioningWorker = createProvisioningWorker(provisioningRuntime);
 
 fastify.decorate('searchService', searchService);
 

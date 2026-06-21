@@ -81,12 +81,6 @@ variable "associate_public_ip" {
   default     = true
 }
 
-variable "enable_rdp" {
-  description = "Allow RDP from allowed_source_cidrs."
-  type        = bool
-  default     = true
-}
-
 variable "enable_winrm" {
   description = "Allow WinRM HTTP/HTTPS from allowed_source_cidrs."
   type        = bool

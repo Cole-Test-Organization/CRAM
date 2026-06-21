@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import type { ResourcePowerState, ResourceRecord } from "../../types/index.js";
 import type { LogFn } from "../../types/logging.js";
@@ -7,6 +8,8 @@ import type {
   ProviderGenericResourceContext,
   ProviderAdapter,
   ProviderLocalArtifactRequest,
+  ProviderPortForward,
+  ProviderPortForwardRequest,
   ProviderPowerControlResult,
   ProviderPowerShellCommandOptions,
   ProviderStagedLocalArtifact,
@@ -240,6 +243,79 @@ export class AwsProviderAdapter implements ProviderAdapter {
       artifacts: staged,
       cleanup: async (cleanupLog) => {
         await cleanupS3ArtifactBucket(region, bucket, keys, cleanupLog);
+      },
+    };
+  }
+
+  async openPortForward(
+    context: ProviderGenericResourceContext,
+    record: ResourceRecord,
+    request: ProviderPortForwardRequest,
+    log: LogFn,
+  ): Promise<ProviderPortForward> {
+    const instanceId = assertEc2InstanceId(record);
+    const region = stringConfig(context.deployment.provider.region, "provider.region");
+    const localHost = request.localHost ?? "127.0.0.1";
+
+    log(
+      `Starting AWS SSM port-forward for ${record.hostname} (${instanceId}): ` +
+        `${localHost}:${request.localPort} -> instance port ${request.remotePort}`,
+    );
+
+    const child = spawn(
+      "aws",
+      [
+        "ssm",
+        "start-session",
+        "--region",
+        region,
+        "--target",
+        instanceId,
+        "--document-name",
+        "AWS-StartPortForwardingSession",
+        "--parameters",
+        JSON.stringify({
+          portNumber: [String(request.remotePort)],
+          localPortNumber: [String(request.localPort)],
+        }),
+      ],
+      { env: process.env, stdio: ["ignore", "pipe", "pipe"] },
+    );
+
+    // closed flips true on either an intentional close() or a self-exit; onExit
+    // fires only for self-exit, so an intentional close() is silent (matches the
+    // documented ProviderPortForward contract).
+    let closed = false;
+    let closedByRequest = false;
+    let exitNotified = false;
+    const notifyExit = (reason: string) => {
+      closed = true;
+      if (closedByRequest || exitNotified) return;
+      exitNotified = true;
+      request.onExit?.(reason);
+    };
+
+    child.stdout?.on("data", (chunk: Buffer) => logProcessOutput(chunk, log));
+    child.stderr?.on("data", (chunk: Buffer) => logProcessOutput(chunk, log));
+    child.once("error", (error) => {
+      const message = `aws ssm process error: ${error.message}`;
+      log(message);
+      notifyExit(message);
+    });
+    child.once("exit", (code, signal) => {
+      const detail = signal ? `signal ${signal}` : `exit code ${code ?? "unknown"}`;
+      notifyExit(`aws ssm session ended (${detail})`);
+    });
+
+    return {
+      localPort: request.localPort,
+      get closed() {
+        return closed || child.exitCode != null;
+      },
+      close: async () => {
+        closedByRequest = true;
+        closed = true;
+        terminateChild(child);
       },
     };
   }
@@ -634,4 +710,20 @@ function isSsmInstanceNotReadyError(error: unknown): boolean {
 
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function logProcessOutput(chunk: Buffer, log: LogFn): void {
+  for (const line of chunk.toString("utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed) log(trimmed);
+  }
+}
+
+function terminateChild(child: ChildProcess): void {
+  if (child.exitCode != null || child.killed) return;
+  child.kill("SIGTERM");
+  const timer = setTimeout(() => {
+    if (child.exitCode == null && !child.killed) child.kill("SIGKILL");
+  }, 5000);
+  timer.unref();
 }

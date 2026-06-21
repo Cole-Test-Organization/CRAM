@@ -4,10 +4,9 @@ import type { ProviderType } from "./common.js";
  * Storage-agnostic discovery contract.
  *
  * These shapes are what the frontend codes against. They are deliberately
- * decoupled from where deployments are stored: today a `FileConfigRepository`
- * builds them from `database/**` YAML, later a SQL-backed repository builds the
- * same shapes from rows. Endpoints and frontend should not change when that
- * move happens.
+ * decoupled from where deployments are stored. The API runtime builds them from
+ * Postgres rows; the legacy file repository can build the same shapes from
+ * `database/**` YAML for compatibility.
  */
 
 /**
@@ -45,11 +44,11 @@ export interface DeploymentStepSummary {
 }
 
 export interface DeploymentSummary {
-  /** Durable identifier (filename stem today, primary key after the DB move). */
+  /** Durable deployment slug. */
   id: string;
   /**
-   * Reference accepted by today's lifecycle endpoints (`configPath`). Transitional:
-   * it disappears when deployments move to the database and endpoints accept `id`.
+   * Reference accepted by lifecycle endpoints. In the API runtime this is the
+   * same slug as `id`; legacy file-backed callers may still see a YAML path.
    */
   configPath: string;
   name: string;

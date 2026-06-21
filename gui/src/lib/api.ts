@@ -117,6 +117,26 @@ export type ProvisioningSecretSummary = {
   updatedAt: string;
 };
 
+export type ProvisioningRdpTunnel = {
+  id: string;
+  resourceId: string;
+  hostname: string;
+  providerResourceId: string;
+  status: 'opening' | 'running' | 'closed';
+  bindAddress: string;
+  advertisedHost: string;
+  publicPort: number;
+  internalPort: number;
+  remotePort: number;
+  rdpEndpoint: string;
+  username: string | null;
+  startedAt: string;
+  expiresAt: string | null;
+  closedAt: string | null;
+  closeReason: string | null;
+  logs: string[];
+};
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -780,6 +800,14 @@ export const api = {
     get<ProvisioningJob>(`/provisioning/jobs/${encodeURIComponent(id)}`),
   cancelProvisioningJob: (id: string) =>
     post<ProvisioningJob>(`/provisioning/jobs/${encodeURIComponent(id)}/cancel`, {}),
+  listProvisioningRdpTunnels: () =>
+    get<ProvisioningRdpTunnel[]>('/provisioning/tunnels'),
+  openProvisioningRdpTunnel: (id: string, data?: { port?: number; remotePort?: number; ttlSeconds?: number }) =>
+    post<ProvisioningRdpTunnel>(`/provisioning/resources/${encodeURIComponent(id)}/rdp-tunnel`, data ?? {}),
+  closeProvisioningRdpTunnel: (id: string) =>
+    del<ProvisioningRdpTunnel>(`/provisioning/tunnels/${encodeURIComponent(id)}`),
+  closeProvisioningResourceRdpTunnel: (id: string) =>
+    del<ProvisioningRdpTunnel>(`/provisioning/resources/${encodeURIComponent(id)}/rdp-tunnel`),
   listProvisioningSecrets: () =>
     get<ProvisioningSecretSummary[]>('/provisioning/secrets'),
   setProvisioningSecret: (name: string, data: { value: string; description?: string }) =>

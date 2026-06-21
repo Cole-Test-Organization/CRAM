@@ -30,6 +30,11 @@ import type {
   TerraformResourceProfile,
 } from "./types/index.js";
 import type { LogFn } from "./types/logging.js";
+import type {
+  ProviderPortForward,
+  ProviderPortForwardRequest,
+} from "./types/providerAdapter.js";
+import { httpError } from "../../lib/http-error.js";
 import { nowIso } from "./utils/index.js";
 import {
   projectRoot,
@@ -447,6 +452,22 @@ export class ResourceBroker {
       powerState,
       powerStateCheckedAt: nowIso(),
     });
+  }
+
+  // Open a provider-managed TCP port-forward from a resource to a local loopback
+  // port. The provider-specific transport (e.g. AWS SSM) lives entirely in the
+  // provider adapter; the caller (RdpTunnelManager) owns the public proxy, port
+  // pool and TTL. Providers without openPortForward yield a clean 400.
+  async openResourcePortForward(
+    record: ResourceRecord,
+    request: ProviderPortForwardRequest,
+    log: LogFn = () => undefined,
+  ): Promise<ProviderPortForward> {
+    const { context, provider } = await this.resolveResourcePowerContext(record);
+    if (!provider.openPortForward) {
+      throw httpError(400, `${record.hostname}: provider ${provider.type} does not support port forwarding`);
+    }
+    return provider.openPortForward(context, record, request, log);
   }
 
   subscribeEvents(listener: BrokerEventListener): () => void {

@@ -10,7 +10,6 @@ output "endpoint" {
     subnet_id      = local.subnet_id
     private_ip     = aws_instance.endpoint.private_ip
     public_ip      = var.associate_public_ip ? aws_instance.endpoint.public_ip : null
-    rdp_command    = var.enable_rdp && var.associate_public_ip ? "mstsc /v:${aws_instance.endpoint.public_ip}" : null
     rdp_username   = var.admin_username
     ssm_enabled    = var.enable_ssm
     ssm_role_name  = var.enable_ssm ? aws_iam_role.endpoint[0].name : null

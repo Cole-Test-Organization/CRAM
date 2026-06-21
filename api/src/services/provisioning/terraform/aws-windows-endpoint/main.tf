@@ -120,17 +120,6 @@ resource "aws_security_group" "endpoint" {
   vpc_id      = local.vpc_id
 
   dynamic "ingress" {
-    for_each = var.enable_rdp ? [1] : []
-    content {
-      from_port   = 3389
-      to_port     = 3389
-      protocol    = "tcp"
-      cidr_blocks = var.allowed_source_cidrs
-      description = "RDP from LAN/admin CIDRs"
-    }
-  }
-
-  dynamic "ingress" {
     for_each = var.enable_winrm ? [5985, 5986] : []
     content {
       from_port   = ingress.value

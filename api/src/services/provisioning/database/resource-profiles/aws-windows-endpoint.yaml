@@ -66,9 +66,6 @@ terraform:
     associate_public_ip:
       path: placement.associatePublicIp
       default: true
-    enable_rdp:
-      path: placement.enableRdp
-      default: true
     enable_winrm:
       path: placement.enableWinrm
       default: false

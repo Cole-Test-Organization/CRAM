@@ -140,7 +140,6 @@ resources:
       availabilityZoneIndex: 0
       rootVolumeGb: 128
       associatePublicIp: false
-      enableRdp: false
       enableWinrm: false
       enableSsm: true
       bootstrapMethod: ssm

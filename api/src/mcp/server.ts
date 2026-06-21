@@ -29,7 +29,7 @@ import { InternalDomainsService } from '../services/internal-domains/internal-do
 import { AgentSettingsService } from '../services/agent/agent-settings.js';
 import { MemoriesService } from '../services/memories/memories.js';
 import { ThreadsService } from '../services/threads/threads.js';
-import { ProvisioningService } from '../services/provisioning/index.js';
+import { createProvisioningRuntime } from '../services/provisioning/index.js';
 
 import { registerTools, type Services } from './tools.js';
 import { buildAgentMarkdown } from '../instructions.js';
@@ -57,6 +57,7 @@ const contactEnrichmentService = new ContactEnrichmentService({
 });
 const internalDomainsService = new InternalDomainsService();
 const memoriesService = new MemoriesService();
+const provisioningRuntime = createProvisioningRuntime({ userId: defaultUserId });
 // Lifted out of the services literal so notesImportService can depend on it.
 const meetingsService = new MeetingsService({
   contactsService,
@@ -97,7 +98,7 @@ const services: Services = {
   memoriesService,
   threadsService: new ThreadsService(),
   // Enqueues/reads only — the api process (src/index.ts) runs the single job worker.
-  provisioningService: new ProvisioningService({ userId: defaultUserId }),
+  provisioningService: provisioningRuntime.service,
 };
 
 const PORT = parseInt(process.env.MCP_PORT || '3100', 10);

@@ -11,7 +11,7 @@ import {
   type SecretSummary,
   type SeedSecretsResult,
 } from "./secrets/index.js";
-import { createDefaultResourceAdapterRegistry } from "./resources/index.js";
+import { RdpTunnelManager, type RdpTunnelOpenOptions, type RdpTunnelView } from "./rdpTunnelManager.js";
 import type { BrokerEventListener } from "./events.js";
 import { rowToJobView, type JobSpec, type JobView } from "./jobView.js";
 import type {
@@ -39,10 +39,11 @@ export interface EnqueueJobInput {
 
 export interface ProvisioningServiceOptions {
   userId: number;
-  broker?: ResourceBroker;
-  store?: PostgresStateRepository;
-  config?: PostgresConfigRepository;
-  secrets?: SecretsService;
+  broker: ResourceBroker;
+  store: PostgresStateRepository;
+  config: PostgresConfigRepository;
+  secrets: SecretsService;
+  secretResolver: SecretResolver;
 }
 
 export interface ProvisioningEventSnapshot {
@@ -55,13 +56,12 @@ function httpError(statusCode: number, message: string): Error {
   return Object.assign(new Error(message), { statusCode });
 }
 
-// In-process facade the API/MCP/GUI surfaces call. Pins the broker to the single
-// default user (auth is out of scope — one user, forever) with Postgres-backed
-// config + state + encrypted secrets and the Terraform `pg` backend. Lifecycle
-// verbs (up/down/deploy/deprovision/run-action) are NOT executed here — they're
-// enqueued as durable `provisioning_jobs` rows and run by ProvisioningJobWorker,
-// so a slow terraform apply never blocks a request and survives a restart. Reads
-// (deployments, resources, jobs) and quick power toggles run inline.
+// API/MCP-facing service for provisioning use cases. It receives the already-built
+// broker/config/state/secrets runtime from runtime.ts; it does not own dependency
+// construction. Lifecycle verbs (up/down/deploy/deprovision/run-action) are NOT
+// executed here — they're enqueued as durable `provisioning_jobs` rows and run by
+// ProvisioningJobWorker. Reads, secrets, tunnels, and quick power/status actions
+// run inline.
 export class ProvisioningService {
   readonly userId: number;
   readonly broker: ResourceBroker;
@@ -69,21 +69,18 @@ export class ProvisioningService {
   readonly config: PostgresConfigRepository;
   readonly secrets: SecretsService;
   readonly secretResolver: SecretResolver;
+  readonly rdpTunnels: RdpTunnelManager;
 
   constructor(options: ProvisioningServiceOptions) {
     this.userId = options.userId;
-    this.config = options.config ?? new PostgresConfigRepository(this.userId);
-    this.store = options.store ?? new PostgresStateRepository(this.userId);
-    this.secrets = options.secrets ?? new SecretsService();
-    this.secretResolver = new SecretResolver(this.userId, this.secrets);
-    this.broker =
-      options.broker ??
-      new ResourceBroker({
-        store: this.store,
-        configRepository: this.config,
-        secretResolver: this.secretResolver,
-        resourceAdapters: createDefaultResourceAdapterRegistry(),
-      });
+    this.config = options.config;
+    this.store = options.store;
+    this.secrets = options.secrets;
+    this.secretResolver = options.secretResolver;
+    this.broker = options.broker;
+    // The broker resolves the provider adapter and owns the cloud-specific
+    // transport (e.g. AWS SSM); the tunnel manager only does proxy/ports/TTL.
+    this.rdpTunnels = new RdpTunnelManager(this.broker);
   }
 
   // ── discovery (reads — never blocked by an active job) ──────────────────────
@@ -132,6 +129,21 @@ export class ProvisioningService {
   async stopResource(target: string): Promise<ResourceRecord> {
     await this.assertIdle();
     return this.broker.stopResource(target, NOOP_LOG);
+  }
+
+  // ── LAN RDP tunnels (runtime sessions, not Terraform resources) ────────────
+  async listRdpTunnels(): Promise<RdpTunnelView[]> {
+    return this.rdpTunnels.list();
+  }
+
+  async openRdpTunnel(target: string, options: RdpTunnelOpenOptions = {}): Promise<RdpTunnelView> {
+    const record = await this.broker.getResource(target);
+    if (!record) throw httpError(404, `no provisioned resource "${target}"`);
+    return this.rdpTunnels.open(record, options);
+  }
+
+  async closeRdpTunnel(idOrResource: string): Promise<RdpTunnelView | null> {
+    return this.rdpTunnels.close(idOrResource);
   }
 
   // ── secrets (encrypted at rest; values never returned) ──────────────────────

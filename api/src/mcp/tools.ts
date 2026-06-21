@@ -83,21 +83,25 @@ export function registerTools(server: McpServer, services: Services, resolveUser
 
   server.tool(
     'provisioning',
-    'Provision and manage homelab/cloud infrastructure (the ported panw-broker: Terraform + PAN-OS/AWS lifecycle). Discovery and reads are immediate; lifecycle verbs are **async** — they enqueue a durable job a background worker runs, so you get a job back and must poll `get_job` until status is `succeeded`/`failed`/`canceled` (logs stream into the job). Actions: list_deployments (what is deployable), get_deployment (resources, steps, inputs, and `requiredEnv` secret names), list_resources / get_resource (runtime state), event_snapshot (active job + resources + recent jobs baseline; GUI clients subscribe to HTTP SSE for live updates), power_state (refresh from the cloud), start / stop (quick power toggle — refused while a job runs), deploy / deprovision (run/tear-down a whole deployment\'s steps), up (one resource) / down (destroy one resource), run_action (a resource-specific action like verify-connected-resources), list_jobs / get_job / cancel_job, list_secrets / set_secret / delete_secret (encrypted at rest; values are write-only and referenced by name from deployment config), seed (idempotently import the shipped database/*.yaml config). A deployment must be seeded before you can deploy/up it. Secrets needed by a deployment are its `requiredEnv`.',
+    'Provision and manage homelab/cloud infrastructure (the ported panw-broker: Terraform + PAN-OS/AWS lifecycle). Discovery and reads are immediate; lifecycle verbs are **async** — they enqueue a durable job a background worker runs, so you get a job back and must poll `get_job` until status is `succeeded`/`failed`/`canceled` (logs stream into the job). Actions: list_deployments (what is deployable), get_deployment (resources, steps, inputs, and `requiredEnv` secret names), list_resources / get_resource (runtime state), event_snapshot (active job + resources + recent jobs baseline; GUI clients subscribe to HTTP SSE for live updates), power_state (refresh from the cloud), start / stop (quick power toggle — refused while a job runs), list_tunnels / open_rdp_tunnel / close_tunnel (broker-managed LAN RDP tunnel sessions for private Windows endpoints over SSM), deploy / deprovision (run/tear-down a whole deployment\'s steps), up (one resource) / down (destroy one resource), run_action (a resource-specific action like verify-connected-resources), list_jobs / get_job / cancel_job, list_secrets / set_secret / delete_secret (encrypted at rest; values are write-only and referenced by name from deployment config), seed (idempotently import the shipped database/*.yaml config). A deployment must be seeded before you can deploy/up it. Secrets needed by a deployment are its `requiredEnv`.',
     {
-      action: z.enum(['list_deployments', 'get_deployment', 'list_resources', 'get_resource', 'event_snapshot', 'power_state', 'start', 'stop', 'deploy', 'deprovision', 'up', 'down', 'run_action', 'list_jobs', 'get_job', 'cancel_job', 'list_secrets', 'set_secret', 'delete_secret', 'seed']),
+      action: z.enum(['list_deployments', 'get_deployment', 'list_resources', 'get_resource', 'event_snapshot', 'power_state', 'start', 'stop', 'list_tunnels', 'open_rdp_tunnel', 'close_tunnel', 'deploy', 'deprovision', 'up', 'down', 'run_action', 'list_jobs', 'get_job', 'cancel_job', 'list_secrets', 'set_secret', 'delete_secret', 'seed']),
       deployment: z.string().optional().describe('Deployment slug (e.g. aws-gp-lab-trusted-users) — for get_deployment, deploy, deprovision, up, run_action.'),
-      target: z.string().optional().describe('Resource hostname/name/id — for get_resource, power_state, start, stop, up, down, run_action.'),
+      target: z.string().optional().describe('Resource hostname/name/id — for get_resource, power_state, start, stop, up, down, run_action, open_rdp_tunnel, close_tunnel by resource.'),
       resource_action: z.string().optional().describe('Resource-specific action name — for run_action (e.g. verify-connected-resources).'),
+      tunnel_id: z.string().optional().describe('Runtime tunnel id — for close_tunnel.'),
       job_id: z.string().optional().describe('Job id — for get_job, cancel_job.'),
       name: z.string().optional().describe('Secret name (UPPER_SNAKE, e.g. PANW_PANORAMA_AUTH_CODE) — for set_secret, delete_secret.'),
       value: z.string().optional().describe('Secret value — for set_secret (write-only; never returned).'),
       description: z.string().optional().describe('Optional secret description — for set_secret.'),
       status: z.enum(['queued', 'running', 'succeeded', 'failed', 'canceled']).optional().describe('Filter list_jobs by status.'),
       limit: z.number().optional().describe('Max jobs for list_jobs (default 50).'),
+      port: z.number().int().positive().optional().describe('LAN-facing RDP tunnel port from PROVISIONING_RDP_TUNNEL_PORTS — for open_rdp_tunnel.'),
+      remote_port: z.number().int().positive().optional().describe('Remote Windows port for open_rdp_tunnel; defaults to 3389.'),
+      ttl_seconds: z.number().int().nonnegative().optional().describe('Seconds before the broker closes the RDP tunnel; 0 disables TTL.'),
       params: z.record(z.any()).optional().describe('Deploy-time step toggles (the deployment\'s `when` inputs) — for deploy/deprovision/up/down/run_action.'),
     },
-    async ({ action, deployment, target, resource_action, job_id, name, value, description, status, limit, params }) => {
+    async ({ action, deployment, target, resource_action, tunnel_id, job_id, name, value, description, status, limit, port, remote_port, ttl_seconds, params }) => {
       switch (action) {
         case 'list_deployments':
           return callService(() => provisioningService.listDeployments());
@@ -120,6 +124,20 @@ export function registerTools(server: McpServer, services: Services, resolveUser
         case 'stop':
           if (!target) return errorResponse('stop requires `target`.');
           return callService(() => provisioningService.stopResource(target));
+        case 'list_tunnels':
+          return callService(() => provisioningService.listRdpTunnels());
+        case 'open_rdp_tunnel':
+          if (!target) return errorResponse('open_rdp_tunnel requires `target` (Windows resource id/hostname/name).');
+          return callService(() => provisioningService.openRdpTunnel(target, {
+            port,
+            remotePort: remote_port,
+            ttlSeconds: ttl_seconds,
+          }));
+        case 'close_tunnel': {
+          const id = tunnel_id || target;
+          if (!id) return errorResponse('close_tunnel requires `tunnel_id` or `target`.');
+          return callService(() => provisioningService.closeRdpTunnel(id), { notFoundMsg: `No tunnel "${id}".` });
+        }
         case 'deploy':
           if (!deployment) return errorResponse('deploy requires `deployment`. Returns a queued job — poll get_job.');
           return callService(() => provisioningService.enqueueJob({ kind: 'deploy', deployment, params }));

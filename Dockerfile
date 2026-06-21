@@ -28,6 +28,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/hashicorp.gpg \
     && echo "deb https://apt.releases.hashicorp.com bookworm main" > /etc/apt/sources.list.d/hashicorp.list \
     && apt-get update && apt-get install -y --no-install-recommends postgresql-client-16 terraform awscli \
+    && arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+      amd64) ssm_url="https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" ;; \
+      arm64) ssm_url="https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_arm64/session-manager-plugin.deb" ;; \
+      *) echo "Unsupported architecture for AWS Session Manager plugin: $arch" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL "$ssm_url" -o /tmp/session-manager-plugin.deb \
+    && dpkg -i /tmp/session-manager-plugin.deb \
+    && rm -f /tmp/session-manager-plugin.deb \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PUPPETEER_SKIP_DOWNLOAD=true
@@ -76,6 +85,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /etc/apt/trusted.gpg.d/hashicorp.gpg \
     && echo "deb https://apt.releases.hashicorp.com bookworm main" > /etc/apt/sources.list.d/hashicorp.list \
     && apt-get update && apt-get install -y --no-install-recommends postgresql-client-16 terraform awscli \
+    && arch="$(dpkg --print-architecture)" \
+    && case "$arch" in \
+      amd64) ssm_url="https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" ;; \
+      arm64) ssm_url="https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_arm64/session-manager-plugin.deb" ;; \
+      *) echo "Unsupported architecture for AWS Session Manager plugin: $arch" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL "$ssm_url" -o /tmp/session-manager-plugin.deb \
+    && dpkg -i /tmp/session-manager-plugin.deb \
+    && rm -f /tmp/session-manager-plugin.deb \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PUPPETEER_SKIP_DOWNLOAD=true

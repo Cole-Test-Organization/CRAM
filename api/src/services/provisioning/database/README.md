@@ -1,10 +1,10 @@
 # Database-Bound YAML
 
-This folder holds the YAML records that are expected to become Postgres-backed
-records when the broker is ported into the SE Operating System app.
+This folder holds the YAML records used to seed Postgres-backed provisioning
+config tables in the SE Operating System app.
 
-YAML is the local/dev storage backend. It is not the long-term source-of-truth
-contract.
+YAML is seed/import material for deployable topologies and profiles. The API
+runtime reads those records back from Postgres after seeding.
 
 ## Folders
 

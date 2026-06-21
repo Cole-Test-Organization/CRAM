@@ -77,6 +77,14 @@ services:
       - PROVISIONING_SEED_SECRETS_ON_BOOT=${PROVISIONING_SEED_SECRETS_ON_BOOT:-false}
       - PROVISIONING_TF_PG_CONN=${PROVISIONING_TF_PG_CONN:-postgres://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-devpassword}@db:5432/${POSTGRES_DB:-crm}?sslmode=disable}
       - PROVISIONING_RUNTIME_ROOT=${PROVISIONING_RUNTIME_ROOT:-/app/api/.provisioning-runtime}
+      # Broker-managed LAN RDP tunnels for private Windows endpoints. These ports
+      # are published below; set BIND_ADDRESS/PROVISIONING_RDP_TUNNEL_HOST to the
+      # broker's LAN address when serving clients on another machine.
+      - PROVISIONING_RDP_TUNNEL_HOST=${PROVISIONING_RDP_TUNNEL_HOST:-localhost}
+      - PROVISIONING_RDP_TUNNEL_BIND_ADDRESS=${PROVISIONING_RDP_TUNNEL_BIND_ADDRESS:-0.0.0.0}
+      - PROVISIONING_RDP_TUNNEL_PORTS=${PROVISIONING_RDP_TUNNEL_PORTS:-13389-13399}
+      - PROVISIONING_RDP_TUNNEL_INTERNAL_PORTS=${PROVISIONING_RDP_TUNNEL_INTERNAL_PORTS:-23389-23399}
+      - PROVISIONING_RDP_TUNNEL_TTL_SECONDS=${PROVISIONING_RDP_TUNNEL_TTL_SECONDS:-28800}
       # AWS provider auth for provisioning: Terraform/AWS CLI read the mounted
       # shared credentials/config files using this profile.
       - AWS_PROFILE=${AWS_PROFILE:-default}
@@ -111,6 +119,7 @@ services:
       # app on this machine only; 0.0.0.0 exposes it on the LAN. Set in .env.
       - "${BIND_ADDRESS:-127.0.0.1}:3200:3200"
       - "${BIND_ADDRESS:-127.0.0.1}:3100:3100"
+      - "${BIND_ADDRESS:-127.0.0.1}:13389-13399:13389-13399"
     profiles: ["prod"]
 
   # ---- Development (hot-reload) ----
@@ -147,6 +156,14 @@ services:
       - PROVISIONING_SEED_SECRETS_ON_BOOT=${PROVISIONING_SEED_SECRETS_ON_BOOT:-false}
       - PROVISIONING_TF_PG_CONN=${PROVISIONING_TF_PG_CONN:-postgres://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-devpassword}@db:5432/${POSTGRES_DB:-crm}?sslmode=disable}
       - PROVISIONING_RUNTIME_ROOT=${PROVISIONING_RUNTIME_ROOT:-/app/api/.provisioning-runtime}
+      # Broker-managed LAN RDP tunnels for private Windows endpoints. These ports
+      # are published below; set BIND_ADDRESS/PROVISIONING_RDP_TUNNEL_HOST to the
+      # broker's LAN address when serving clients on another machine.
+      - PROVISIONING_RDP_TUNNEL_HOST=${PROVISIONING_RDP_TUNNEL_HOST:-localhost}
+      - PROVISIONING_RDP_TUNNEL_BIND_ADDRESS=${PROVISIONING_RDP_TUNNEL_BIND_ADDRESS:-0.0.0.0}
+      - PROVISIONING_RDP_TUNNEL_PORTS=${PROVISIONING_RDP_TUNNEL_PORTS:-13389-13399}
+      - PROVISIONING_RDP_TUNNEL_INTERNAL_PORTS=${PROVISIONING_RDP_TUNNEL_INTERNAL_PORTS:-23389-23399}
+      - PROVISIONING_RDP_TUNNEL_TTL_SECONDS=${PROVISIONING_RDP_TUNNEL_TTL_SECONDS:-28800}
       # AWS provider auth for provisioning: Terraform/AWS CLI read the mounted
       # shared credentials/config files using this profile.
       - AWS_PROFILE=${AWS_PROFILE:-default}
@@ -187,6 +204,7 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:3200:3200"
       - "${BIND_ADDRESS:-127.0.0.1}:3100:3100"
       - "${BIND_ADDRESS:-127.0.0.1}:80:80"
+      - "${BIND_ADDRESS:-127.0.0.1}:13389-13399:13389-13399"
     profiles: ["dev"]
 
   # ---- Dev seed (opt-in) ----

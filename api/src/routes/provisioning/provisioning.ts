@@ -15,6 +15,15 @@ const paramsBody = {
   properties: { params: { type: 'object', additionalProperties: true, description: 'Deploy-time step toggles (the deployment\'s `when` inputs).' } },
   additionalProperties: false,
 } as const;
+const rdpTunnelBody = {
+  type: 'object',
+  properties: {
+    port: { type: 'integer', minimum: 1, maximum: 65535, description: 'Optional LAN-facing port from PROVISIONING_RDP_TUNNEL_PORTS.' },
+    remotePort: { type: 'integer', minimum: 1, maximum: 65535, description: 'Remote Windows port. Defaults to 3389.' },
+    ttlSeconds: { type: 'integer', minimum: 0, description: 'Seconds before the broker closes the tunnel. 0 disables TTL.' },
+  },
+  additionalProperties: false,
+} as const;
 
 function fail(reply: FastifyReply, err: unknown) {
   const e = err as { statusCode?: number; message?: string };
@@ -176,6 +185,44 @@ export default async function provisioningRoutes(
   }, async (request, reply) => {
     try { return await provisioningService.stopResource(request.params.id); }
     catch (err) { return fail(reply, err); }
+  });
+
+  // ── runtime tunnels ────────────────────────────────────────────────────────
+  fastify.get('/provisioning/tunnels', {
+    schema: { description: 'List broker-managed runtime tunnels, including SSM-backed RDP tunnels. These are process-local sessions, not Terraform resources.', tags: [TAG] },
+  }, async () => provisioningService.listRdpTunnels());
+
+  fastify.post<{ Params: { id: string }; Body: { port?: number; remotePort?: number; ttlSeconds?: number } }>('/provisioning/resources/:id/rdp-tunnel', {
+    schema: {
+      description: 'Open an SSM-backed RDP tunnel for a Windows endpoint. The broker listens on a Docker-published LAN port and proxies to the private instance over SSM.',
+      tags: [TAG],
+      params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
+      body: rdpTunnelBody,
+    },
+  }, async (request, reply) => {
+    try {
+      return await provisioningService.openRdpTunnel(request.params.id, {
+        port: request.body?.port,
+        remotePort: request.body?.remotePort,
+        ttlSeconds: request.body?.ttlSeconds,
+      });
+    } catch (err) { return fail(reply, err); }
+  });
+
+  fastify.delete<{ Params: { id: string } }>('/provisioning/tunnels/:id', {
+    schema: { description: 'Close a broker-managed runtime tunnel by tunnel id.', tags: [TAG], params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } } },
+  }, async (request, reply) => {
+    const closed = await provisioningService.closeRdpTunnel(request.params.id);
+    if (!closed) { reply.code(404); return { error: `No tunnel "${request.params.id}"` }; }
+    return closed;
+  });
+
+  fastify.delete<{ Params: { id: string } }>('/provisioning/resources/:id/rdp-tunnel', {
+    schema: { description: 'Close the active RDP tunnel for a resource by resource id/hostname/name.', tags: [TAG], params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } } },
+  }, async (request, reply) => {
+    const closed = await provisioningService.closeRdpTunnel(request.params.id);
+    if (!closed) { reply.code(404); return { error: `No RDP tunnel for "${request.params.id}"` }; }
+    return closed;
   });
 
   // ── lifecycle (enqueue a durable job → 202) ──────────────────────────────────

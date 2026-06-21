@@ -8,3 +8,9 @@ export type {
 export { ProvisioningJobWorker } from "./jobWorker.js";
 export type { ProvisioningJobWorkerOptions } from "./jobWorker.js";
 export type { JobView } from "./jobView.js";
+export {
+  createProvisioningRuntime,
+  createProvisioningWorker,
+  type ProvisioningRuntime,
+  type ProvisioningRuntimeOptions,
+} from "./runtime.js";

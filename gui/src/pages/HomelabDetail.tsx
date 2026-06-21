@@ -1,6 +1,6 @@
 import { A, useParams } from '@solidjs/router';
 import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
-import { api, type ProvisioningJob, type ProvisioningResource } from '../lib/api';
+import { api, type ProvisioningJob, type ProvisioningRdpTunnel, type ProvisioningResource } from '../lib/api';
 import { createProvisioningEventStream } from '../lib/provisioningEvents';
 import BackLink from '../components/BackLink';
 import Button from '../components/Button';
@@ -11,14 +11,18 @@ export default function HomelabDetail() {
   const [launchOpen, setLaunchOpen] = createSignal(false);
   const [monitorJobId, setMonitorJobId] = createSignal<string | null>(null);
   const [actionError, setActionError] = createSignal('');
+  const [actionNotice, setActionNotice] = createSignal('');
   const [busy, setBusy] = createSignal('');
 
   const [deployments] = createResource(() => api.listProvisioningDeployments());
   const [deployment] = createResource(() => params.id, (id) => api.getProvisioningDeployment(id));
+  const [rdpTunnels, { refetch: refetchRdpTunnels }] = createResource(() => api.listProvisioningRdpTunnels());
   const stream = createProvisioningEventStream({ jobsLimit: 50 });
 
   const deploymentResources = createMemo(() => stream.resources().filter((r) => r.deploymentId === params.id));
   const deploymentJobs = createMemo(() => stream.jobs().filter((j) => j.deployment === params.id || deploymentResources().some((r) => r.hostname === j.target || r.id === j.target)).slice(0, 10));
+  const tunnelForResource = (resource: ProvisioningResource): ProvisioningRdpTunnel | undefined =>
+    (rdpTunnels() || []).find((tunnel) => tunnel.resourceId === resource.id || tunnel.hostname === resource.hostname);
 
   const refreshAll = () => {
     void stream.refresh();
@@ -33,6 +37,7 @@ export default function HomelabDetail() {
   const runJob = async (label: string, runner: () => Promise<ProvisioningJob>) => {
     setBusy(label);
     setActionError('');
+    setActionNotice('');
     try {
       launched(await runner());
     } catch (err: any) {
@@ -55,6 +60,7 @@ export default function HomelabDetail() {
   const powerAction = async (resource: ProvisioningResource, action: 'start' | 'stop' | 'refresh') => {
     setBusy(`${action}-${resource.id}`);
     setActionError('');
+    setActionNotice('');
     try {
       const next = action === 'start'
         ? await api.startProvisioningResource(resource.id)
@@ -64,6 +70,35 @@ export default function HomelabDetail() {
       stream.upsertResource(next);
     } catch (err: any) {
       setActionError(err?.message || `Failed to ${action} ${resourceTitle(resource)}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const openRdpTunnel = async (resource: ProvisioningResource) => {
+    setBusy(`rdp-${resource.id}`);
+    setActionError('');
+    setActionNotice('');
+    try {
+      const tunnel = await api.openProvisioningRdpTunnel(resource.id);
+      await refetchRdpTunnels();
+      setActionNotice(`RDP tunnel ready: ${tunnel.rdpEndpoint}${tunnel.username ? ` as ${tunnel.username}` : ''}`);
+    } catch (err: any) {
+      setActionError(err?.message || `Failed to open RDP tunnel for ${resourceTitle(resource)}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const closeRdpTunnel = async (resource: ProvisioningResource) => {
+    setBusy(`rdp-close-${resource.id}`);
+    setActionError('');
+    setActionNotice('');
+    try {
+      await api.closeProvisioningResourceRdpTunnel(resource.id);
+      await refetchRdpTunnels();
+    } catch (err: any) {
+      setActionError(err?.message || `Failed to close RDP tunnel for ${resourceTitle(resource)}`);
     } finally {
       setBusy('');
     }
@@ -104,6 +139,9 @@ export default function HomelabDetail() {
 
             <Show when={actionError()}>
               <div class="panel p-3 mb-5 border-scarlet-400 text-scarlet-300 text-[12px] font-semibold">{actionError()}</div>
+            </Show>
+            <Show when={actionNotice()}>
+              <div class="panel p-3 mb-5 border-surf-500 text-surf-200 text-[12px] font-semibold break-words">{actionNotice()}</div>
             </Show>
 
             <Show when={monitorJobId()}>
@@ -157,6 +195,22 @@ export default function HomelabDetail() {
                                     <Button class="w-full md:w-auto" variant="ghost" size="sm" disabled={Boolean(busy())} onClick={() => powerAction(r(), 'refresh')}>Power</Button>
                                     <Button class="w-full md:w-auto" variant="ghost" size="sm" disabled={Boolean(busy())} onClick={() => powerAction(r(), 'start')}>Start</Button>
                                     <Button class="w-full md:w-auto" variant="ghost" size="sm" disabled={Boolean(busy())} onClick={() => powerAction(r(), 'stop')}>Stop</Button>
+                                    <Show when={r().kind === 'windows-endpoint' && r().lifecycleStatus !== 'destroyed'}>
+                                      <Show
+                                        when={tunnelForResource(r())}
+                                        fallback={
+                                          <Button class="w-full md:w-auto" variant="primary" size="sm" disabled={Boolean(busy())} onClick={() => openRdpTunnel(r())}>
+                                            {busy() === `rdp-${r().id}` ? 'Opening...' : 'RDP'}
+                                          </Button>
+                                        }
+                                      >
+                                        {(tunnel) => (
+                                          <Button class="w-full md:w-auto" variant="ghost" size="sm" disabled={Boolean(busy())} onClick={() => closeRdpTunnel(r())}>
+                                            {busy() === `rdp-close-${r().id}` ? 'Closing...' : `Close ${tunnel().publicPort}`}
+                                          </Button>
+                                        )}
+                                      </Show>
+                                    </Show>
                                   </>
                                 )}
                               </Show>

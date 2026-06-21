@@ -35,7 +35,7 @@ import { InternalDomainsService } from '../services/internal-domains/internal-do
 import { AgentSettingsService } from '../services/agent/agent-settings.js';
 import { MemoriesService } from '../services/memories/memories.js';
 import { ThreadsService } from '../services/threads/threads.js';
-import { ProvisioningService } from '../services/provisioning/index.js';
+import { createProvisioningRuntime } from '../services/provisioning/index.js';
 
 import { registerTools } from '../mcp/tools.js';
 import type { Services } from '../mcp/tools.js';
@@ -60,6 +60,7 @@ export async function buildMcpSession({ userId }: { userId?: number } = {}) {
   });
   const internalDomainsService = new InternalDomainsService();
   const memoriesService = new MemoriesService();
+  const provisioningRuntime = createProvisioningRuntime({ userId: resolvedUserId });
   // Lifted out of the services literal so notesImportService can depend on it.
   const meetingsService = new MeetingsService({
     contactsService,
@@ -100,7 +101,7 @@ export async function buildMcpSession({ userId }: { userId?: number } = {}) {
     memoriesService,
     threadsService: new ThreadsService(),
     // Enqueues/reads only — the api process (src/index.ts) runs the single job worker.
-    provisioningService: new ProvisioningService({ userId: resolvedUserId }),
+    provisioningService: provisioningRuntime.service,
   };
 
   // Every call resolves to the default user (resolved above) — mirrors
