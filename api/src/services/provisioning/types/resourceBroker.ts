@@ -9,6 +9,12 @@ export interface ResourceBrokerRunOptions {
   skipActiveJobCheck?: boolean;
   patchUnchangedPowerState?: boolean;
   params?: Record<string, unknown>;
+  /**
+   * Skip the up-front reference preflight. Set on the per-resource up()/runAction()
+   * calls a multi-step deploy fans out, since deploy() already validated the whole
+   * deployment once before the first step. Teardown paths never validate.
+   */
+  skipReferenceCheck?: boolean;
 }
 
 export type ResourcePowerAction = "start" | "stop";

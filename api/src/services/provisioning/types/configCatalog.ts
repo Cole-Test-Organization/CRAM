@@ -64,8 +64,14 @@ export interface DeploymentSummary {
   resourceKinds: string[];
   resourceCount: number;
   stepCount: number;
-  /** True when the deployment has steps (drive via deploy); false = per-resource up/down. */
+  /** True when the deployment can be torn down as a whole (has steps, or has any resource to down). */
   deployable: boolean;
+  /** Slug of the template this was cloned from; null when this row IS a catalog template. */
+  templateName: string | null;
+  /** Operator-facing label. For a template this is the slug; for an instance, what the user typed. */
+  displayName: string | null;
+  /** Convenience: true when templateName is null (a launchable blueprint, not a deployed instance). */
+  isTemplate: boolean;
 }
 
 export interface DeploymentDescriptor extends DeploymentSummary {

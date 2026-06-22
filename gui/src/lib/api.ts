@@ -46,6 +46,12 @@ export type ProvisioningDeploymentSummary = {
   resourceCount: number;
   stepCount: number;
   deployable: boolean;
+  /** Slug of the template this was cloned from; null when this row IS a catalog template. */
+  templateName: string | null;
+  /** Operator label — slug for templates, the typed name for instances. */
+  displayName: string | null;
+  /** True when this is a launchable blueprint (not a deployed instance). */
+  isTemplate: boolean;
 };
 
 export type ProvisioningDeploymentDescriptor = ProvisioningDeploymentSummary & {
@@ -784,6 +790,10 @@ export const api = {
     post<ProvisioningResource>(`/provisioning/resources/${encodeURIComponent(id)}/stop`, {}),
   deployProvisioningDeployment: (id: string, params?: Record<string, unknown>) =>
     post<ProvisioningJob>(`/provisioning/deployments/${encodeURIComponent(id)}/deploy`, { params: params ?? {} }),
+  createProvisioningInstance: (templateId: string, name: string, params?: Record<string, unknown>) =>
+    post<ProvisioningJob>(`/provisioning/deployments/${encodeURIComponent(templateId)}/instances`, { name, params: params ?? {} }),
+  deleteProvisioningDeployment: (id: string) =>
+    del<{ deleted: boolean }>(`/provisioning/deployments/${encodeURIComponent(id)}`),
   deprovisionProvisioningDeployment: (id: string, params?: Record<string, unknown>) =>
     post<ProvisioningJob>(`/provisioning/deployments/${encodeURIComponent(id)}/deprovision`, { params: params ?? {} }),
   downProvisioningResource: (id: string, params?: Record<string, unknown>) =>

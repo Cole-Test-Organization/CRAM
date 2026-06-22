@@ -13,6 +13,12 @@ export interface DeploymentInputConfig {
   type: "boolean" | "string" | "number";
   default?: string | number | boolean;
   options?: DeploymentInputConfigOption[];
+  /**
+   * App-profile group this input's value(s) select from (e.g. "windows", "linux").
+   * Lets the catalog cross-reference check validate that every option value names
+   * a real app profile. Purely advisory metadata — the broker ignores it.
+   */
+  appProfileGroup?: string;
 }
 
 export interface DeploymentStepConfig {
@@ -36,4 +42,8 @@ export interface DeploymentConfig {
   resources: ResourceConfig[];
   inputs?: DeploymentInputConfig[];
   steps?: DeploymentStepConfig[];
+  /** Slug of the template this row was cloned from; null/undefined when this row IS a template. */
+  templateName?: string | null;
+  /** Human label the operator typed for an instance (the `name` slug is sanitized/unique). */
+  displayName?: string | null;
 }

@@ -4,6 +4,7 @@ import { ResourceBroker } from "./resourceBroker.js";
 import { PostgresStateRepository } from "./state/postgresStateRepository.js";
 import { PostgresConfigRepository } from "./config/postgresConfigRepository.js";
 import { seedProvisioningConfig, type SeedResult } from "./config/seed.js";
+import { createDeploymentInstance, deleteDeploymentInstance } from "./config/instances.js";
 import {
   SecretsService,
   SecretResolver,
@@ -157,6 +158,24 @@ export class ProvisioningService {
 
   async deleteSecret(name: string): Promise<boolean> {
     return this.secrets.deleteSecret(this.userId, name);
+  }
+
+  // ── deployment instances (clone a template, then deploy the clone) ──────────
+  // Clones a seeded template into a fresh, uniquely-named deployment row (projectName
+  // overridden to the slug so cloud resource names don't collide), then enqueues a
+  // deploy job for it. The returned JobView's `deployment` is the new instance slug.
+  async createInstance(
+    templateSlug: string,
+    input: { name: string; params?: Record<string, unknown> | null },
+  ): Promise<JobView> {
+    const instance = await createDeploymentInstance(this.userId, templateSlug, { name: input.name });
+    return this.enqueueJob({ kind: "deploy", deployment: instance.slug, params: input.params ?? null });
+  }
+
+  // Removes an instance row (and its destroyed resource records). Refuses templates
+  // and any instance that still has live resources — deprovision first.
+  async deleteInstance(slug: string): Promise<{ deleted: boolean }> {
+    return deleteDeploymentInstance(this.userId, slug);
   }
 
   // ── config seed (idempotent import of the shipped database/*.yaml) ──────────

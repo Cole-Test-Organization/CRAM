@@ -4,7 +4,7 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-06-21T20:53:47.453Z
+- **Generated:** 2026-06-22T03:19:52.113Z
 - **Tables:** 35
 - **Enums:** 0
 - **Views:** 0
@@ -413,6 +413,8 @@
 | `created_at` | `timestamp with time zone` | NO | `now()` |  |
 | `updated_at` | `timestamp with time zone` | NO | `now()` |  |
 | `inputs` | `jsonb` | YES | — |  |
+| `template_name` | `text` | YES | — |  |
+| `display_name` | `text` | YES | — |  |
 
 **Primary key:** `id`
 
@@ -428,6 +430,7 @@
 
 - `deployments_user_id_name_key` *(unique)* — `CREATE UNIQUE INDEX deployments_user_id_name_key ON public.deployments USING btree (user_id, name)`
 - `idx_deployments_user` — `CREATE INDEX idx_deployments_user ON public.deployments USING btree (user_id)`
+- `idx_deployments_user_template` — `CREATE INDEX idx_deployments_user_template ON public.deployments USING btree (user_id, template_name)`
 
 **Row-Level Security:** enabled (forced)
 

@@ -35,7 +35,8 @@ export class PostgresConfigRepository extends ConfigRepository {
   protected async readDeploymentConfig(id: string): Promise<DeploymentConfig | null> {
     return withUser(this.userId, async (c) => {
       const dep = await c.query(
-        `SELECT id, name, provider_type, provider_profile, provider_config, inputs, steps
+        `SELECT id, name, provider_type, provider_profile, provider_config, inputs, steps,
+                template_name, display_name
            FROM deployments WHERE name = $1`,
         [id],
       );
@@ -48,13 +49,15 @@ export class PostgresConfigRepository extends ConfigRepository {
       const providerConfig = (d.provider_config ?? {}) as Record<string, unknown>;
       return {
         // name is the broker's slug/deploymentId (the seed stores it here); the join
-        // key resources resolve against. Display names live in provider_config.
+        // key resources resolve against.
         name: d.name,
         providerProfile: d.provider_profile ?? null,
         provider: { type: d.provider_type, ...providerConfig } as ProviderConfig,
         resources: res.rows.map((r) => r.config),
         inputs: (d.inputs ?? []) as DeploymentConfig["inputs"],
         steps: (d.steps ?? []) as DeploymentConfig["steps"],
+        templateName: (d.template_name as string | null) ?? null,
+        displayName: (d.display_name as string | null) ?? null,
       };
     });
   }

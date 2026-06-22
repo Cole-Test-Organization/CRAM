@@ -125,6 +125,7 @@ export abstract class ConfigRepository {
   ): DeploymentSummary {
     const resources = raw.resources ?? [];
     const steps = raw.steps ?? [];
+    const templateName = raw.templateName ?? null;
     return {
       id,
       configPath: this.deploymentRef(id),
@@ -134,7 +135,12 @@ export abstract class ConfigRepository {
       resourceKinds: [...new Set(resources.map((resource) => resource.kind))],
       resourceCount: resources.length,
       stepCount: steps.length,
-      deployable: steps.length > 0,
+      // Tearable as a whole when it has a workflow, or any resource to down (instances
+      // cloned from a no-step template still deprovision via the fallback in the broker).
+      deployable: steps.length > 0 || resources.length > 0,
+      templateName,
+      displayName: raw.displayName ?? raw.name,
+      isTemplate: templateName == null,
     };
   }
 

@@ -8,6 +8,7 @@ import StatusBadge from '../components/StatusBadge';
 import { formatDateTime } from '../utils/date';
 import { LaunchModal, StreamStatusPill } from './HomelabCommon';
 import BrokerTabs from './BrokerTabs';
+import { activeProvisioningResources } from '../lib/provisioningResources';
 
 function resourceCounts(resources: ProvisioningResource[]) {
   const counts = new Map<string, number>();
@@ -25,8 +26,18 @@ export default function HomelabList() {
   const [deployments, { refetch: refetchDeployments }] = createResource(() => api.listProvisioningDeployments());
   const stream = createProvisioningEventStream({ jobsLimit: 8 });
 
-  const trackedCounts = createMemo(() => resourceCounts(stream.resources()));
+  const activeResources = createMemo(() => activeProvisioningResources(stream.resources()));
+  const trackedCounts = createMemo(() => resourceCounts(activeResources()));
   const recentJobs = createMemo(() => stream.jobs().slice(0, 8));
+
+  const templates = createMemo(() => (deployments() || []).filter((d) => d.isTemplate));
+  // Active "deployments" = launched instances, plus any template still owning live
+  // resources (e.g. a box created the old in-place way before instances existed).
+  const instances = createMemo(() =>
+    (deployments() || [])
+      .filter((d) => !d.isTemplate || (trackedCounts().get(d.id) || 0) > 0)
+      .sort((a, b) => (a.displayName || a.id).localeCompare(b.displayName || b.id)),
+  );
 
   const refreshAll = () => {
     refetchDeployments();
@@ -42,6 +53,7 @@ export default function HomelabList() {
     stream.upsertJob(job);
     stream.setActiveJobId(job.id);
     setMonitorJobId(job.id);
+    refetchDeployments();
   };
 
   return (
@@ -50,7 +62,7 @@ export default function HomelabList() {
         <div>
           <h1 class="text-[26px] font-bold font-[family-name:var(--font-display)]">Broker</h1>
           <div class="text-base-400 text-[12px] mt-1">
-            {deployments()?.length || 0} deployments · {stream.resources().length} tracked resources
+            {deployments()?.length || 0} deployments · {activeResources().length} active resources
           </div>
         </div>
         <div class="flex gap-2 flex-wrap">
@@ -76,39 +88,71 @@ export default function HomelabList() {
       </Show>
 
       <div class="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
-        <section>
-          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-            <h2 class="text-[14px] uppercase tracking-widest font-bold text-surf-300">Deployment Catalog</h2>
-            <span class="text-[11px] text-base-400 uppercase tracking-wider">{deployments()?.length || 0} seeded</span>
+        <section class="flex flex-col gap-5">
+          {/* Deployed instances — click one to manage its resources */}
+          <div>
+            <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <h2 class="text-[14px] uppercase tracking-widest font-bold text-surf-300">Deployments</h2>
+              <span class="text-[11px] text-base-400 uppercase tracking-wider">{instances().length} active</span>
+            </div>
+            <div class="panel panel-accent">
+              <Show when={!deployments.loading} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
+                <For each={instances()} fallback={
+                  <div class="text-base-400 text-center p-8 text-sm italic">No deployments yet — deploy a template below.</div>
+                }>
+                  {(deployment) => (
+                    <div class="press-row gap-3 flex-wrap border-b border-base-700 last:border-b-0">
+                      <A href={`/broker/${deployment.id}`} class="flex-1 min-w-[65%] md:min-w-[260px] no-underline">
+                        <div class="font-semibold text-sm text-base-50 break-words">{deployment.displayName || deployment.id}</div>
+                        <div class="flex gap-2 flex-wrap text-[11px] text-base-400 uppercase tracking-wider mt-1">
+                          <span>{deployment.provider || 'unknown'}</span>
+                          <Show when={deployment.templateName}><span class="text-surf-300/80">from {deployment.templateName}</span></Show>
+                          <span>{deployment.resourceCount} resources</span>
+                          <Show when={trackedCounts().get(deployment.id)}>
+                            <span class="text-surf-300">{trackedCounts().get(deployment.id)} live</span>
+                          </Show>
+                        </div>
+                      </A>
+                      <div class="flex gap-2 flex-wrap">
+                        <StatusBadge status={trackedCounts().get(deployment.id) ? 'ready' : 'idle'} />
+                        <Button variant="ghost" size="sm" href={`/broker/${deployment.id}`}>Open</Button>
+                      </div>
+                    </div>
+                  )}
+                </For>
+              </Show>
+            </div>
           </div>
 
-          <div class="panel panel-accent">
-            <Show when={!deployments.loading} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
-              <For each={deployments() || []} fallback={
-                <div class="text-base-400 text-center p-8 text-sm italic">No deployments seeded.</div>
-              }>
-                {(deployment) => (
-                  <div class="press-row gap-3 flex-wrap border-b border-base-700 last:border-b-0">
-                    <A href={`/broker/${deployment.id}`} class="flex-1 min-w-[65%] md:min-w-[260px] no-underline">
-                      <div class="font-semibold text-sm text-base-50 break-words">{deployment.id}</div>
-                      <div class="flex gap-2 flex-wrap text-[11px] text-base-400 uppercase tracking-wider mt-1">
-                        <span>{deployment.provider || 'unknown'}</span>
-                        <span>{deployment.resourceCount} resources</span>
-                        <span>{deployment.stepCount} steps</span>
-                        <Show when={trackedCounts().get(deployment.id)}>
-                          <span class="text-surf-300">{trackedCounts().get(deployment.id)} tracked</span>
-                        </Show>
+          {/* Templates (blueprints) — deploy one to create a named instance */}
+          <div>
+            <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <h2 class="text-[14px] uppercase tracking-widest font-bold text-surf-300">Templates</h2>
+              <span class="text-[11px] text-base-400 uppercase tracking-wider">{templates().length} blueprints</span>
+            </div>
+            <div class="panel panel-accent">
+              <Show when={!deployments.loading} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
+                <For each={templates()} fallback={
+                  <div class="text-base-400 text-center p-8 text-sm italic">No templates seeded.</div>
+                }>
+                  {(deployment) => (
+                    <div class="press-row gap-3 flex-wrap border-b border-base-700 last:border-b-0">
+                      <div class="flex-1 min-w-[65%] md:min-w-[260px]">
+                        <div class="font-semibold text-sm text-base-50 break-words">{deployment.id}</div>
+                        <div class="flex gap-2 flex-wrap text-[11px] text-base-400 uppercase tracking-wider mt-1">
+                          <span>{deployment.provider || 'unknown'}</span>
+                          <span>{deployment.resourceCount} resources</span>
+                          <span>{deployment.stepCount} steps</span>
+                        </div>
                       </div>
-                    </A>
-                    <div class="flex gap-2 flex-wrap">
-                      <StatusBadge status="deployment" />
-                      <Button variant="ghost" size="sm" href={`/broker/${deployment.id}`}>Open</Button>
-                      <Button variant="primary" size="sm" onClick={() => openLaunch(deployment)}>Deploy</Button>
+                      <div class="flex gap-2 flex-wrap">
+                        <Button variant="primary" size="sm" onClick={() => openLaunch(deployment)}>Deploy</Button>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </For>
-            </Show>
+                  )}
+                </For>
+              </Show>
+            </div>
           </div>
         </section>
 
@@ -116,10 +160,10 @@ export default function HomelabList() {
           <section>
             <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
               <h2 class="text-[14px] uppercase tracking-widest font-bold text-surf-300">Resources</h2>
-              <span class="text-[11px] text-base-400 uppercase tracking-wider">{stream.resources().length} active records</span>
+              <span class="text-[11px] text-base-400 uppercase tracking-wider">{activeResources().length} active records</span>
             </div>
             <div class="panel panel-accent">
-              <For each={stream.resources()} fallback={
+              <For each={activeResources()} fallback={
                 <div class="text-base-400 text-center p-8 text-sm italic">No provisioned resources yet.</div>
               }>
                 {(resource) => (

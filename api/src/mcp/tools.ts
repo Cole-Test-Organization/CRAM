@@ -83,10 +83,11 @@ export function registerTools(server: McpServer, services: Services, resolveUser
 
   server.tool(
     'provisioning',
-    'Provision and manage homelab/cloud infrastructure (the ported panw-broker: Terraform + PAN-OS/AWS lifecycle). Discovery and reads are immediate; lifecycle verbs are **async** — they enqueue a durable job a background worker runs, so you get a job back and must poll `get_job` until status is `succeeded`/`failed`/`canceled` (logs stream into the job). Actions: list_deployments (available deployment summaries), get_deployment (resources, steps, inputs, and `requiredEnv` secret names), list_resources / get_resource (runtime state), event_snapshot (active job + resources + recent jobs baseline; GUI clients subscribe to HTTP SSE for live updates), power_state (refresh from the cloud), start / stop (quick power toggle — refused while a job runs), list_tunnels / open_rdp_tunnel / close_tunnel (broker-managed LAN RDP tunnel sessions for private Windows endpoints over SSM), deploy / deprovision (deploy or tear down a whole deployment; deployments without steps deploy their configured resources), up (one resource) / down (destroy one resource), run_action (a resource-specific action like verify-connected-resources), list_jobs / get_job / cancel_job, list_secrets / set_secret / delete_secret (encrypted at rest; values are write-only and referenced by name from deployment config), seed (idempotently import the shipped database/*.yaml config). A deployment must be seeded before you can deploy/up it. Secrets needed by a deployment are its `requiredEnv`.',
+    'Provision and manage homelab/cloud infrastructure (the ported panw-broker: Terraform + PAN-OS/AWS lifecycle). Discovery and reads are immediate; lifecycle verbs are **async** — they enqueue a durable job a background worker runs, so you get a job back and must poll `get_job` until status is `succeeded`/`failed`/`canceled` (logs stream into the job). Actions: list_deployments (available deployment summaries), get_deployment (resources, steps, inputs, and `requiredEnv` secret names), list_resources / get_resource (runtime state), event_snapshot (active job + resources + recent jobs baseline; GUI clients subscribe to HTTP SSE for live updates), power_state (refresh from the cloud), start / stop (quick power toggle — refused while a job runs), list_tunnels / open_rdp_tunnel / close_tunnel (broker-managed LAN RDP tunnel sessions for private Windows endpoints over SSM), deploy / deprovision (deploy or tear down a whole deployment; deployments without steps deploy their configured resources), create_instance (clone a template deployment under a new operator-chosen name and deploy the clone — the way to run multiple isolated copies of one blueprint without editing YAML) / delete_instance (remove a torn-down instance row), up (one resource) / down (destroy one resource), run_action (a resource-specific action like verify-connected-resources), list_jobs / get_job / cancel_job, list_secrets / set_secret / delete_secret (encrypted at rest; values are write-only and referenced by name from deployment config), seed (idempotently import the shipped database/*.yaml config). A deployment must be seeded before you can deploy/up it; in `list_deployments`, rows with `isTemplate:true` are launchable blueprints and rows with a `templateName` are deployed instances. Secrets needed by a deployment are its `requiredEnv`.',
     {
-      action: z.enum(['list_deployments', 'get_deployment', 'list_resources', 'get_resource', 'event_snapshot', 'power_state', 'start', 'stop', 'list_tunnels', 'open_rdp_tunnel', 'close_tunnel', 'deploy', 'deprovision', 'up', 'down', 'run_action', 'list_jobs', 'get_job', 'cancel_job', 'list_secrets', 'set_secret', 'delete_secret', 'seed']),
-      deployment: z.string().optional().describe('Deployment slug (e.g. aws-gp-lab-trusted-users) — for get_deployment, deploy, deprovision, up, run_action.'),
+      action: z.enum(['list_deployments', 'get_deployment', 'list_resources', 'get_resource', 'event_snapshot', 'power_state', 'start', 'stop', 'list_tunnels', 'open_rdp_tunnel', 'close_tunnel', 'deploy', 'deprovision', 'create_instance', 'delete_instance', 'up', 'down', 'run_action', 'list_jobs', 'get_job', 'cancel_job', 'list_secrets', 'set_secret', 'delete_secret', 'seed']),
+      deployment: z.string().optional().describe('Deployment slug — the template for create_instance, the instance for delete_instance, or the target for get_deployment/deploy/deprovision/up/run_action.'),
+      instance_name: z.string().optional().describe('Operator label for a new instance (slugified into a unique deployment id) — for create_instance.'),
       target: z.string().optional().describe('Resource hostname/name/id — for get_resource, power_state, start, stop, up, down, run_action, open_rdp_tunnel, close_tunnel by resource.'),
       resource_action: z.string().optional().describe('Resource-specific action name — for run_action (e.g. verify-connected-resources).'),
       tunnel_id: z.string().optional().describe('Runtime tunnel id — for close_tunnel.'),
@@ -101,7 +102,7 @@ export function registerTools(server: McpServer, services: Services, resolveUser
       ttl_seconds: z.number().int().nonnegative().optional().describe('Seconds before the broker closes the RDP tunnel; 0 disables TTL.'),
       params: z.record(z.any()).optional().describe('Deploy-time inputs, including declared launch inputs and step toggles (`when` params) — for deploy/deprovision/up/down/run_action.'),
     },
-    async ({ action, deployment, target, resource_action, tunnel_id, job_id, name, value, description, status, limit, port, remote_port, ttl_seconds, params }) => {
+    async ({ action, deployment, instance_name, target, resource_action, tunnel_id, job_id, name, value, description, status, limit, port, remote_port, ttl_seconds, params }) => {
       switch (action) {
         case 'list_deployments':
           return callService(() => provisioningService.listDeployments());
@@ -144,6 +145,12 @@ export function registerTools(server: McpServer, services: Services, resolveUser
         case 'deprovision':
           if (!deployment) return errorResponse('deprovision requires `deployment`. Returns a queued job — poll get_job.');
           return callService(() => provisioningService.enqueueJob({ kind: 'deprovision', deployment, params }));
+        case 'create_instance':
+          if (!deployment || !instance_name) return errorResponse('create_instance requires `deployment` (the template slug) and `instance_name`. Returns a queued deploy job whose `deployment` is the new instance slug.');
+          return callService(() => provisioningService.createInstance(deployment, { name: instance_name, params }));
+        case 'delete_instance':
+          if (!deployment) return errorResponse('delete_instance requires `deployment` (the instance slug). Deprovision its resources first.');
+          return callService(() => provisioningService.deleteInstance(deployment));
         case 'up':
           if (!deployment || !target) return errorResponse('up requires `deployment` and `target` (the resource). Returns a queued job.');
           return callService(() => provisioningService.enqueueJob({ kind: 'up', deployment, target, params }));

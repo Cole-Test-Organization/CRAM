@@ -10,7 +10,7 @@ import {
 } from "./resources/index.js";
 import { GenericTerraformResourceAdapter } from "./resources/genericTerraformResourceAdapter.js";
 import { FileStateRepository, type StateRepository } from "./state/index.js";
-import { ConfigRepository, FileConfigRepository } from "./config/index.js";
+import { ConfigRepository, FileConfigRepository, validateDeploymentReferences } from "./config/index.js";
 import { SecretResolver } from "./secrets/index.js";
 import { clearSecretOverlay, installSecretOverlay } from "./utils/secretSource.js";
 import type { BrokerEventListener } from "./events.js";
@@ -202,6 +202,7 @@ export class ResourceBroker {
   ): Promise<ResourceRecord> {
     const configRef = toProjectRelativePath(configPath) ?? configPath;
     const deployment = await this.loadDeploymentConfig(configRef, options.params);
+    if (!options.skipReferenceCheck) await validateDeploymentReferences(deployment, this.config);
     const resource = findResource(deployment, hostname);
     if (!options.skipActiveJobCheck) await this.ensureNoActiveJob();
 
@@ -278,6 +279,7 @@ export class ResourceBroker {
     if (!options.skipActiveJobCheck) await this.ensureNoActiveJob();
     const configRef = toProjectRelativePath(configPath) ?? configPath;
     const deployment = await this.loadDeploymentConfig(configRef, options.params);
+    if (!options.skipReferenceCheck) await validateDeploymentReferences(deployment, this.config);
     const targetRecord = await this.store.getResource(target);
     const configScopedTargetRecord =
       targetRecord &&
@@ -329,6 +331,10 @@ export class ResourceBroker {
     if (!options.skipActiveJobCheck) await this.ensureNoActiveJob();
     const configRef = toProjectRelativePath(configPath) ?? configPath;
     const deployment = await this.loadDeploymentConfig(configRef, options.params);
+    // Validate every reference once, before the first resource is touched. The
+    // fanned-out up()/runAction() calls below pass skipReferenceCheck so it isn't
+    // re-run per resource.
+    await validateDeploymentReferences(deployment, this.config);
     if (!deployment.steps?.length) {
       const targets = deployment.resources.map((resource) => resource.hostname);
       if (!targets.length) throw new Error(`Deployment ${deployment.name} has no resources to deploy`);
@@ -336,6 +342,7 @@ export class ResourceBroker {
       for (const target of targets) {
         await this.up(configRef, log, target, {
           skipActiveJobCheck: true,
+          skipReferenceCheck: true,
           params: options.params,
         });
       }
@@ -357,6 +364,7 @@ export class ResourceBroker {
         for (const target of targets) {
           await this.up(configRef, log, target, {
             skipActiveJobCheck: true,
+            skipReferenceCheck: true,
             params: stepParams,
           });
         }
@@ -372,6 +380,7 @@ export class ResourceBroker {
         for (const target of targets) {
           await this.runAction(configRef, target, resourceAction, log, {
             skipActiveJobCheck: true,
+            skipReferenceCheck: true,
             params: stepParams,
           });
         }
@@ -388,6 +397,14 @@ export class ResourceBroker {
     if (!options.skipActiveJobCheck) await this.ensureNoActiveJob();
     const configRef = toProjectRelativePath(configPath) ?? configPath;
     const deployment = await this.loadDeploymentConfig(configRef, options.params);
+
+    // No workflow steps (e.g. a single-resource template/instance): tear down every
+    // configured resource in reverse config order. Mirrors the no-step `deploy` path
+    // so an instance cloned from a step-less template is still deprovisionable whole.
+    if (!deployment.steps?.length) {
+      await this.deprovisionResources(configRef, deployment, log, options.params);
+      return;
+    }
 
     let provisionStepCount = 0;
     for (const step of [...(deployment.steps ?? [])].reverse()) {
@@ -433,6 +450,34 @@ export class ResourceBroker {
     if (provisionStepCount === 0) {
       throw new Error(`Deployment ${deployment.name} has no provision steps to deprovision`);
     }
+  }
+
+  // Tear down every configured resource of a step-less deployment, reverse config
+  // order, skipping ones with no record or already destroyed.
+  private async deprovisionResources(
+    configRef: string,
+    deployment: DeploymentConfig,
+    log: LogFn,
+    params: Record<string, unknown> | undefined,
+  ): Promise<void> {
+    if (!deployment.resources.length) {
+      throw new Error(`Deployment ${deployment.name} has no resources to deprovision`);
+    }
+    let downed = 0;
+    for (const resource of [...deployment.resources].reverse()) {
+      const record = await this.findDeploymentResourceRecord(configRef, deployment, resource);
+      if (!record) {
+        log(`Skipping ${resource.hostname}: no broker state record exists`);
+        continue;
+      }
+      if (record.lifecycleStatus === "destroyed") {
+        log(`Skipping ${record.hostname}: already destroyed`);
+        continue;
+      }
+      await this.down(record.id, log, { skipActiveJobCheck: true, params });
+      downed += 1;
+    }
+    if (downed === 0) log(`Nothing to tear down for ${deployment.name}: all resources already destroyed`);
   }
 
   async listResources(): Promise<ResourceRecord[]> {

@@ -246,9 +246,14 @@ export function LaunchModal(props: {
   onLaunched: (job: ProvisioningJob) => void;
 }) {
   const [deploymentId, setDeploymentId] = createSignal('');
+  const [instanceName, setInstanceName] = createSignal('');
   const [paramValues, setParamValues] = createSignal<Record<string, string | number | boolean>>({});
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal('');
+
+  // Only templates are launchable into new instances; deployed instances are managed
+  // from their own detail page.
+  const templates = () => props.deployments.filter((d) => d.isTemplate);
 
   const [detail] = createResource(
     () => (props.open && deploymentId() ? deploymentId() : null),
@@ -261,8 +266,12 @@ export function LaunchModal(props: {
 
   createEffect(() => {
     if (!props.open) return;
-    const preferred = props.initialDeploymentId || props.deployments[0]?.id || '';
-    setDeploymentId(preferred);
+    const list = templates();
+    const wanted = props.initialDeploymentId && list.some((d) => d.id === props.initialDeploymentId)
+      ? props.initialDeploymentId
+      : list[0]?.id || '';
+    setDeploymentId(wanted);
+    setInstanceName('');
     setParamValues({});
     setError('');
   });
@@ -299,11 +308,12 @@ export function LaunchModal(props: {
 
   const launch = async () => {
     const d = selected();
-    if (!d) return;
+    const name = instanceName().trim();
+    if (!d || !name) return;
     setSubmitting(true);
     setError('');
     try {
-      const job = await api.deployProvisioningDeployment(d.id, params());
+      const job = await api.createProvisioningInstance(d.id, name, params());
       props.onLaunched(job);
       props.onClose();
     } catch (err: any) {
@@ -317,24 +327,35 @@ export function LaunchModal(props: {
     <Modal
       open={props.open}
       onClose={props.onClose}
-      title="Deploy"
+      title="Deploy new instance"
       size="lg"
       footer={
         <>
           <Button variant="ghost" size="md" onClick={props.onClose}>Cancel</Button>
-          <Button variant="primary" size="md" disabled={submitting() || !selected()} onClick={launch}>
+          <Button variant="primary" size="md" disabled={submitting() || !selected() || !instanceName().trim()} onClick={launch}>
             {submitting() ? 'Deploying...' : 'Deploy'}
           </Button>
         </>
       }
     >
       <div>
-        <FormField label="Deployment">
+        <FormField label="Template">
           <select class={formSelectClass} value={deploymentId()} onChange={(e) => { setDeploymentId(e.currentTarget.value); setParamValues({}); }}>
-            <For each={props.deployments}>
+            <For each={templates()}>
               {(d) => <option value={d.id}>{d.id}</option>}
             </For>
           </select>
+        </FormField>
+
+        <FormField label="Instance name">
+          <input
+            class={formInputClass}
+            type="text"
+            placeholder="e.g. win-alice"
+            value={instanceName()}
+            onInput={(e) => setInstanceName(e.currentTarget.value)}
+          />
+          <div class="text-[11px] text-base-400 mt-1">A unique copy is created under this name — deploy the same template again for another.</div>
         </FormField>
 
         <Show when={selected()}>
