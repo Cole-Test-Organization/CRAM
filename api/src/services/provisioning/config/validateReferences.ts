@@ -15,6 +15,13 @@ import type {
 export interface ReferenceConfigSource {
   getProviderProfile(name: string): Promise<ProviderConfig | null>;
   getResourceProfile(name: string): Promise<TerraformResourceProfile | null>;
+  /**
+   * Distinct providers that have at least one Terraform resource profile. A provider
+   * with none provisions via a non-Terraform adapter (e.g. Proxmox clones VMs through
+   * its own API), so a derived `${provider}-${kind}` profile is not expected for it —
+   * the check skips those to avoid false positives.
+   */
+  listResourceProfileProviders(): Promise<string[]>;
 }
 
 /**
@@ -43,6 +50,25 @@ export async function validateDeploymentReferences(
   deployment: DeploymentConfig,
   config: ReferenceConfigSource,
 ): Promise<void> {
+  const problems = await collectDeploymentReferenceProblems(deployment, config);
+  if (problems.length) {
+    const plural = problems.length === 1 ? "" : "s";
+    throw new Error(
+      `Deployment "${deployment.name}" has ${problems.length} unresolved reference${plural}:\n` +
+        problems.map((problem) => `  - ${problem}`).join("\n"),
+    );
+  }
+}
+
+/**
+ * The reference checks behind {@link validateDeploymentReferences}, returning the
+ * list of problems instead of throwing. The catalog validator uses this to aggregate
+ * problems across every deployment into one report.
+ */
+export async function collectDeploymentReferenceProblems(
+  deployment: DeploymentConfig,
+  config: ReferenceConfigSource,
+): Promise<string[]> {
   const problems: string[] = [];
   const resources = deployment.resources ?? [];
 
@@ -63,9 +89,17 @@ export async function validateDeploymentReferences(
 
   // Per-resource: terraform profile exists, agrees on provider+kind, and any
   // fromResource references inside it name a real resource in this deployment.
+  const terraformProviders = new Set(await config.listResourceProfileProviders());
   for (const resource of resources) {
     const where = resourceLabel(resource);
-    const profileName = terraformProfileName(deployment, resource);
+    const explicitProfile =
+      typeof resource.terraformProfile === "string" && resource.terraformProfile
+        ? resource.terraformProfile
+        : null;
+    // Only validate a derived profile for providers that use Terraform at all; a
+    // provider with no resource profiles (e.g. Proxmox) provisions another way.
+    if (!explicitProfile && !terraformProviders.has(deployment.provider.type)) continue;
+    const profileName = explicitProfile ?? `${deployment.provider.type}-${resource.kind}`;
     const profile = await config.getResourceProfile(profileName);
     if (!profile) {
       problems.push(`${where}: terraform resource profile "${profileName}" not found`);
@@ -102,20 +136,7 @@ export async function validateDeploymentReferences(
     }
   }
 
-  if (problems.length) {
-    const plural = problems.length === 1 ? "" : "s";
-    throw new Error(
-      `Deployment "${deployment.name}" has ${problems.length} unresolved reference${plural}:\n` +
-        problems.map((problem) => `  - ${problem}`).join("\n"),
-    );
-  }
-}
-
-/** Effective terraform profile name, mirroring ResourceBroker.loadTerraformResourceProfile. */
-function terraformProfileName(deployment: DeploymentConfig, resource: ResourceConfig): string {
-  return typeof resource.terraformProfile === "string" && resource.terraformProfile
-    ? resource.terraformProfile
-    : `${deployment.provider.type}-${resource.kind}`;
+  return problems;
 }
 
 /** Every `fromResource` name referenced anywhere in a profile's vars/environment specs. */

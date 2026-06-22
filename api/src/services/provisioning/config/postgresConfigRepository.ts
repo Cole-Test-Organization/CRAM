@@ -1,8 +1,4 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import YAML from "yaml";
 import { withUser } from "../../../db/connection.js";
-import { databaseDir } from "../utils/paths.js";
 import type {
   DeploymentConfig,
   ProviderConfig,
@@ -10,6 +6,7 @@ import type {
   TerraformResourceProfile,
 } from "../types/index.js";
 import { ConfigRepository } from "./configRepository.js";
+import { findAppProfile, findConfigProfile } from "./modules/index.js";
 
 // Postgres-backed ConfigRepository (Phase 2 of the broker migration). It implements
 // the same raw-read hooks the file repo does, so the discovery contract and the
@@ -17,8 +14,8 @@ import { ConfigRepository } from "./configRepository.js";
 //   - deployments / provider_profiles / resource_profiles come from rows seeded out
 //     of database/*.yaml (readDeploymentConfig reassembles a DeploymentConfig from
 //     the parent deployment row + ordered deployment_resources children).
-//   - app profiles and config profiles have NO Phase 0 tables; they stay as shipped
-//     file artifacts (code-like, baked into the image alongside the terraform stacks).
+//   - app profiles and config profiles have NO tables; they resolve straight from the
+//     in-code module registry (config/modules), the same source the seed reads.
 // All row reads run under withUser(); forced RLS scopes them to this user.
 export class PostgresConfigRepository extends ConfigRepository {
   constructor(private readonly userId: number) {
@@ -83,25 +80,25 @@ export class PostgresConfigRepository extends ConfigRepository {
     });
   }
 
+  protected async readResourceProfileProviders(): Promise<string[]> {
+    return withUser(this.userId, async (c) => {
+      const { rows } = await c.query<{ provider: string }>(
+        `SELECT DISTINCT provider FROM resource_profiles`,
+      );
+      return rows.map((r) => r.provider);
+    });
+  }
+
   protected async readAppProfile(group: string, name: string): Promise<unknown | null> {
-    return readYamlArtifact(path.join(databaseDir, "app-profiles", group, `${name}.yaml`));
+    return findAppProfile(group, name);
   }
 
   protected async readConfigProfile(group: string, name: string): Promise<unknown | null> {
-    return readYamlArtifact(path.join(databaseDir, "config-profiles", group, `${name}.yaml`));
+    return findConfigProfile(group, name);
   }
 
   protected deploymentRef(id: string): string {
     // PG's logical ref is just the slug — there is no file path.
     return id;
-  }
-}
-
-async function readYamlArtifact(filePath: string): Promise<unknown | null> {
-  try {
-    return YAML.parse(await readFile(filePath, "utf8")) as unknown;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
   }
 }

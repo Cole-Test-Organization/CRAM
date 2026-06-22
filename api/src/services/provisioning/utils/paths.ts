@@ -18,17 +18,7 @@ export const runtimeRoot = process.env.PROVISIONING_RUNTIME_ROOT
   ? path.resolve(process.env.PROVISIONING_RUNTIME_ROOT)
   : projectRoot;
 export const dataDir = path.join(runtimeRoot, "data");
-export const databaseDir = path.join(projectRoot, "database");
-export const databaseDeploymentsDir = path.join(databaseDir, "deployments");
-export const databaseLegacyFirewallsDir = path.join(databaseDir, "legacy-firewalls");
-export const databaseProviderProfilesDir = path.join(databaseDir, "provider-profiles");
-export const databaseResourceProfilesDir = path.join(databaseDir, "resource-profiles");
 export const workDir = path.join(runtimeRoot, "work");
-export const defaultConfigPath = path.join(
-  "database",
-  "legacy-firewalls",
-  "fw-lab-01.yaml",
-);
 export const statePath = path.join(dataDir, "state.json");
 export const jobsPath = path.join(dataDir, "jobs.json");
 

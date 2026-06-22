@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import { validateDeploymentReferences } from '../src/services/provisioning/config/validateReferences.js';
 
 // Pure unit test: validateDeploymentReferences takes a narrow ReferenceConfigSource
-// (getProviderProfile + getResourceProfile), so we feed it in-memory maps — no DB,
-// no running API. Catches the references the broker otherwise resolves mid-deploy.
+// (getProviderProfile + getResourceProfile + listResourceProfileProviders), so we feed
+// it in-memory maps — no DB, no running API. listResourceProfileProviders is derived
+// from the resourceProfiles map: a provider counts as "uses Terraform" iff it has a
+// resource profile, which gates whether derived ${provider}-${kind} profiles are required.
 
 function source({ providerProfiles = {}, resourceProfiles = {} } = {}) {
   return {
@@ -13,6 +15,9 @@ function source({ providerProfiles = {}, resourceProfiles = {} } = {}) {
     },
     async getResourceProfile(name) {
       return resourceProfiles[name] ?? null;
+    },
+    async listResourceProfileProviders() {
+      return [...new Set(Object.values(resourceProfiles).map((p) => p.provider))];
     },
   };
 }
@@ -29,12 +34,7 @@ describe('Provisioning — deployment reference preflight', () => {
       providerProfile: 'aws-lab',
       resources: [
         { kind: 'panw-vmseries', hostname: 'fw-1' },
-        {
-          kind: 'egress-route',
-          hostname: 'egress',
-          // references fw-1's output — fw-1 exists in this deployment, so it's valid
-          terraformProfile: 'aws-egress-route',
-        },
+        { kind: 'egress-route', hostname: 'egress', terraformProfile: 'aws-egress-route' },
       ],
       steps: [
         { name: 'firewall', action: 'up', targets: ['fw-1'] },
@@ -60,10 +60,41 @@ describe('Provisioning — deployment reference preflight', () => {
       provider: { type: 'aws' },
       resources: [{ kind: 'windows-endpoint', hostname: 'win-1' }],
     };
-    // No resourceProfiles seeded → the derived name "aws-windows-endpoint" is missing.
+    // aws is a Terraform provider (it has a profile), but not the windows one → the
+    // derived "aws-windows-endpoint" is required and missing.
+    const config = source({ resourceProfiles: { 'aws-anchor': tfProfile('aws-anchor', 'aws', 'anchor') } });
+    await assert.rejects(
+      validateDeploymentReferences(deployment, config),
+      /terraform resource profile "aws-windows-endpoint" not found/,
+    );
+  });
+
+  it('does not require a derived terraform profile for a provider that uses none (e.g. proxmox)', async () => {
+    const deployment = {
+      name: 'pmx-fw',
+      provider: { type: 'proxmox' },
+      providerProfile: 'proxmox-home',
+      resources: [{ kind: 'panw-vmseries', hostname: 'fw' }],
+      steps: [{ name: 'fw', action: 'up', targets: ['fw'] }],
+    };
+    // Only aws has resource profiles → proxmox provisions another way, so the derived
+    // "proxmox-panw-vmseries" is NOT expected. (Regression guard for proxmox-fw-lab.)
+    const config = source({
+      providerProfiles: { 'proxmox-home': { type: 'proxmox' } },
+      resourceProfiles: { 'aws-anchor': tfProfile('aws-anchor', 'aws', 'anchor') },
+    });
+    await assert.doesNotReject(validateDeploymentReferences(deployment, config));
+  });
+
+  it('still flags an EXPLICIT terraformProfile on a non-terraform provider when it is missing', async () => {
+    const deployment = {
+      name: 'pmx-bad',
+      provider: { type: 'proxmox' },
+      resources: [{ kind: 'panw-vmseries', hostname: 'fw', terraformProfile: 'does-not-exist' }],
+    };
     await assert.rejects(
       validateDeploymentReferences(deployment, source()),
-      /terraform resource profile "aws-windows-endpoint" not found/,
+      /terraform resource profile "does-not-exist" not found/,
     );
   });
 
@@ -127,7 +158,9 @@ describe('Provisioning — deployment reference preflight', () => {
       ],
       steps: [{ name: 's', action: 'up', targets: ['nope'] }],
     };
-    await assert.rejects(validateDeploymentReferences(deployment, source()), (err) => {
+    // aws anchored as a Terraform provider so both derived profiles are required.
+    const config = source({ resourceProfiles: { 'aws-anchor': tfProfile('aws-anchor', 'aws', 'anchor') } });
+    await assert.rejects(validateDeploymentReferences(deployment, config), (err) => {
       // provider profile + 2 terraform profiles + 1 step target = 4 problems
       assert.match(err.message, /has 4 unresolved references/);
       assert.match(err.message, /provider profile "missing-provider" not found/);

@@ -1,6 +1,4 @@
-import { readFile } from "node:fs/promises";
 import path from "node:path";
-import YAML from "yaml";
 import { getProviderAdapter } from "./providers/index.js";
 import {
   ResourceAdapterRegistry,
@@ -10,7 +8,7 @@ import {
 } from "./resources/index.js";
 import { GenericTerraformResourceAdapter } from "./resources/genericTerraformResourceAdapter.js";
 import { FileStateRepository, type StateRepository } from "./state/index.js";
-import { ConfigRepository, FileConfigRepository, validateDeploymentReferences } from "./config/index.js";
+import { ConfigRepository, ModuleConfigRepository, validateDeploymentReferences } from "./config/index.js";
 import { SecretResolver } from "./secrets/index.js";
 import { clearSecretOverlay, installSecretOverlay } from "./utils/secretSource.js";
 import type { BrokerEventListener } from "./events.js";
@@ -63,7 +61,7 @@ export class ResourceBroker {
     this.rootDir = options.rootDir ?? projectRoot;
     this.resourceAdapters =
       options.resourceAdapters ?? new ResourceAdapterRegistry([], new GenericTerraformResourceAdapter());
-    this.config = options.configRepository ?? new FileConfigRepository();
+    this.config = options.configRepository ?? new ModuleConfigRepository();
     this.secretResolver = options.secretResolver;
   }
 
@@ -151,11 +149,6 @@ export class ResourceBroker {
         ...(deployment.provider ?? {}),
       },
     };
-  }
-
-  private async readYaml(filePath: string): Promise<unknown> {
-    const raw = await readFile(this.resolveYamlPath(filePath), "utf8");
-    return YAML.parse(raw) as unknown;
   }
 
   private resolveYamlPath(filePath: string): string {

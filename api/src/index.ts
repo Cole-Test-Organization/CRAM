@@ -252,7 +252,7 @@ logger.info({ accountCount: stats.rows[0].c }, 'Loaded accounts from database');
 if (process.env.PROVISIONING_SEED_ON_BOOT !== 'false') {
   try {
     const seeded = await provisioningService.seed();
-    logger.info(seeded, 'Seeded provisioning config from database/*.yaml');
+    logger.info(seeded, 'Seeded provisioning config from code modules');
   } catch (err) {
     logger.warn({ err: (err as Error).message }, 'Provisioning config seed failed (continuing)');
   }

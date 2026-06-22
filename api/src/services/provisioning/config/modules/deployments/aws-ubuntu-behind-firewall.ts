@@ -1,0 +1,216 @@
+import type { DeploymentModule } from "../types.js";
+
+const deployment = {
+  "name": "aws-ubuntu-behind-firewall",
+  "providerProfile": "aws-lab",
+  "provider": {
+    "projectName": "ubuntu-firewall-lab",
+    "vpcCidr": "10.140.0.0/16",
+    "panosVersionMajor": "11.2.11"
+  },
+  "steps": [
+    {
+      "name": "aws-network-up",
+      "action": "up",
+      "targets": [
+        "ubuntu-firewall-network"
+      ],
+      "description": "Terraform creates a dedicated one-AZ VPC with management, untrust, and trust subnets."
+    },
+    {
+      "name": "firewall-up",
+      "action": "up",
+      "targets": [
+        "ubuntu-egress-fw-1"
+      ],
+      "description": "Terraform creates one standalone VM-Series firewall."
+    },
+    {
+      "name": "firewall-bootstrap",
+      "action": "bootstrap",
+      "targets": [
+        "ubuntu-egress-fw-1"
+      ],
+      "description": "VM-Series adapter sets the admin password and fetches the VM-Series license."
+    },
+    {
+      "name": "firewall-apply-internet-egress",
+      "action": "apply-config-addons",
+      "targets": [
+        "ubuntu-egress-fw-1"
+      ],
+      "params": {
+        "addOn": "internet-egress"
+      },
+      "description": "VM-Series adapter applies the trust-to-internet baseline XML."
+    },
+    {
+      "name": "trust-egress-route-up",
+      "action": "up",
+      "targets": [
+        "ubuntu-trust-default-egress"
+      ],
+      "description": "Terraform routes the trust subnet default route through the firewall trust interface."
+    },
+    {
+      "name": "ubuntu-server-up",
+      "action": "up",
+      "targets": [
+        "ubuntu-trust-1"
+      ],
+      "description": "Terraform creates one Ubuntu server in the trust subnet behind the firewall."
+    },
+    {
+      "name": "ubuntu-server-verify",
+      "action": "verify-internet-access",
+      "targets": [
+        "ubuntu-trust-1"
+      ],
+      "description": "Broker verifies the trust Ubuntu bootstrap marker, internet egress through the firewall, Codex CLI, and Claude Code CLI."
+    }
+  ],
+  "resources": [
+    {
+      "kind": "network",
+      "name": "ubuntu-firewall-network",
+      "hostname": "ubuntu-firewall-network",
+      "placement": {
+        "provider": "aws",
+        "availabilityZoneCount": 1,
+        "subnetNewbits": 8,
+        "managementSubnetStartIndex": 0,
+        "untrustSubnetStartIndex": 10,
+        "trustSubnetStartIndex": 20,
+        "panoramaSubnetIndex": 30
+      }
+    },
+    {
+      "kind": "panw-vmseries",
+      "name": "ubuntu-egress-fw-1",
+      "hostname": "ubuntu-egress-fw-1",
+      "vm": {
+        "cpuCores": 4,
+        "memoryMb": 8192,
+        "instanceType": "m5.xlarge",
+        "started": true
+      },
+      "management": {
+        "type": "dhcp-client",
+        "dnsPrimary": "8.8.8.8",
+        "dnsSecondary": "8.8.4.4"
+      },
+      "license": {
+        "authCodeEnv": "PANW_NGFW_AUTH_CODE",
+        "deactivationApiKeyEnv": "PANW_LICENSE_DEACTIVATION_API_KEY"
+      },
+      "managementServer": {
+        "mode": "none"
+      },
+      "bootstrap": {
+        "adminPasswordEnv": "PANOS_ADMIN_PASSWORD",
+        "readinessTimeoutSeconds": 2400
+      },
+      "configProfiles": [
+        "internet-egress"
+      ],
+      "destroy": {
+        "allowWithoutDelicense": true
+      },
+      "placement": {
+        "provider": "aws",
+        "role": "gateway",
+        "availabilityZoneIndex": 0,
+        "network": {
+          "mode": "existing",
+          "vpcId": {
+            "fromResource": "ubuntu-firewall-network",
+            "output": "network.vpc_id"
+          },
+          "interfaces": {
+            "management": {
+              "subnetId": {
+                "fromResource": "ubuntu-firewall-network",
+                "output": "network.management_subnet_ids.0"
+              }
+            },
+            "untrust": {
+              "subnetId": {
+                "fromResource": "ubuntu-firewall-network",
+                "output": "network.untrust_subnet_ids.0"
+              }
+            },
+            "trust": {
+              "subnetId": {
+                "fromResource": "ubuntu-firewall-network",
+                "output": "network.trust_subnet_ids.0"
+              }
+            }
+          }
+        },
+        "managementSubnetName": "mgmt-a",
+        "untrustSubnetName": "untrust-a",
+        "trustSubnetName": "trust-a",
+        "attachManagementElasticIp": true,
+        "attachUntrustElasticIp": true
+      }
+    },
+    {
+      "kind": "egress-route",
+      "name": "ubuntu-trust-default-egress",
+      "hostname": "ubuntu-trust-default-egress",
+      "placement": {
+        "provider": "aws",
+        "network": {
+          "mode": "existing",
+          "routeTableId": {
+            "fromResource": "ubuntu-firewall-network",
+            "output": "network.trust_route_table_ids.0"
+          },
+          "destinationCidr": "0.0.0.0/0",
+          "nextHop": {
+            "type": "network-interface",
+            "networkInterfaceId": {
+              "fromResource": "ubuntu-egress-fw-1",
+              "output": "firewall.trust_network_interface_id"
+            }
+          }
+        }
+      }
+    },
+    {
+      "kind": "ubuntu-server",
+      "name": "ubuntu-trust-1",
+      "hostname": "ubuntu-trust-1",
+      "vm": {
+        "instanceType": "t3.small"
+      },
+      "appProfiles": [
+        "codex-claude"
+      ],
+      "bootstrap": {
+        "verifyTimeoutSeconds": 1800
+      },
+      "placement": {
+        "provider": "aws",
+        "network": {
+          "mode": "existing",
+          "vpcId": {
+            "fromResource": "ubuntu-firewall-network",
+            "output": "network.vpc_id"
+          },
+          "subnetId": {
+            "fromResource": "ubuntu-firewall-network",
+            "output": "network.trust_subnet_ids.0"
+          }
+        },
+        "availabilityZoneIndex": 0,
+        "rootVolumeGb": 32,
+        "associatePublicIp": false,
+        "enableSsh": false,
+        "enableSsm": true
+      }
+    }
+  ]
+} satisfies DeploymentModule;
+
+export default deployment;

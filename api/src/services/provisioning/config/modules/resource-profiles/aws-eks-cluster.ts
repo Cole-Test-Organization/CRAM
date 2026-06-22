@@ -1,0 +1,135 @@
+import type { ResourceProfileModule } from "../types.js";
+
+const resourceProfile = {
+  "name": "aws-eks-cluster",
+  "provider": "aws",
+  "kind": "eks-cluster",
+  "terraform": {
+    "stack": "terraform/aws-eks-cluster",
+    "outputs": {
+      "providerResourceId": "eks.cluster_name"
+    },
+    "environment": {
+      "AWS_PROFILE": {
+        "envPath": "provider.profileEnv",
+        "optional": true
+      }
+    },
+    "vars": {
+      "region": {
+        "path": "provider.region"
+      },
+      "project_name": {
+        "first": [
+          {
+            "path": "provider.projectName"
+          },
+          {
+            "path": "deployment.name"
+          }
+        ]
+      },
+      "hostname": {
+        "path": "resource.hostname"
+      },
+      "kubernetes_version": {
+        "path": "resource.cluster.kubernetesVersion",
+        "default": null
+      },
+      "vpc_cidr": {
+        "first": [
+          {
+            "path": "placement.network.vpcCidr"
+          },
+          {
+            "path": "provider.vpcCidr"
+          },
+          {
+            "value": "10.150.0.0/16"
+          }
+        ]
+      },
+      "availability_zone_count": {
+        "first": [
+          {
+            "path": "placement.network.availabilityZoneCount"
+          },
+          {
+            "path": "resource.cluster.availabilityZoneCount"
+          },
+          {
+            "value": 2
+          }
+        ]
+      },
+      "public_subnet_newbits": {
+        "path": "placement.network.subnetNewbits",
+        "default": 8
+      },
+      "public_subnet_start_index": {
+        "path": "placement.network.subnetStartIndex",
+        "default": 0
+      },
+      "node_instance_types": {
+        "path": "resource.nodeGroup.instanceTypes",
+        "default": [
+          "t3.medium"
+        ]
+      },
+      "node_desired_size": {
+        "path": "resource.nodeGroup.desiredSize",
+        "default": 1
+      },
+      "node_min_size": {
+        "path": "resource.nodeGroup.minSize",
+        "default": 1
+      },
+      "node_max_size": {
+        "path": "resource.nodeGroup.maxSize",
+        "default": 1
+      },
+      "node_disk_size_gb": {
+        "path": "resource.nodeGroup.diskSizeGb",
+        "default": 20
+      },
+      "app_name": {
+        "path": "resource.app.name",
+        "default": "broker-health-api"
+      },
+      "app_namespace": {
+        "path": "resource.app.namespace",
+        "default": "default"
+      },
+      "app_context_path": {
+        "path": "resource.app.contextPath",
+        "default": "apps/eks-health-api"
+      },
+      "app_image_tag": {
+        "path": "resource.app.imageTag",
+        "default": "latest"
+      },
+      "app_replicas": {
+        "path": "resource.app.replicas",
+        "default": 1
+      },
+      "app_port": {
+        "path": "resource.app.port",
+        "default": 80
+      },
+      "app_container_port": {
+        "path": "resource.app.containerPort",
+        "default": 8080
+      },
+      "app_health_path": {
+        "path": "resource.app.verifyPath",
+        "default": "/healthz"
+      },
+      "app_verify_timeout_seconds": {
+        "path": "resource.app.verifyTimeoutSeconds",
+        "default": 900
+      }
+    }
+  }
+} satisfies ResourceProfileModule;
+
+export default resourceProfile;

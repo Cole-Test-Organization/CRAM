@@ -1,0 +1,24 @@
+import type { DeploymentModule } from "../types.js";
+
+const deployment = {
+  "name": "aws-s3-bootstrap",
+  "providerProfile": "aws-lab",
+  "provider": {
+    "projectName": "panw-broker-s3-bootstrap"
+  },
+  "resources": [
+    {
+      "kind": "s3-bucket",
+      "name": "bootstrap-artifacts",
+      "hostname": "bootstrap-artifacts",
+      "destroy": {
+        "forceDestroy": true
+      },
+      "placement": {
+        "provider": "aws"
+      }
+    }
+  ]
+} satisfies DeploymentModule;
+
+export default deployment;

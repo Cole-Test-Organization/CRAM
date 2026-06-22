@@ -71,8 +71,10 @@ export const resourceProfileSchema = z
   .strict();
 
 // ── Deployment (deployments/*) ───────────────────────────────────────────────
+// `type` is optional in a deployment's inline provider block: it's inherited from
+// the referenced `providerProfile` when the broker loads the deployment.
 const providerConfigSchema = z
-  .object({ type: z.string().min(1) })
+  .object({ type: z.string().min(1).optional() })
   .passthrough();
 
 const placementSchema = z
@@ -134,7 +136,7 @@ export const deploymentConfigSchema = z
   .object({
     name: z.string().min(1),
     providerProfile: z.string().nullable().optional(),
-    provider: providerConfigSchema,
+    provider: providerConfigSchema.optional(),
     resources: z.array(resourceConfigSchema).min(1),
     inputs: z.array(deploymentInputSchema).optional(),
     steps: z.array(deploymentStepSchema).optional(),

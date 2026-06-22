@@ -1,5 +1,5 @@
 export { ConfigRepository } from "./configRepository.js";
-export { FileConfigRepository } from "./fileConfigRepository.js";
+export { ModuleConfigRepository } from "./moduleConfigRepository.js";
 export { PostgresConfigRepository } from "./postgresConfigRepository.js";
 export { seedProvisioningConfig, type SeedResult } from "./seed.js";
 export {
@@ -10,5 +10,7 @@ export {
 } from "./instances.js";
 export {
   validateDeploymentReferences,
+  collectDeploymentReferenceProblems,
   type ReferenceConfigSource,
 } from "./validateReferences.js";
+export { validateCatalog, type Catalog } from "./validateCatalog.js";

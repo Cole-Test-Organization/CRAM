@@ -107,12 +107,19 @@ export abstract class ConfigRepository {
     return this.readResourceProfile(name);
   }
 
+  /** Distinct providers across all terraform resource profiles (for reference validation). */
+  async listResourceProfileProviders(): Promise<string[]> {
+    return this.readResourceProfileProviders();
+  }
+
   /** App profile by group + name (e.g. windows/<profile>). Null when absent. */
   protected abstract readAppProfile(group: string, name: string): Promise<unknown | null>;
   /** Config profile by group + name. Null when absent. */
   protected abstract readConfigProfile(group: string, name: string): Promise<unknown | null>;
   /** Terraform resource profile by name. Null when absent. */
   protected abstract readResourceProfile(name: string): Promise<TerraformResourceProfile | null>;
+  /** Distinct `provider` values across all resource profiles. */
+  protected abstract readResourceProfileProviders(): Promise<string[]>;
 
   private async buildSummary(id: string, raw: DeploymentConfig): Promise<DeploymentSummary> {
     return this.summaryFrom(id, raw, await this.mergeProviderProfile(raw));
