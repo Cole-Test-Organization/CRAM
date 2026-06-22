@@ -2,6 +2,7 @@ import { createResource, For, Show } from 'solid-js';
 import { useParams } from '@solidjs/router';
 import { api } from '../lib/api';
 import BackLink from '../components/BackLink';
+import { formatDateTime } from '../utils/date';
 
 const MODE_LABEL: Record<string, string> = {
   in_person: 'In Person',
@@ -122,10 +123,10 @@ export default function EventDetail() {
               <div class="flex flex-col gap-1 md:flex-row md:flex-wrap md:gap-x-6">
                 <div><span class="uppercase tracking-wider text-base-400">Source:</span> {e().source}</div>
                 <Show when={e().scraped_at}>
-                  <div><span class="uppercase tracking-wider text-base-400">Scraped:</span> {new Date(e().scraped_at).toLocaleString()}</div>
+                  <div><span class="uppercase tracking-wider text-base-400">Scraped:</span> {formatDateTime(e().scraped_at)}</div>
                 </Show>
                 <Show when={e().first_seen_at}>
-                  <div><span class="uppercase tracking-wider text-base-400">First seen:</span> {new Date(e().first_seen_at).toLocaleString()}</div>
+                  <div><span class="uppercase tracking-wider text-base-400">First seen:</span> {formatDateTime(e().first_seen_at)}</div>
                 </Show>
               </div>
             </div>

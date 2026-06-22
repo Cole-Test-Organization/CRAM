@@ -15,3 +15,10 @@ export function formatRelative(iso: string): string {
     if (diffDays < 7) return `${diffDays}d ago`;
     return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
+
+export function formatDateTime(value: string | null | undefined, options?: Intl.DateTimeFormatOptions): string {
+    if (!value) return "not started";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return options ? date.toLocaleString("en-US", options) : date.toLocaleString();
+}

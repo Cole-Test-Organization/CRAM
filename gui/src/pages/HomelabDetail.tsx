@@ -4,13 +4,14 @@ import { api, type ProvisioningJob, type ProvisioningRdpTunnel, type Provisionin
 import { createProvisioningEventStream } from '../lib/provisioningEvents';
 import BackLink from '../components/BackLink';
 import Button from '../components/Button';
-import { formatDateTime, JobMonitor, LaunchModal, type LaunchMode, resourceTitle, StatusPill, StreamStatusPill } from './HomelabCommon';
+import JobMonitor from '../components/provisioning/JobMonitor';
+import StatusBadge from '../components/StatusBadge';
+import { formatDateTime } from '../utils/date';
+import { LaunchModal, RdpTunnelEndpoint, ResourceConnections, StreamStatusPill } from './HomelabCommon';
 
 export default function HomelabDetail() {
   const params = useParams<{ id: string }>();
   const [launchOpen, setLaunchOpen] = createSignal(false);
-  const [launchMode, setLaunchMode] = createSignal<LaunchMode | null>(null);
-  const [launchTarget, setLaunchTarget] = createSignal<string | null>(null);
   const [monitorJobId, setMonitorJobId] = createSignal<string | null>(null);
   const [actionError, setActionError] = createSignal('');
   const [actionNotice, setActionNotice] = createSignal('');
@@ -54,14 +55,13 @@ export default function HomelabDetail() {
     await runJob('deprovision', () => api.deprovisionProvisioningDeployment(params.id, {}));
   };
 
-  const openLaunch = (mode: LaunchMode | null = null, target: string | null = null) => {
-    setLaunchMode(mode);
-    setLaunchTarget(target);
+  const openLaunch = () => {
     setLaunchOpen(true);
   };
 
   const downResource = async (resource: ProvisioningResource) => {
-    if (!confirm(`Destroy ${resourceTitle(resource)}?`)) return;
+    const title = resource.name || resource.hostname || resource.id;
+    if (!confirm(`Destroy ${title}?`)) return;
     await runJob(`down-${resource.id}`, () => api.downProvisioningResource(resource.id, {}));
   };
 
@@ -77,7 +77,7 @@ export default function HomelabDetail() {
           : await api.refreshProvisioningPowerState(resource.id);
       stream.upsertResource(next);
     } catch (err: any) {
-      setActionError(err?.message || `Failed to ${action} ${resourceTitle(resource)}`);
+      setActionError(err?.message || `Failed to ${action} ${resource.name || resource.hostname || resource.id}`);
     } finally {
       setBusy('');
     }
@@ -92,7 +92,7 @@ export default function HomelabDetail() {
       await refetchRdpTunnels();
       setActionNotice(`RDP tunnel ready: ${tunnel.rdpEndpoint}${tunnel.username ? ` as ${tunnel.username}` : ''}`);
     } catch (err: any) {
-      setActionError(err?.message || `Failed to open RDP tunnel for ${resourceTitle(resource)}`);
+      setActionError(err?.message || `Failed to open RDP tunnel for ${resource.name || resource.hostname || resource.id}`);
     } finally {
       setBusy('');
     }
@@ -106,7 +106,7 @@ export default function HomelabDetail() {
       await api.closeProvisioningResourceRdpTunnel(resource.id);
       await refetchRdpTunnels();
     } catch (err: any) {
-      setActionError(err?.message || `Failed to close RDP tunnel for ${resourceTitle(resource)}`);
+      setActionError(err?.message || `Failed to close RDP tunnel for ${resource.name || resource.hostname || resource.id}`);
     } finally {
       setBusy('');
     }
@@ -123,7 +123,7 @@ export default function HomelabDetail() {
               <div class="min-w-0">
                 <div class="flex items-center gap-2 flex-wrap mb-2">
                   <h1 class="text-[26px] font-bold font-[family-name:var(--font-display)] break-words">{d().id}</h1>
-                  <StatusPill status={d().deployable ? 'deployable' : 'resource-only'} />
+                  <StatusBadge status="deployment" />
                 </div>
                 <div class="text-base-400 text-[12px] flex gap-3 flex-wrap uppercase tracking-wider break-words">
                   <span>{d().provider || 'unknown'}</span>
@@ -136,7 +136,7 @@ export default function HomelabDetail() {
               <div class="flex gap-2 flex-wrap">
                 <StreamStatusPill status={stream.connectionStatus()} error={stream.error()} />
                 <Button variant="ghost" size="sm" onClick={refreshAll}>Refresh</Button>
-                <Button variant="primary" size="sm" onClick={() => openLaunch()}>Launch</Button>
+                <Button variant="primary" size="sm" onClick={() => openLaunch()}>Deploy</Button>
                 <Show when={d().deployable}>
                   <Button variant="danger" size="sm" disabled={Boolean(busy())} onClick={deprovision}>
                     {busy() === 'deprovision' ? 'Queueing...' : 'Deprovision'}
@@ -186,14 +186,15 @@ export default function HomelabDetail() {
                               <Show when={runtime()?.providerResourceId}>
                                 <div class="font-mono text-[11px] text-base-300 mt-1 break-all">{runtime()!.providerResourceId}</div>
                               </Show>
+                              <ResourceConnections resource={runtime()} class="mt-2" />
+                              <Show when={runtime()}>
+                                {(r) => <RdpTunnelEndpoint tunnel={tunnelForResource(r())} class="mt-2" />}
+                              </Show>
                             </div>
-                            <Show when={runtime()} fallback={<StatusPill status="not-created" />}>
-                              {(r) => <StatusPill status={r().lifecycleStatus} />}
+                            <Show when={runtime()} fallback={<StatusBadge status="not-created" />}>
+                              {(r) => <StatusBadge status={r().lifecycleStatus} />}
                             </Show>
                             <div class="grid grid-cols-2 gap-2 w-full max-w-full min-w-0 md:flex md:w-auto md:max-w-none md:flex-wrap">
-                              <Button class="w-full md:w-auto" variant="ghost" size="sm" disabled={Boolean(busy())} onClick={() => openLaunch('up', resource.hostname)}>
-                                Up
-                              </Button>
                               <Show when={runtime()}>
                                 {(r) => (
                                   <>
@@ -272,14 +273,14 @@ export default function HomelabDetail() {
                       {(resource) => (
                         <div class="press-row gap-3 flex-wrap border-b border-base-700 last:border-b-0">
                           <div class="flex-1 min-w-[58%]">
-                            <div class="text-sm text-base-50 font-semibold break-words">{resourceTitle(resource)}</div>
+                            <div class="text-sm text-base-50 font-semibold break-words">{resource.name || resource.hostname || resource.id}</div>
                             <div class="text-[11px] text-base-400 uppercase tracking-wider mt-1">{resource.id}</div>
                             <Show when={resource.powerState}>
                               <div class="text-[11px] text-base-300 mt-1">Power: {resource.powerState}</div>
                             </Show>
                           </div>
                           <div class="w-full md:w-auto">
-                            <StatusPill status={resource.lifecycleStatus} />
+                            <StatusBadge status={resource.lifecycleStatus} />
                           </div>
                         </div>
                       )}
@@ -301,7 +302,7 @@ export default function HomelabDetail() {
                             <div class="text-[11px] text-base-400 uppercase tracking-wider mt-1">{formatDateTime(job.createdAt)}</div>
                           </div>
                           <div class="w-full md:w-auto">
-                            <StatusPill status={job.status} />
+                            <StatusBadge status={job.status} />
                           </div>
                         </button>
                       )}
@@ -333,8 +334,6 @@ export default function HomelabDetail() {
               open={launchOpen()}
               deployments={deployments() || []}
               initialDeploymentId={d().id}
-              initialMode={launchMode()}
-              initialTarget={launchTarget()}
               onClose={() => setLaunchOpen(false)}
               onLaunched={launched}
             />

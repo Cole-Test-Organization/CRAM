@@ -111,7 +111,7 @@ export default async function provisioningRoutes(
 ) {
   // ── discovery ───────────────────────────────────────────────────────────────
   fastify.get('/provisioning/deployments', {
-    schema: { description: 'List every available deployment (summary): provider, resource kinds, whether it is `deployable` (has steps) vs resource-only.', tags: [TAG] },
+    schema: { description: 'List every available deployment summary: provider, project, resource kinds, resource count, step count, and launch capability metadata.', tags: [TAG] },
   }, async () => provisioningService.listDeployments());
 
   fastify.get('/provisioning/events', {
@@ -255,7 +255,7 @@ export default async function provisioningRoutes(
 
   // ── lifecycle (enqueue a durable job → 202) ──────────────────────────────────
   fastify.post<{ Params: { id: string }; Body: { params?: Record<string, unknown> } }>('/provisioning/deployments/:id/deploy', {
-    schema: { description: 'Enqueue a full `deploy` (run the deployment\'s steps). Returns the queued job; poll GET /provisioning/jobs/:id.', tags: [TAG], params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } }, body: paramsBody },
+    schema: { description: 'Enqueue a deployment. Deployments with steps run their workflow; deployments without steps create their configured resources. Returns the queued job; poll GET /provisioning/jobs/:id.', tags: [TAG], params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } }, body: paramsBody },
   }, async (request, reply) => {
     try { reply.code(202); return await provisioningService.enqueueJob({ kind: 'deploy', deployment: request.params.id, params: request.body?.params }); }
     catch (err) { return fail(reply, err); }
@@ -269,7 +269,7 @@ export default async function provisioningRoutes(
   });
 
   fastify.post<{ Params: { id: string; target: string }; Body: { params?: Record<string, unknown> } }>('/provisioning/deployments/:id/resources/:target/up', {
-    schema: { description: 'Enqueue an `up` for a single resource in a deployment. Returns the queued job.', tags: [TAG], params: { type: 'object', required: ['id', 'target'], properties: { id: { type: 'string' }, target: { type: 'string', description: 'Resource hostname or name' } } }, body: paramsBody },
+    schema: { description: 'Enqueue deployment of one specific resource. Returns the queued job.', tags: [TAG], params: { type: 'object', required: ['id', 'target'], properties: { id: { type: 'string' }, target: { type: 'string', description: 'Resource hostname or name' } } }, body: paramsBody },
   }, async (request, reply) => {
     try { reply.code(202); return await provisioningService.enqueueJob({ kind: 'up', deployment: request.params.id, target: request.params.target, params: request.body?.params }); }
     catch (err) { return fail(reply, err); }

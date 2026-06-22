@@ -174,6 +174,12 @@ DATABASE_SSL=false
 # LAN. (Postgres always stays bound to 127.0.0.1.) Re-run setup.sh to change.
 BIND_ADDRESS=$BIND_ADDRESS
 
+# Broker-managed RDP tunnels are LAN-only by design. Publish their short-lived
+# ports on host LAN interfaces. Leave the advertised host blank so the API uses
+# the host from the request that opened the tunnel.
+PROVISIONING_RDP_TUNNEL_PUBLISH_ADDRESS=0.0.0.0
+PROVISIONING_RDP_TUNNEL_HOST=
+
 # Agent LLM — runs on a local LLM (Ollama by default). The model is chosen in
 # the GUI (Settings -> Agent LLM) per user; if unset, the app auto-selects one
 # from the models your Ollama has installed. No AGENT_MODEL needed here.

@@ -6,6 +6,7 @@ import {
 } from "solid-js";
 import { api } from "../../lib/api";
 import { STORAGE_KEY as THEME_STORAGE_KEY } from "../../lib/theme";
+import { formatDateTime } from "../../utils/date";
 import Button from "../Button";
 
 function fmtBytes(n: number) {
@@ -146,9 +147,7 @@ export default function BackupSettings(props: Props) {
                                             </span>
                                         </div>
                                         <div class="text-[11px] text-base-400 mt-1">
-                                            {new Date(
-                                                b.created_at,
-                                            ).toLocaleString()}
+                                            {formatDateTime(b.created_at)}
                                         </div>
                                         <div class="flex flex-wrap gap-2 mt-2">
                                             <a

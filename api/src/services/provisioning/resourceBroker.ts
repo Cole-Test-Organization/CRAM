@@ -330,7 +330,16 @@ export class ResourceBroker {
     const configRef = toProjectRelativePath(configPath) ?? configPath;
     const deployment = await this.loadDeploymentConfig(configRef, options.params);
     if (!deployment.steps?.length) {
-      throw new Error(`Deployment ${deployment.name} has no steps to run`);
+      const targets = deployment.resources.map((resource) => resource.hostname);
+      if (!targets.length) throw new Error(`Deployment ${deployment.name} has no resources to deploy`);
+      log(`Deployment ${deployment.name} has no workflow steps; deploying ${targets.length} resource${targets.length === 1 ? "" : "s"}.`);
+      for (const target of targets) {
+        await this.up(configRef, log, target, {
+          skipActiveJobCheck: true,
+          params: options.params,
+        });
+      }
+      return;
     }
 
     for (const step of deployment.steps) {

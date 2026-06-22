@@ -786,8 +786,6 @@ export const api = {
     post<ProvisioningJob>(`/provisioning/deployments/${encodeURIComponent(id)}/deploy`, { params: params ?? {} }),
   deprovisionProvisioningDeployment: (id: string, params?: Record<string, unknown>) =>
     post<ProvisioningJob>(`/provisioning/deployments/${encodeURIComponent(id)}/deprovision`, { params: params ?? {} }),
-  upProvisioningResource: (deploymentId: string, target: string, params?: Record<string, unknown>) =>
-    post<ProvisioningJob>(`/provisioning/deployments/${encodeURIComponent(deploymentId)}/resources/${encodeURIComponent(target)}/up`, { params: params ?? {} }),
   downProvisioningResource: (id: string, params?: Record<string, unknown>) =>
     post<ProvisioningJob>(`/provisioning/resources/${encodeURIComponent(id)}/down`, { params: params ?? {} }),
   runProvisioningAction: (deploymentId: string, target: string, action: string, params?: Record<string, unknown>) =>

@@ -8,6 +8,7 @@ import NotesPanel from '../components/NotesPanel';
 import BackLink from '../components/BackLink';
 import { attendeeStatusClass, attendeeStatusLabel } from '../lib/attendeeStatus';
 import type { ContactMeeting } from '../lib/types';
+import { formatDateTime } from '../utils/date';
 
 type EnrichmentJob = {
   jobId: string;
@@ -211,7 +212,7 @@ export default function ContactDetail() {
                       return (
                         <div class="border-2 border-base-700 bg-base-950 p-2 flex items-center gap-3 flex-wrap">
                           <span class="text-sm font-semibold text-base-50">
-                            {new Date(j.createdAt).toLocaleString()}
+                            {formatDateTime(j.createdAt)}
                           </span>
                           <span class={`bg-base-950 border-2 ${statusColor()} text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none`}>
                             {statusLabel()}

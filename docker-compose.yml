@@ -203,7 +203,7 @@ services:
       # BIND_ADDRESS = host interface to bind to (see app service / .env).
       - "${BIND_ADDRESS:-127.0.0.1}:3200:3200"
       - "${BIND_ADDRESS:-127.0.0.1}:3100:3100"
-      - "${BIND_ADDRESS:-127.0.0.1}:80:80"
+      - "${BIND_ADDRESS:-127.0.0.1}:${GUI_PORT:-80}:80"
       - "${PROVISIONING_RDP_TUNNEL_PUBLISH_ADDRESS:-127.0.0.1}:13389-13399:13389-13399"
     profiles: ["dev"]
 

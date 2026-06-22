@@ -12,16 +12,24 @@ function toneClass(tone: StatusTone) {
 }
 
 export default function StatusBadge(props: { status: string | null; label?: string; tone?: StatusTone }) {
-  const isPartner = () => (props.status || '').toLowerCase() === 'partner';
+  const normalized = () => (props.status || '').toLowerCase();
+
+  const inferredTone = (): StatusTone => {
+    const status = normalized();
+    if (status === 'partner') return 'papaya';
+    if (['succeeded', 'ready', 'running', 'stored'].includes(status)) return 'surf';
+    if (['queued', 'terraform_applying', 'terraform_destroying', 'destroy_requested', 'pending', 'stopping', 'missing'].includes(status)) return 'amber';
+    if (['failed', 'canceled', 'destroyed', 'terminated'].includes(status)) return 'scarlet';
+    if (['stopped', 'idle', 'stored-only'].includes(status)) return 'base';
+    return 'cerulean';
+  };
 
   const variant = () =>
     props.tone
       ? toneClass(props.tone)
-      : isPartner()
-      ? 'bg-papaya-500/15 text-papaya-200 border-papaya-500/50'
-      : 'bg-surf-500/15 text-surf-300 border-surf-500/50';
+      : toneClass(inferredTone());
 
-  const label = () => props.label ?? (isPartner() ? 'Partner' : 'Account');
+  const label = () => props.label ?? (props.status || 'unknown').replace(/[-_]/g, ' ');
 
   return (
     <span class={`inline-block px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest border-2 ${variant()}`}>

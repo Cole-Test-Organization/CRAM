@@ -1,23 +1,9 @@
-import { createEffect, createResource, createSignal, For, onCleanup, Show, untrack } from 'solid-js';
-import { api, type ProvisioningDeploymentDescriptor, type ProvisioningDeploymentSummary, type ProvisioningJob, type ProvisioningJobStatus, type ProvisioningResource } from '../lib/api';
+import { createEffect, createMemo, createResource, createSignal, For, Show } from 'solid-js';
+import { api, type ProvisioningDeploymentDescriptor, type ProvisioningDeploymentSummary, type ProvisioningJob, type ProvisioningRdpTunnel, type ProvisioningResource } from '../lib/api';
 import Button from '../components/Button';
 import Modal from '../components/Modal';
 import FormField, { formInputClass, formSelectClass } from '../components/FormField';
-import StatusBadge from '../components/StatusBadge';
-
-export function statusTone(status: string | null | undefined): 'surf' | 'papaya' | 'scarlet' | 'amber' | 'base' | 'cerulean' {
-  const s = (status || '').toLowerCase();
-  if (['succeeded', 'ready', 'running'].includes(s)) return 'surf';
-  if (['queued', 'terraform_applying', 'terraform_destroying', 'destroy_requested', 'pending', 'stopping'].includes(s)) return 'amber';
-  if (['failed', 'canceled', 'destroyed', 'terminated'].includes(s)) return 'scarlet';
-  if (['stopped', 'idle'].includes(s)) return 'base';
-  return 'cerulean';
-}
-
-export function StatusPill(props: { status: string | null | undefined }) {
-  const label = () => (props.status || 'unknown').replace(/[-_]/g, ' ');
-  return <StatusBadge status={props.status || null} label={label()} tone={statusTone(props.status)} />;
-}
+import { formatDateTime } from '../utils/date';
 
 export function StreamStatusPill(props: { error?: string; status: string }) {
   const live = () => props.status === 'live';
@@ -34,168 +20,232 @@ export function StreamStatusPill(props: { error?: string; status: string }) {
   );
 }
 
-export function formatDateTime(value: string | null | undefined): string {
-  if (!value) return 'not started';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
+// ── Connection endpoints ─────────────────────────────────────────────────────
+// Provider-agnostic by construction: we never branch on `resource.provider`.
+// Every Terraform stack (AWS today; GCP/Azure later) writes its addressing into
+// the resource `outputs` blob, just under different key names — ubuntu emits
+// `server.public_ip`, windows `endpoint.private_ip`, a VM-Series firewall
+// `firewall.management_public`, Panorama `panorama.https_url`, EKS `eks.endpoint`,
+// and so on. Rather than maintain a per-provider/per-kind lookup, we walk the blob
+// and surface any value that *is* an IPv4 address or an http(s) URL. A new provider
+// or resource kind needs zero changes here as long as its outputs carry the
+// address — there is no `if (provider === 'aws')` ladder to keep in sync, and no
+// provider-specific code leaks into the GUI.
+
+export type ResourceEndpointFamily = 'ipv4' | 'url';
+export type ResourceEndpointScope = 'public' | 'private' | 'unknown';
+
+export interface ResourceEndpoint {
+  label: string;
+  address: string;
+  family: ResourceEndpointFamily;
+  scope: ResourceEndpointScope;
+  /** Present for `url` endpoints so the UI can offer an "open" link. */
+  href: string | null;
+  /** Best "connect here" target (first public IP, else first URL). */
+  primary: boolean;
 }
 
-export function resourceTitle(resource: ProvisioningResource): string {
-  return resource.name || resource.hostname || resource.id;
-}
+const ENDPOINT_ACRONYMS: Record<string, string> = {
+  ip: 'IP', url: 'URL', dns: 'DNS', http: 'HTTP', https: 'HTTPS', ssh: 'SSH',
+  rdp: 'RDP', eks: 'EKS', ecr: 'ECR', vpc: 'VPC', eni: 'ENI', ami: 'AMI',
+  id: 'ID', api: 'API', nat: 'NAT', mgmt: 'Mgmt',
+};
 
-export function isActiveJob(job: ProvisioningJob | null | undefined): boolean {
-  return job?.status === 'queued' || job?.status === 'running';
-}
-
-export function JobMonitor(props: {
-  jobId: string | null;
-  liveConnected?: boolean;
-  liveJob?: ProvisioningJob | null;
-  onJobUpdate?: (job: ProvisioningJob) => void;
-  onSettled?: () => void;
-  onClear?: () => void;
-}) {
-  const [job, setJob] = createSignal<ProvisioningJob | null>(null);
-  const [error, setError] = createSignal('');
-  let pollTimer: ReturnType<typeof setTimeout> | null = null;
-  let settledJobId: string | null = null;
-
-  const clearTimer = () => {
-    if (pollTimer) {
-      clearTimeout(pollTimer);
-      pollTimer = null;
-    }
-  };
-
-  const handleSettled = (next: ProvisioningJob) => {
-    if (!isActiveJob(next) && settledJobId !== next.id) {
-      settledJobId = next.id;
-      props.onSettled?.();
-    }
-  };
-
-  const fetchJob = async (id: string) => {
-    try {
-      const next = await api.getProvisioningJob(id);
-      setJob(next);
-      props.onJobUpdate?.(next);
-      setError('');
-      if (isActiveJob(next) && !props.liveConnected) {
-        pollTimer = setTimeout(() => fetchJob(id), 2000);
-      } else {
-        handleSettled(next);
-      }
-    } catch (err: any) {
-      setError(err?.message || 'Failed to load job');
-      pollTimer = setTimeout(() => fetchJob(id), 5000);
-    }
-  };
-
-  createEffect(() => {
-    const id = props.jobId;
-    clearTimer();
-    settledJobId = null;
-    setJob(null);
-    setError('');
-    if (!id) return;
-    const live = untrack(() => props.liveJob);
-    if (live?.id === id) {
-      setJob(live);
-      handleSettled(live);
-    } else {
-      fetchJob(id);
-    }
-  });
-
-  createEffect(() => {
-    const id = props.jobId;
-    const live = props.liveJob;
-    if (!id || !live || live.id !== id) return;
-    clearTimer();
-    setJob(live);
-    setError('');
-    handleSettled(live);
-  });
-
-  onCleanup(clearTimer);
-
-  const cancel = async () => {
-    const current = job();
-    if (!current || !isActiveJob(current)) return;
-    try {
-      const next = await api.cancelProvisioningJob(current.id);
-      setJob(next);
-      props.onJobUpdate?.(next);
-    } catch (err: any) {
-      setError(err?.message || 'Failed to cancel job');
-    }
-  };
-
+function humanizeEndpointKey(key: string): string {
   return (
-    <Show when={props.jobId}>
-      <div class="panel panel-accent p-4">
-        <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div class="min-w-0">
-            <div class="flex items-center gap-2 flex-wrap">
-              <h2 class="text-[14px] font-bold uppercase tracking-widest text-surf-300">Job Monitor</h2>
-              <Show when={job()}>
-                {(j) => <StatusPill status={j().status} />}
-              </Show>
-              <span class={`text-[10px] uppercase tracking-widest border px-2 py-1 ${props.liveConnected ? 'border-surf-300 text-surf-300' : 'border-base-600 text-base-400'}`}>
-                {props.liveConnected ? 'Live' : 'Polling'}
-              </span>
-            </div>
-            <Show when={job()} fallback={<div class="text-base-300 text-[12px] mt-2">Loading job...</div>}>
-              {(j) => (
-                <div class="text-base-300 text-[12px] mt-2 flex flex-wrap gap-x-4 gap-y-1">
-                  <span class="font-mono break-all">{j().id}</span>
-                  <span>{j().action}{j().target ? ` -> ${j().target}` : ''}</span>
-                  <span>{formatDateTime(j().startedAt)}</span>
-                  <Show when={j().error}>
-                    <span class="text-scarlet-300 font-semibold">{j().error}</span>
-                  </Show>
-                </div>
-              )}
-            </Show>
-          </div>
-          <div class="flex gap-2 flex-wrap">
-            <Show when={job() && isActiveJob(job())}>
-              <Button variant="danger" size="sm" onClick={cancel}>Cancel</Button>
-            </Show>
-            <Show when={props.onClear}>
-              <Button variant="ghost" size="sm" onClick={props.onClear}>Clear</Button>
-            </Show>
-          </div>
-        </div>
+    key
+      .split(/[_\s]+/)
+      .filter(Boolean)
+      .map((part) => ENDPOINT_ACRONYMS[part.toLowerCase()] ?? part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ') || key
+  );
+}
 
-        <Show when={error()}>
-          <div class="text-[12px] text-scarlet-300 font-semibold mt-3">{error()}</div>
-        </Show>
+function isIpv4(value: string): boolean {
+  const octets = value.split('.');
+  return octets.length === 4 && octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255);
+}
 
-        <Show when={job()?.logs?.length}>
-          <pre class="mt-4 max-h-[280px] overflow-auto bg-base-950 border-2 border-base-600 p-3 text-[11px] leading-relaxed text-base-200 whitespace-pre-wrap break-words">{job()!.logs!.join('\n')}</pre>
-        </Show>
+// RFC1918 + CGNAT + link-local + loopback — used to scope an address as private
+// from its value, so scoping stays correct regardless of how a provider names the
+// output key (e.g. a future `nat_ip` vs `network_ip`).
+function isPrivateIpv4(value: string): boolean {
+  const [a, b] = value.split('.').map(Number);
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 192 && b === 168) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254)
+  );
+}
+
+function isHttpUrl(value: string): boolean {
+  return /^https?:\/\/\S+$/i.test(value);
+}
+
+function urlScope(value: string): ResourceEndpointScope {
+  try {
+    const host = new URL(value).hostname;
+    if (isIpv4(host)) return isPrivateIpv4(host) ? 'private' : 'public';
+    return 'public';
+  } catch {
+    return 'unknown';
+  }
+}
+
+type RawEndpoint = { label: string; address: string; family: ResourceEndpointFamily };
+
+function collectEndpoints(node: unknown, key: string, out: RawEndpoint[]): void {
+  if (typeof node === 'string') {
+    const value = node.trim();
+    if (isIpv4(value)) out.push({ label: humanizeEndpointKey(key), address: value, family: 'ipv4' });
+    else if (isHttpUrl(value)) out.push({ label: humanizeEndpointKey(key), address: value, family: 'url' });
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const item of node) collectEndpoints(item, key, out);
+    return;
+  }
+  if (node && typeof node === 'object') {
+    for (const [childKey, childValue] of Object.entries(node as Record<string, unknown>)) {
+      collectEndpoints(childValue, childKey, out);
+    }
+  }
+}
+
+function endpointRank(endpoint: Pick<ResourceEndpoint, 'family' | 'scope'>): number {
+  if (endpoint.family === 'ipv4' && endpoint.scope === 'public') return 0;
+  if (endpoint.family === 'url') return 1;
+  if (endpoint.family === 'ipv4' && endpoint.scope === 'private') return 2;
+  return 3;
+}
+
+// Pull every connectable address out of a resource's Terraform outputs, ordered
+// public-IP → URL → private-IP, with the best "connect here" target flagged primary.
+export function resourceConnections(resource: Pick<ProvisioningResource, 'outputs'>): ResourceEndpoint[] {
+  const raw: RawEndpoint[] = [];
+  collectEndpoints(resource.outputs ?? null, 'address', raw);
+
+  const seen = new Set<string>();
+  const endpoints: ResourceEndpoint[] = [];
+  for (const item of raw) {
+    if (seen.has(item.address)) continue;
+    seen.add(item.address);
+    endpoints.push({
+      ...item,
+      scope: item.family === 'ipv4' ? (isPrivateIpv4(item.address) ? 'private' : 'public') : urlScope(item.address),
+      href: item.family === 'url' ? item.address : null,
+      primary: false,
+    });
+  }
+
+  endpoints.sort((a, b) => endpointRank(a) - endpointRank(b));
+  const primary = endpoints.find((endpoint) => (endpoint.family === 'ipv4' && endpoint.scope === 'public') || endpoint.family === 'url');
+  if (primary) primary.primary = true;
+  return endpoints;
+}
+
+// Renders the connectable addresses for a runtime resource. Returns nothing when
+// the resource has no addresses yet (not deployed, or outputs not captured).
+export function ResourceConnections(props: { resource: ProvisioningResource | null | undefined; class?: string }) {
+  const endpoints = createMemo(() => (props.resource ? resourceConnections(props.resource) : []));
+  return (
+    <Show when={endpoints().length}>
+      <div class={`flex flex-col gap-1 ${props.class ?? ''}`}>
+        <For each={endpoints()}>
+          {(endpoint) => <EndpointRow endpoint={endpoint} />}
+        </For>
       </div>
     </Show>
   );
 }
 
-export type LaunchMode = 'deploy' | 'up';
+export function RdpTunnelEndpoint(props: { tunnel: ProvisioningRdpTunnel | null | undefined; class?: string }) {
+  return (
+    <Show when={props.tunnel && props.tunnel.status !== 'closed' ? props.tunnel : null}>
+      {(tunnel) => (
+        <div class={`flex flex-col gap-1 ${props.class ?? ''}`}>
+          <CopyableValueRow label="Broker RDP" value={tunnel().rdpEndpoint} strong />
+          <Show when={tunnel().username}>
+            <CopyableValueRow label="Username" value={tunnel().username!} />
+          </Show>
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-[10px] uppercase tracking-wider text-base-400 w-[88px] shrink-0">Tunnel</span>
+            <span class="font-mono text-[12px] text-base-200 break-all">{tunnel().status}</span>
+            <Show when={tunnel().expiresAt}>
+              <span class="text-[10px] uppercase tracking-wider text-base-400">until {formatDateTime(tunnel().expiresAt!)}</span>
+            </Show>
+          </div>
+        </div>
+      )}
+    </Show>
+  );
+}
+
+function EndpointRow(props: { endpoint: ResourceEndpoint }) {
+  return (
+    <CopyableValueRow
+      label={props.endpoint.label}
+      value={props.endpoint.address}
+      href={props.endpoint.href}
+      strong={props.endpoint.primary}
+    />
+  );
+}
+
+function CopyableValueRow(props: { label: string; value: string; href?: string | null; strong?: boolean }) {
+  const [copied, setCopied] = createSignal(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard?.writeText(props.value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // Clipboard unavailable (insecure context or denied) — non-fatal.
+    }
+  };
+  const addressClass = () => `font-mono text-[12px] break-all ${props.strong ? 'text-surf-200 font-semibold' : 'text-base-200'}`;
+  return (
+    <div class="flex items-center gap-2 flex-wrap">
+      <span class="text-[10px] uppercase tracking-wider text-base-400 w-[88px] shrink-0">{props.label}</span>
+      <Show
+        when={props.href}
+        fallback={
+          <button type="button" onClick={copy} title="Click to copy" class={`text-left hover:text-surf-300 ${addressClass()}`}>
+            {props.value}
+          </button>
+        }
+      >
+        <a href={props.href!} target="_blank" rel="noreferrer" class={`underline decoration-dotted text-surf-300 hover:text-surf-200 ${addressClass()}`}>
+          {props.value}
+        </a>
+        <button
+          type="button"
+          onClick={copy}
+          title="Copy"
+          class="text-[10px] uppercase tracking-wider border border-base-600 px-1.5 py-0.5 text-base-400 hover:text-surf-300 hover:border-surf-400"
+        >
+          copy
+        </button>
+      </Show>
+      <Show when={copied()}>
+        <span class="text-[10px] uppercase tracking-wider text-surf-300">copied</span>
+      </Show>
+    </div>
+  );
+}
 
 export function LaunchModal(props: {
   open: boolean;
   deployments: ProvisioningDeploymentSummary[];
   initialDeploymentId?: string | null;
-  initialMode?: LaunchMode | null;
-  initialTarget?: string | null;
   onClose: () => void;
   onLaunched: (job: ProvisioningJob) => void;
 }) {
   const [deploymentId, setDeploymentId] = createSignal('');
-  const [mode, setMode] = createSignal<LaunchMode>('deploy');
-  const [target, setTarget] = createSignal('');
   const [paramValues, setParamValues] = createSignal<Record<string, string | number | boolean>>({});
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal('');
@@ -213,8 +263,6 @@ export function LaunchModal(props: {
     if (!props.open) return;
     const preferred = props.initialDeploymentId || props.deployments[0]?.id || '';
     setDeploymentId(preferred);
-    setMode(props.initialMode ?? 'deploy');
-    setTarget(props.initialTarget ?? '');
     setParamValues({});
     setError('');
   });
@@ -222,13 +270,6 @@ export function LaunchModal(props: {
   createEffect(() => {
     const d = detail();
     if (!d) return;
-    if (!d.deployable) setMode('up');
-    if (
-      (!target() || !d.resources.some((resource) => resource.hostname === target())) &&
-      d.resources.length
-    ) {
-      setTarget(d.resources[0].hostname);
-    }
 
     const next: Record<string, string | number | boolean> = {};
     for (const input of d.inputs) {
@@ -262,13 +303,11 @@ export function LaunchModal(props: {
     setSubmitting(true);
     setError('');
     try {
-      const job = mode() === 'deploy'
-        ? await api.deployProvisioningDeployment(d.id, params())
-        : await api.upProvisioningResource(d.id, target(), params());
+      const job = await api.deployProvisioningDeployment(d.id, params());
       props.onLaunched(job);
       props.onClose();
     } catch (err: any) {
-      setError(err?.message || 'Failed to launch job');
+      setError(err?.message || 'Failed to deploy');
     } finally {
       setSubmitting(false);
     }
@@ -278,20 +317,20 @@ export function LaunchModal(props: {
     <Modal
       open={props.open}
       onClose={props.onClose}
-      title="Launch Broker Job"
+      title="Deploy"
       size="lg"
       footer={
         <>
           <Button variant="ghost" size="md" onClick={props.onClose}>Cancel</Button>
-          <Button variant="primary" size="md" disabled={submitting() || !selected() || (mode() === 'up' && !target())} onClick={launch}>
-            {submitting() ? 'Launching...' : 'Launch'}
+          <Button variant="primary" size="md" disabled={submitting() || !selected()} onClick={launch}>
+            {submitting() ? 'Deploying...' : 'Deploy'}
           </Button>
         </>
       }
     >
       <div>
         <FormField label="Deployment">
-          <select class={formSelectClass} value={deploymentId()} onChange={(e) => { setDeploymentId(e.currentTarget.value); setTarget(''); setParamValues({}); }}>
+          <select class={formSelectClass} value={deploymentId()} onChange={(e) => { setDeploymentId(e.currentTarget.value); setParamValues({}); }}>
             <For each={props.deployments}>
               {(d) => <option value={d.id}>{d.id}</option>}
             </For>
@@ -317,23 +356,6 @@ export function LaunchModal(props: {
                   </div>
                 </div>
               </div>
-
-              <div class="flex gap-2 flex-wrap mb-4">
-                <Show when={d().deployable}>
-                  <button type="button" class={`press press-sm ${mode() === 'deploy' ? 'press-primary' : 'press-ghost'}`} onClick={() => setMode('deploy')}>Deploy steps</button>
-                </Show>
-                <button type="button" class={`press press-sm ${mode() === 'up' ? 'press-primary' : 'press-ghost'}`} onClick={() => setMode('up')}>Create resource</button>
-              </div>
-
-              <Show when={mode() === 'up'}>
-                <FormField label="Resource">
-                  <select class={formSelectClass} value={target()} onChange={(e) => setTarget(e.currentTarget.value)}>
-                    <For each={d().resources}>
-                      {(resource) => <option value={resource.hostname}>{resource.hostname} ({resource.kind})</option>}
-                    </For>
-                  </select>
-                </FormField>
-              </Show>
 
               <Show when={d().inputs.length}>
                 <div class="border-t-2 border-base-700 pt-3 mt-3">

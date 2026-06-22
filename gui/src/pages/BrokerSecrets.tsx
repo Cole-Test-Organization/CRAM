@@ -4,7 +4,7 @@ import FormField, { formInputClass } from '../components/FormField';
 import Modal from '../components/Modal';
 import StatusBadge from '../components/StatusBadge';
 import { api, type ProvisioningDeploymentDescriptor, type ProvisioningSecretSummary } from '../lib/api';
-import { formatDateTime } from './HomelabCommon';
+import { formatDateTime } from '../utils/date';
 import BrokerTabs from './BrokerTabs';
 
 type SecretRow = {

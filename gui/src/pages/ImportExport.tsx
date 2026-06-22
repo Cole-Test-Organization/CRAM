@@ -2,6 +2,7 @@ import { createResource, createSignal, For, Show } from 'solid-js';
 import { api } from '../lib/api';
 import Button from '../components/Button';
 import NotesImportPanel from '../components/NotesImportPanel';
+import { formatDateTime } from '../utils/date';
 
 type ImportResult = {
   imported_at: string;
@@ -192,7 +193,7 @@ export default function ImportExport() {
             {(result) => (
               <div class="mt-4">
                 <div class="text-[11px] uppercase tracking-wider text-base-300 mb-2">
-                  Imported at {new Date(result().imported_at).toLocaleString()} — {result().account_count} account(s)
+                  Imported at {formatDateTime(result().imported_at)} — {result().account_count} account(s)
                 </div>
                 <div class="border-2 border-base-600 bg-base-950 max-h-72 overflow-y-auto">
                   <For each={result().results}>

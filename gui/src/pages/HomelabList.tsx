@@ -3,7 +3,10 @@ import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
 import { api, type ProvisioningDeploymentSummary, type ProvisioningJob, type ProvisioningResource } from '../lib/api';
 import { createProvisioningEventStream } from '../lib/provisioningEvents';
 import Button from '../components/Button';
-import { JobMonitor, LaunchModal, resourceTitle, StatusPill, StreamStatusPill, formatDateTime } from './HomelabCommon';
+import JobMonitor from '../components/provisioning/JobMonitor';
+import StatusBadge from '../components/StatusBadge';
+import { formatDateTime } from '../utils/date';
+import { LaunchModal, StreamStatusPill } from './HomelabCommon';
 import BrokerTabs from './BrokerTabs';
 
 function resourceCounts(resources: ProvisioningResource[]) {
@@ -53,7 +56,7 @@ export default function HomelabList() {
         <div class="flex gap-2 flex-wrap">
           <StreamStatusPill status={stream.connectionStatus()} error={stream.error()} />
           <Button variant="ghost" size="sm" onClick={refreshAll}>Refresh</Button>
-          <Button variant="primary" size="sm" onClick={() => openLaunch()}>+ Launch</Button>
+          <Button variant="primary" size="sm" onClick={() => openLaunch()}>+ Deploy</Button>
         </div>
       </div>
 
@@ -98,9 +101,9 @@ export default function HomelabList() {
                       </div>
                     </A>
                     <div class="flex gap-2 flex-wrap">
-                      <StatusPill status={deployment.deployable ? 'deployable' : 'resource-only'} />
+                      <StatusBadge status="deployment" />
                       <Button variant="ghost" size="sm" href={`/broker/${deployment.id}`}>Open</Button>
-                      <Button variant="primary" size="sm" onClick={() => openLaunch(deployment)}>Launch</Button>
+                      <Button variant="primary" size="sm" onClick={() => openLaunch(deployment)}>Deploy</Button>
                     </div>
                   </div>
                 )}
@@ -122,10 +125,10 @@ export default function HomelabList() {
                 {(resource) => (
                   <A href={`/broker/${resource.deploymentId}`} class="press-row gap-3 flex-wrap border-b border-base-700 last:border-b-0">
                     <div class="flex-1 min-w-[58%]">
-                      <div class="text-sm text-base-50 font-semibold break-words">{resourceTitle(resource)}</div>
+                      <div class="text-sm text-base-50 font-semibold break-words">{resource.name || resource.hostname || resource.id}</div>
                       <div class="text-[11px] text-base-400 uppercase tracking-wider mt-1">{resource.kind || 'resource'} · {resource.deploymentId}</div>
                     </div>
-                    <StatusPill status={resource.lifecycleStatus} />
+                    <StatusBadge status={resource.lifecycleStatus} />
                   </A>
                 )}
               </For>
@@ -147,7 +150,7 @@ export default function HomelabList() {
                       <div class="text-sm text-base-50 font-semibold">{job.action}{job.target ? ` -> ${job.target}` : ''}</div>
                       <div class="text-[11px] text-base-400 uppercase tracking-wider mt-1">{job.deployment || 'resource'} · {formatDateTime(job.createdAt)}</div>
                     </div>
-                    <StatusPill status={job.status} />
+                    <StatusBadge status={job.status} />
                   </button>
                 )}
               </For>

@@ -2,23 +2,20 @@ import { createResource, createSignal, For, Show } from 'solid-js';
 import { api } from '../lib/api';
 import Button from './Button';
 import MarkdownRenderer from './MarkdownRenderer';
+import { formatDateTime } from '../utils/date';
 
 type Target =
   | { account_id: number }
   | { contact_id: number }
   | { opportunity_id: number };
 
-function formatTimestamp(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
-}
+const noteTimestampOptions: Intl.DateTimeFormatOptions = {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+};
 
 export default function NotesPanel(props: { target: Target; inlineCompose?: boolean }) {
   const [feed, { refetch }] = createResource(
@@ -121,9 +118,9 @@ export default function NotesPanel(props: { target: Target; inlineCompose?: bool
               <div class="panel panel-accent p-4">
                 <div class="flex items-center justify-between gap-3 flex-wrap mb-2">
                   <div class="text-[11px] uppercase tracking-widest text-base-300 font-mono">
-                    {formatTimestamp(note.created_at)}
+                    {formatDateTime(note.created_at, noteTimestampOptions)}
                     <Show when={note.updated_at && note.updated_at !== note.created_at}>
-                      <span class="ml-2 text-base-400">(edited {formatTimestamp(note.updated_at)})</span>
+                      <span class="ml-2 text-base-400">(edited {formatDateTime(note.updated_at, noteTimestampOptions)})</span>
                     </Show>
                   </div>
                   <Show when={editingId() !== note.id}>
