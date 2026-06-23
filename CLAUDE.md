@@ -74,6 +74,17 @@ The script reads `DATABASE_URL` (defaults to `postgres://crm:devpassword@localho
 
 **One-time setup on a fresh clone:** `cd dev && npm install`. The host-runnable scripts in `dev/scripts/` live in their own npm package (`dev/package.json`) so they can resolve `pg` without leaning on `api/node_modules`. If you add a new host script in `dev/scripts/` that needs a third-party dep, add it to `dev/package.json` — not `api/package.json`.
 
+### Provisioning config is seeded from code modules — not YAML
+
+Provisioning config (deployments, provider profiles, resource/terraform profiles, app profiles, config profiles) is defined as **typed TypeScript modules**, not YAML. There is no YAML config tree anymore — **do not reintroduce one.**
+
+- **Source of truth:** `api/src/services/provisioning/config/modules/**` — one file per item, each `export default {...} satisfies <…>Module` (authoring types in `config/modules/types.ts`). The barrel `config/modules/index.ts` collects them into arrays (`providerProfiles`, `resourceProfiles`, `deployments`, `appProfiles`, `configProfiles`) plus `findAppProfile`/`findConfigProfile` lookups. **Adding a module = create the file + one import + one array entry in `index.ts`.**
+- **The seed** (`config/seed.ts` → `seedProvisioningConfig(userId)`) calls `validateCatalog()` first, then iterates the registry and **upserts into the same Postgres tables** (`provider_profiles`, `resource_profiles`, `deployments`, `deployment_resources`). It's idempotent (upsert by `user_id, name`; only template rows, so cloned instances are untouched). Because the tables are unchanged, **adding/editing a module needs no migration and no `SCHEMA.md` change.**
+- **App/config profiles are NOT seeded** — they resolve from the registry at runtime via `PostgresConfigRepository.read{App,Config}Profile` → `findAppProfile`/`findConfigProfile`. Only deployments + profiles get DB rows (so they're queryable/instanceable and FK targets).
+- **Where it's triggered** (all → `provisioningService.seed()`): on boot in `api/src/index.ts` (gated by `PROVISIONING_SEED_ON_BOOT !== 'false'`), via `POST /api/provisioning/seed`, and the `provisioning` MCP tool (`seed` action).
+- **Validation (the safety net):** `validateDeploymentReferences` runs as a **deploy preflight** (in `deploy`/`up`/`runAction`, before the first step; teardown stays lenient) and `validateCatalog` runs over the whole registry in the seed **and** in the `provisioning-references` / `provisioning-catalog` tests. They catch missing terraform profiles, bad step targets, and dangling `fromResource`/app/config references *before* a deploy starts. Note: a derived `${provider}-${kind}` terraform profile is only required for providers that actually have resource profiles (Proxmox provisions via its own API, not Terraform).
+- **Runtime config records** (e.g. PAN-OS config add-on XML referenced by `configAddOns[].file`) are read by path at deploy time and live in `api/src/services/provisioning/pan-os-configs/` — they are file artifacts, not seeded config.
+
 ### API routes live under /api
 
 All backend routes are registered under the `/api` prefix in `api/src/index.ts`. Add new route files inside the existing `/api` plugin scope — don't repeat the prefix and don't extend the Vite proxy (it forwards the entire `/api` and `/docs` trees). SPA paths like `/accounts/:slug` belong to the GUI alone.
