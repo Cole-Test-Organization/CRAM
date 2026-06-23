@@ -337,7 +337,7 @@ export class ContactsService {
       FROM meeting_attendees ma
       JOIN meetings m ON m.id = ma.meeting_id
       LEFT JOIN accounts a ON a.id = m.account_id
-      WHERE ma.contact_id = $1
+      WHERE ma.contact_id = $1 AND m.deleted_at IS NULL
       ORDER BY m.date DESC, m.id DESC
     `, [contactId])).rows;
   }

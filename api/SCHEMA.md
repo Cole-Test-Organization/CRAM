@@ -4,7 +4,7 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-06-22T03:19:52.113Z
+- **Generated:** 2026-06-23T13:46:28.008Z
 - **Tables:** 35
 - **Enums:** 0
 - **Views:** 0

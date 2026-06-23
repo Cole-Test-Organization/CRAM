@@ -3,7 +3,7 @@ import { withUser } from '../../db/connection.js';
 import { deriveFilename } from '../_shared/_slug.js';
 import { badRequest, notFound, conflict } from '../../lib/http-error.js';
 
-const MEETING_COLS = 'id, account_id, date, starts_at, ends_at, location, title, filename, body, internal, needs_review, created_at, updated_at';
+const MEETING_COLS = 'id, account_id, date, starts_at, ends_at, location, title, filename, body, internal, needs_review, krisp_meeting_id, created_at, updated_at';
 
 export class MeetingsService {
   // Cross-service deps, wired loosely by the service bags (mcp/server.js,
@@ -22,7 +22,7 @@ export class MeetingsService {
 
   async getAll(userId: number, { limit = 50, offset = 0, internal, needs_review }: { limit?: number; offset?: number; internal?: boolean; needs_review?: boolean } = {}) {
     return withUser(userId, async (client) => {
-      const where: string[] = [];
+      const where: string[] = ['m.deleted_at IS NULL'];
       const params: any[] = [];
       if (internal === true)  { where.push('m.internal = true'); }
       if (internal === false) { where.push('m.internal = false'); }
@@ -52,7 +52,7 @@ export class MeetingsService {
   async getByAccount(userId: number, accountId: number) {
     return withUser(userId, async (client) => {
       const meetings = (await client.query(
-        `SELECT ${MEETING_COLS} FROM meetings WHERE account_id = $1 ORDER BY date DESC`,
+        `SELECT ${MEETING_COLS} FROM meetings WHERE account_id = $1 AND deleted_at IS NULL ORDER BY date DESC`,
         [accountId]
       )).rows;
       for (const m of meetings) {
@@ -112,8 +112,63 @@ export class MeetingsService {
     if (!filename) return null;
     return withUser(userId, async (client) => {
       const res = await client.query(
-        'SELECT id, account_id, internal, needs_review FROM meetings WHERE filename = $1 LIMIT 1',
+        'SELECT id, account_id, internal, needs_review FROM meetings WHERE filename = $1 AND deleted_at IS NULL LIMIT 1',
         [filename]
+      );
+      return res.rows[0] || null;
+    });
+  }
+
+  // Krisp idempotency/linkage: find the LIVE meeting carrying this Krisp meeting
+  // id. Set on first import and carried onto the surviving row across a merge, so
+  // a re-delivery or a follow-up event (e.g. the transcript after the note) folds
+  // into the same meeting instead of spawning a duplicate. Returns the full row.
+  async findByKrispMeetingId(userId: number, krispMeetingId: string) {
+    if (!krispMeetingId) return null;
+    return withUser(userId, async (client) => {
+      const res = await client.query(
+        `SELECT ${MEETING_COLS} FROM meetings WHERE krisp_meeting_id = $1 AND deleted_at IS NULL LIMIT 1`,
+        [krispMeetingId]
+      );
+      return res.rows[0] || null;
+    });
+  }
+
+  // Candidate meetings for time-proximity matching (the Krisp webhook): LIVE
+  // meetings whose start instant falls within ±windowMs of `startsAtIso`. Returns
+  // the light fields the matcher needs (id, starts_at, ends_at, title,
+  // account_id, internal). The caller picks the winner (start proximity + overlap
+  // tiebreak); we just do the cheap index-backed range scan. Bounds are computed
+  // in JS so the query is a plain BETWEEN that uses idx_meetings_starts_at.
+  async findTimeMatchCandidates(userId: number, startsAtIso: string, windowMs: number) {
+    if (!startsAtIso) return [];
+    const center = new Date(startsAtIso).getTime();
+    if (Number.isNaN(center)) return [];
+    const lo = new Date(center - windowMs).toISOString();
+    const hi = new Date(center + windowMs).toISOString();
+    return withUser(userId, async (client) => {
+      const res = await client.query(
+        `SELECT id, starts_at, ends_at, title, account_id, internal
+           FROM meetings
+          WHERE deleted_at IS NULL
+            AND starts_at IS NOT NULL
+            AND starts_at BETWEEN $1::timestamptz AND $2::timestamptz
+          ORDER BY starts_at`,
+        [lo, hi]
+      );
+      return res.rows;
+    });
+  }
+
+  // Soft-delete (tombstone) a meeting — used by the merge feature to retire the
+  // absorbed row non-destructively (its un-pulled fields remain recoverable).
+  // Distinct from delete() (hard delete for an explicit user delete). Returns the
+  // tombstoned row or null if it wasn't live.
+  async softDelete(userId: number, id: number) {
+    return withUser(userId, async (client) => {
+      const res = await client.query(
+        'UPDATE meetings SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL RETURNING id',
+        [id]
       );
       return res.rows[0] || null;
     });
@@ -121,7 +176,7 @@ export class MeetingsService {
 
   async _fetchFull(client: PoolClient, id: number) {
     const meeting = (await client.query(
-      `SELECT ${MEETING_COLS} FROM meetings WHERE id = $1`,
+      `SELECT ${MEETING_COLS} FROM meetings WHERE id = $1 AND deleted_at IS NULL`,
       [id]
     )).rows[0];
     if (!meeting) return null;
@@ -166,8 +221,8 @@ export class MeetingsService {
       }
 
       const res = await client.query(
-        `INSERT INTO meetings (user_id, account_id, date, starts_at, ends_at, location, title, filename, body, internal, needs_review)
-         VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        `INSERT INTO meetings (user_id, account_id, date, starts_at, ends_at, location, title, filename, body, internal, needs_review, krisp_meeting_id)
+         VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING id`,
         [
           internal ? null : accountId,
@@ -180,6 +235,7 @@ export class MeetingsService {
           data.body,
           internal,
           !!data.needs_review,
+          data.krisp_meeting_id || null,
         ]
       );
       const meetingId = res.rows[0].id;
@@ -193,7 +249,7 @@ export class MeetingsService {
   async update(userId: number, id: number, data: any) {
     return withUser(userId, async (client) => {
       const existing = (await client.query(
-        `SELECT ${MEETING_COLS} FROM meetings WHERE id = $1`,
+        `SELECT ${MEETING_COLS} FROM meetings WHERE id = $1 AND deleted_at IS NULL`,
         [id]
       )).rows[0];
       if (!existing) return null;
@@ -223,11 +279,12 @@ export class MeetingsService {
       const nextStartsAt = data.starts_at !== undefined ? data.starts_at : existing.starts_at;
       const nextEndsAt = data.ends_at !== undefined ? data.ends_at : existing.ends_at;
       const nextLocation = data.location !== undefined ? data.location : existing.location;
+      const nextKrispMeetingId = data.krisp_meeting_id !== undefined ? data.krisp_meeting_id : existing.krisp_meeting_id;
 
       await client.query(
         `UPDATE meetings SET
            date = $2, starts_at = $3, ends_at = $4, location = $5, title = $6, filename = $7,
-           body = $8, needs_review = $9
+           body = $8, needs_review = $9, krisp_meeting_id = $10
          WHERE id = $1`,
         [
           id,
@@ -239,6 +296,7 @@ export class MeetingsService {
           nextFilename,
           data.body || existing.body,
           nextNeedsReview,
+          nextKrispMeetingId,
         ]
       );
 
@@ -260,7 +318,7 @@ export class MeetingsService {
   async delete(userId: number, id: number) {
     return withUser(userId, async (client) => {
       const existing = (await client.query(
-        `SELECT ${MEETING_COLS} FROM meetings WHERE id = $1`,
+        `SELECT ${MEETING_COLS} FROM meetings WHERE id = $1 AND deleted_at IS NULL`,
         [id]
       )).rows[0];
       if (!existing) return null;
@@ -370,7 +428,7 @@ export class MeetingsService {
   // a meeting that ALREADY has an account, use reassignAccount.
   async assignAccount(userId: number, id: number, accountId: number) {
     return withUser(userId, async (client) => {
-      const m = (await client.query('SELECT id, account_id FROM meetings WHERE id = $1', [id])).rows[0];
+      const m = (await client.query('SELECT id, account_id FROM meetings WHERE id = $1 AND deleted_at IS NULL', [id])).rows[0];
       if (!m) return null;
       if (m.account_id) {
         throw conflict(`Meeting ${id} is already linked to account ${m.account_id}. Account assignment only applies to unassigned notes.`);
@@ -407,7 +465,7 @@ export class MeetingsService {
       throw badRequest('reassign requires account_id (the account to move this meeting to) or internal=true (to convert it to an account-less internal note).');
     }
     return withUser(userId, async (client) => {
-      const m = (await client.query('SELECT id, account_id, filename FROM meetings WHERE id = $1', [id])).rows[0];
+      const m = (await client.query('SELECT id, account_id, filename FROM meetings WHERE id = $1 AND deleted_at IS NULL', [id])).rows[0];
       if (!m) return null;
       if (!toInternal) {
         const acct = (await client.query('SELECT id FROM accounts WHERE id = $1', [accountId])).rows[0];

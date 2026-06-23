@@ -82,7 +82,7 @@ export class ExportService {
                         ORDER BY (ma.contact_id IS NULL), c.full_name, ma.display_name)
                  FROM meeting_attendees ma LEFT JOIN contacts c ON c.id = ma.contact_id
                 WHERE ma.meeting_id = meetings.id) AS attendees
-       FROM meetings WHERE account_id = $1 ORDER BY date DESC`,
+       FROM meetings WHERE account_id = $1 AND deleted_at IS NULL ORDER BY date DESC`,
       [acct.id]
     )).rows;
 
@@ -144,7 +144,7 @@ export class ExportService {
                           ORDER BY (ma.contact_id IS NULL), c.full_name, ma.display_name)
                    FROM meeting_attendees ma LEFT JOIN contacts c ON c.id = ma.contact_id
                   WHERE ma.meeting_id = meetings.id) AS attendees
-         FROM meetings WHERE internal = true ORDER BY date DESC`
+         FROM meetings WHERE internal = true AND deleted_at IS NULL ORDER BY date DESC`
       )).rows;
       for (const n of internal) {
         allFiles.push({

@@ -16,8 +16,8 @@ export default async function healthRoutes(fastify: FastifyInstance) {
           (SELECT COUNT(*)::int FROM accounts
              WHERE LOWER(status) = 'partner') AS partners,
           (SELECT COUNT(*)::int FROM contacts) AS contacts,
-          (SELECT COUNT(*)::int FROM meetings) AS meetings,
-          (SELECT COUNT(*)::int FROM meetings WHERE internal = true) AS internal,
+          (SELECT COUNT(*)::int FROM meetings WHERE deleted_at IS NULL) AS meetings,
+          (SELECT COUNT(*)::int FROM meetings WHERE internal = true AND deleted_at IS NULL) AS internal,
           (SELECT COUNT(*)::int FROM opportunities) AS opportunities
       `)).rows;
       return rows[0];

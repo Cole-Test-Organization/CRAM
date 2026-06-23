@@ -59,7 +59,7 @@ export class SearchService {
             ts_rank(m.search_vector, to_tsquery('english', $1)) AS rank
           FROM meetings m
           LEFT JOIN accounts a ON a.id = m.account_id
-          WHERE m.search_vector @@ to_tsquery('english', $1)
+          WHERE m.search_vector @@ to_tsquery('english', $1) AND m.deleted_at IS NULL
           ORDER BY rank DESC
           LIMIT $2
         `, [tsQuery, limit])).rows;

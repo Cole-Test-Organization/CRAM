@@ -95,7 +95,7 @@ export class AccountsService {
                 (SELECT COUNT(*)::int FROM account_contacts ac
                    JOIN contacts c ON c.id = ac.contact_id
                   WHERE ac.account_id = a.id AND c.kind <> 'internal') AS contact_count,
-                (SELECT COUNT(*)::int FROM meetings WHERE account_id = a.id) AS meeting_count
+                (SELECT COUNT(*)::int FROM meetings WHERE account_id = a.id AND deleted_at IS NULL) AS meeting_count
          FROM accounts a
          ${whereClause}
          ORDER BY a.favorite DESC, a.${sortCol} ${sortOrder}
@@ -322,7 +322,7 @@ export class AccountsService {
     const meetings = (await client.query(
       `SELECT id, date, title, filename, created_at
        FROM meetings
-       WHERE account_id = $1
+       WHERE account_id = $1 AND deleted_at IS NULL
        ORDER BY date DESC`,
       [row.id]
     )).rows;

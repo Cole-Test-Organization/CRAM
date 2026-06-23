@@ -176,7 +176,7 @@ export class ImportExportService {
     const meetings = (await client.query(
       `SELECT id, date, title, filename, body, internal
        FROM meetings
-       WHERE account_id = $1
+       WHERE account_id = $1 AND deleted_at IS NULL
        ORDER BY date DESC`,
       [accountId]
     )).rows;
@@ -617,7 +617,7 @@ export class ImportExportService {
 
       const filename = m.filename || deriveFilename(m.date, m.title);
       const existing = (await client.query(
-        'SELECT id FROM meetings WHERE account_id = $1 AND filename = $2',
+        'SELECT id FROM meetings WHERE account_id = $1 AND filename = $2 AND deleted_at IS NULL',
         [accountId, filename]
       )).rows[0];
 

@@ -20,7 +20,7 @@ import { get } from './helpers.js';
 const EXPECTED_TOOLS = [
   'account_details', 'accounts', 'agent_settings', 'backup', 'contacts', 'events',
   'export_markdown', 'import_export', 'internal_domains', 'meetings', 'memories',
-  'notes', 'notes_import', 'opportunities', 'outreach', 'product_categories',
+  'merge', 'notes', 'notes_import', 'opportunities', 'outreach', 'product_categories',
   'products', 'provisioning', 'search', 'threads', 'vendor_products', 'vendors',
 ].sort();
 
