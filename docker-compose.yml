@@ -66,6 +66,10 @@ services:
       - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
       - TODOIST_DEFAULT_PROJECT=${TODOIST_DEFAULT_PROJECT:-Inbox}
       - TODOIST_DEFAULT_SECTION=${TODOIST_DEFAULT_SECTION:-}
+      # Krisp webhook (optional). Shared secret you also paste as a custom header
+      # (Authorization / x-krisp-webhook-token) in the Krisp dashboard. Unset ⇒ the
+      # endpoint accepts any caller (fine for ngrok testing). See krisp/README.md.
+      - KRISP_WEBHOOK_TOKEN=${KRISP_WEBHOOK_TOKEN:-}
       # In-container path the scheduled pg_dump writes to. Must live under the
       # /backups bind mount below — the host source of that mount is BACKUP_HOST_DIR.
       - BACKUP_DIR=${BACKUP_DIR:-/backups}
@@ -147,6 +151,8 @@ services:
       - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
       - TODOIST_DEFAULT_PROJECT=${TODOIST_DEFAULT_PROJECT:-Inbox}
       - TODOIST_DEFAULT_SECTION=${TODOIST_DEFAULT_SECTION:-}
+      # Krisp webhook (optional). See app service above for semantics.
+      - KRISP_WEBHOOK_TOKEN=${KRISP_WEBHOOK_TOKEN:-}
       - BACKUP_DIR=${BACKUP_DIR:-/backups}
       # Provisioning broker — AES master key that decrypts the provisioning_secrets
       # table at deploy time. The secrets themselves live in Postgres, not here; set
