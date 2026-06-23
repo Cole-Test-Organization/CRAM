@@ -110,7 +110,7 @@ const TF_STATE_SCHEMA = "terraform_state";
 // so any replica can read/lock state and `destroy` survives a restart. The connection
 // string is passed via env (PG_CONN_STR), never on the command line, so it can't leak
 // into job logs.
-function withPgBackend(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function withPgBackend(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const conn = process.env.PROVISIONING_TF_PG_CONN ?? process.env.DATABASE_URL;
   if (!conn) {
     throw new Error("Set PROVISIONING_TF_PG_CONN or DATABASE_URL for the Terraform pg backend");
@@ -118,11 +118,11 @@ function withPgBackend(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return { ...env, PG_CONN_STR: conn, PG_SCHEMA_NAME: TF_STATE_SCHEMA };
 }
 
-function terraformWorkspace(deploymentName: string, hostname: string): string {
+export function terraformWorkspace(deploymentName: string, hostname: string): string {
   return `${deploymentName}__${hostname}`.replace(/[^A-Za-z0-9_-]/g, "-");
 }
 
-async function terraformInit(stack: string, env: NodeJS.ProcessEnv, log?: LogFn): Promise<void> {
+export async function terraformInit(stack: string, env: NodeJS.ProcessEnv, log?: LogFn): Promise<void> {
   // -reconfigure so a stack that previously used local state adopts the pg backend.
   await runCommand("terraform", [`-chdir=${stack}`, "init", "-input=false", "-reconfigure"], {
     cwd: projectRoot,
@@ -131,7 +131,7 @@ async function terraformInit(stack: string, env: NodeJS.ProcessEnv, log?: LogFn)
   });
 }
 
-async function terraformSelectWorkspace(
+export async function terraformSelectWorkspace(
   stack: string,
   workspace: string,
   env: NodeJS.ProcessEnv,

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import type { LogFn } from "../types/logging.js";
 import { lookupSecretOverlay } from "./secretSource.js";
@@ -26,6 +26,40 @@ export function requireEnv(name: string): string {
   return value;
 }
 
+// terraform shells out to provider plugins (and some stacks run local-exec →
+// bash/gcc/docker). SIGTERM to just the direct child would orphan those grandchildren,
+// so we spawn the child as its own process-group leader (detached) and, on cancel,
+// signal the whole group (-pid). Jobs are serialized, so this is unambiguous.
+function killProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid === undefined) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {
+      // already exited
+    }
+  }
+}
+
+function watchForAbort(
+  child: ChildProcess,
+  signal: AbortSignal | undefined,
+  log: LogFn,
+): () => void {
+  if (!signal) return () => undefined;
+  const onAbort = (): void => {
+    log("Cancellation requested — terminating the process group…");
+    killProcessGroup(child, "SIGTERM");
+    const escalate = setTimeout(() => killProcessGroup(child, "SIGKILL"), 5_000);
+    escalate.unref();
+  };
+  if (signal.aborted) onAbort();
+  else signal.addEventListener("abort", onAbort, { once: true });
+  return () => signal.removeEventListener("abort", onAbort);
+}
+
 export async function runCommand(
   command: string,
   args: string[],
@@ -48,8 +82,9 @@ export async function runCommand(
       cwd: options.cwd,
       env: { ...process.env, ...options.env },
       stdio: ["ignore", "pipe", "pipe"],
-      signal,
+      detached: true,
     });
+    const unwatch = watchForAbort(child, signal, log);
 
     child.stdout.on("data", (chunk: Buffer) => {
       chunk
@@ -67,12 +102,16 @@ export async function runCommand(
         .forEach((line) => log(line));
     });
 
-    child.on("error", reject);
-    child.on("close", (code) => {
+    child.on("error", (err) => {
+      unwatch();
+      reject(err);
+    });
+    child.on("close", (code, sig) => {
+      unwatch();
       if (code === 0) {
         resolve();
       } else {
-        reject(new Error(`${command} exited with code ${code}`));
+        reject(new Error(`${command} exited with ${sig ? `signal ${sig}` : `code ${code}`}`));
       }
     });
   });
@@ -97,8 +136,9 @@ export async function captureCommand(
       cwd: options.cwd,
       env: { ...process.env, ...options.env },
       stdio: ["ignore", "pipe", "pipe"],
-      signal,
+      detached: true,
     });
+    const unwatch = watchForAbort(child, signal, log);
     let stdout = "";
     let stderr = "";
 
@@ -115,12 +155,16 @@ export async function captureCommand(
         .forEach((line) => log(line));
     });
 
-    child.on("error", reject);
-    child.on("close", (code) => {
+    child.on("error", (err) => {
+      unwatch();
+      reject(err);
+    });
+    child.on("close", (code, sig) => {
+      unwatch();
       if (code === 0) {
         resolve(stdout);
       } else {
-        reject(new Error(`${command} exited with code ${code}: ${stderr}`));
+        reject(new Error(`${command} exited with ${sig ? `signal ${sig}` : `code ${code}`}: ${stderr}`));
       }
     });
   });

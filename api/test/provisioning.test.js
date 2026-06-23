@@ -36,7 +36,7 @@ describe('Provisioning — discovery and safe enqueue validation', () => {
     const list = await get('/provisioning/deployments');
     assert.equal(list.status, 200);
     assert.ok(Array.isArray(list.body));
-    assert.ok(list.body.length >= 10);
+    assert.ok(list.body.length >= 9);
 
     const gpLab = list.body.find((d) => d.id === 'aws-gp-lab-trusted-users');
     assert.ok(gpLab);
@@ -48,7 +48,28 @@ describe('Provisioning — discovery and safe enqueue validation', () => {
     assert.equal(detail.body.id, 'aws-gp-lab-trusted-users');
     assert.ok(Array.isArray(detail.body.resources));
     assert.ok(Array.isArray(detail.body.steps));
-    assert.ok(detail.body.requiredEnv.includes('PANW_PANORAMA_AUTH_CODE'));
+    // requiredEnv lists real stored secrets only — infra/machine-sourced env vars
+    // (AWS profile, the auto-detected source CIDR, the local SSH public key) carry
+    // their own defaults/resolvers and must not be surfaced as missing secrets.
+    for (const infraEnv of ['AWS_PROFILE', 'AWS_GP_LAB_ALLOWED_SOURCE_CIDRS', 'AWS_GP_LAB_SSH_PUBLIC_KEY']) {
+      assert.ok(!detail.body.requiredEnv.includes(infraEnv), `${infraEnv} must not be a required secret`);
+    }
+    // Mandatory secrets: licensing auth, the device-cert pins the firewalls need to
+    // auto-register and pull licenses, and the Windows admin password.
+    for (const required of [
+      'PANW_PANORAMA_AUTH_CODE',
+      'PANW_DEVICE_CERT_PIN_ID',
+      'PANW_DEVICE_CERT_PIN_VALUE',
+      'WINDOWS_ENDPOINT_ADMIN_PASSWORD',
+    ]) {
+      assert.ok(detail.body.requiredEnv.includes(required), `${required} must be a required secret`);
+    }
+    // The license deactivation key is a real secret but optional (only used at teardown),
+    // so it is manageable on the Secrets page yet not flagged as a missing prerequisite.
+    assert.ok(
+      !detail.body.requiredEnv.includes('PANW_LICENSE_DEACTIVATION_API_KEY'),
+      'license deactivation key is optional, not required',
+    );
   });
 
   it('lists resources, jobs, and secret summaries without exposing secret values', async () => {

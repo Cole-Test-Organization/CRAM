@@ -1,5 +1,4 @@
 import { GenericTerraformResourceAdapter } from "./genericTerraformResourceAdapter.js";
-import { EksClusterResourceAdapter } from "./eks/eksClusterResourceAdapter.js";
 import { PanoramaResourceAdapter } from "./palo/panorama/panoramaResourceAdapter.js";
 import { VmSeriesResourceAdapter } from "./palo/vm-series/vmSeriesResourceAdapter.js";
 import { PanwBootstrapService } from "./palo/shared/bootstrapService.js";
@@ -13,7 +12,6 @@ export function createDefaultResourceAdapterRegistry(
   const genericTerraform = new GenericTerraformResourceAdapter();
   return new ResourceAdapterRegistry(
     [
-      new EksClusterResourceAdapter(),
       new PanoramaResourceAdapter(panwBootstrap),
       new VmSeriesResourceAdapter(panwBootstrap),
       new UbuntuServerResourceAdapter(),

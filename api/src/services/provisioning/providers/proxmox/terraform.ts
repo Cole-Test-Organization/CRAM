@@ -1,54 +1,61 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { resolveProjectPath, terraformModuleDir, toProjectRelativePath, workDir } from "../../utils/paths.js";
+import { projectRoot, workDir } from "../../utils/paths.js";
 import type { FirewallConfig, NetworkInterfaceConfig } from "../../types/index.js";
 import type { LogFn } from "../../types/logging.js";
 import { captureCommand, ensureDir, requireEnv, runCommand } from "../../utils/index.js";
 import type { ProviderApplyResult } from "../../types/providerAdapter.js";
+import {
+  terraformInit,
+  terraformSelectWorkspace,
+  terraformWorkspace,
+  withPgBackend,
+} from "../../resources/terraformRunner.js";
+
+// Proxmox VM-Series provisions through a dedicated, hardcoded Terraform stack
+// (terraform/panw-vm) rather than a per-kind resource profile + the generic runner:
+// it clones a Proxmox template and uploads a bootstrap ISO, which the generic AWS-style
+// path doesn't model. State lives in the Terraform pg backend (one workspace per
+// resource), the same as every other stack, so a deploy survives a restart and any
+// replica can tear it down. The connection string is injected via env (PG_CONN_STR),
+// never on the command line.
+const PANW_VM_STACK = "terraform/panw-vm";
 
 export async function terraformApplyVm(
   config: FirewallConfig,
   bootstrapIsoPath: string,
   log: LogFn,
+  deploymentName: string,
 ): Promise<ProviderApplyResult> {
   const tfWorkDir = path.join(workDir, config.hostname, "terraform");
   await ensureDir(tfWorkDir);
 
   const varsPath = path.join(tfWorkDir, "terraform.tfvars.json");
-  const statePath = path.join(tfWorkDir, "terraform.tfstate");
-  await writeFile(varsPath, `${JSON.stringify(toTerraformVars(config, bootstrapIsoPath), null, 2)}\n`);
+  await writeFile(
+    varsPath,
+    `${JSON.stringify(toTerraformVars(config, bootstrapIsoPath), null, 2)}\n`,
+  );
 
-  const env = terraformEnv(config, tfWorkDir);
-  await runCommand("terraform", ["-chdir=terraform/panw-vm", "init", "-input=false"], {
-    cwd: path.resolve(terraformModuleDir, "..", ".."),
-    env,
-    log,
-  });
+  const env = withPgBackend(terraformEnv(config, tfWorkDir));
+  const workspace = terraformWorkspace(deploymentName, config.hostname);
+  await terraformInit(PANW_VM_STACK, env, log);
+  await terraformSelectWorkspace(PANW_VM_STACK, workspace, env, log);
   await runCommand(
     "terraform",
     [
-      "-chdir=terraform/panw-vm",
+      `-chdir=${PANW_VM_STACK}`,
       "apply",
       "-input=false",
       "-auto-approve",
       `-var-file=${varsPath}`,
-      `-state=${statePath}`,
     ],
-    {
-      cwd: path.resolve(terraformModuleDir, "..", ".."),
-      env,
-      log,
-    },
+    { cwd: projectRoot, env, log },
   );
 
   const outputJson = await captureCommand(
     "terraform",
-    ["-chdir=terraform/panw-vm", "output", "-json", `-state=${statePath}`],
-    {
-      cwd: path.resolve(terraformModuleDir, "..", ".."),
-      env,
-      log,
-    },
+    [`-chdir=${PANW_VM_STACK}`, "output", "-json"],
+    { cwd: projectRoot, env, log },
   );
   const parsed = JSON.parse(outputJson) as Record<string, { value: unknown }>;
   const vmId = parsed.vm_id?.value as number | undefined;
@@ -56,41 +63,46 @@ export async function terraformApplyVm(
     vmId,
     providerResourceId: vmId === undefined ? null : String(vmId),
     bootstrapIsoFileId: parsed.bootstrap_iso_file_id?.value as string | undefined,
-    terraformStatePath: toProjectRelativePath(statePath),
+    // State is in the pg backend; persist the workspace name (mapped to the
+    // terraform_workspace column) exactly as the generic runner does.
+    terraformStatePath: workspace,
   };
 }
 
 export async function terraformDestroyVm(
   config: FirewallConfig,
-  terraformStatePath: string,
+  workspaceName: string | null,
   log: LogFn,
+  deploymentName: string,
+  bootstrapIsoPath: string,
 ): Promise<void> {
-  const resolvedTerraformStatePath = resolveProjectPath(terraformStatePath);
-  const tfWorkDir = path.dirname(resolvedTerraformStatePath);
+  const workspace = workspaceName ?? terraformWorkspace(deploymentName, config.hostname);
+  if (!workspaceName) {
+    log(`No Terraform workspace recorded for ${config.hostname}; using expected workspace ${workspace}.`);
+  }
+  const tfWorkDir = path.join(workDir, config.hostname, "terraform");
   const varsPath = path.join(tfWorkDir, "terraform.tfvars.json");
-  const env = terraformEnv(config, tfWorkDir);
-
   await mkdir(tfWorkDir, { recursive: true });
-  await runCommand("terraform", ["-chdir=terraform/panw-vm", "init", "-input=false"], {
-    cwd: path.resolve(terraformModuleDir, "..", ".."),
-    env,
-    log,
-  });
+  // Regenerate the tfvars so destroy works even if the work dir was wiped since apply
+  // (state itself is durable in the pg backend). The ISO path is irrelevant at destroy.
+  await writeFile(
+    varsPath,
+    `${JSON.stringify(toTerraformVars(config, bootstrapIsoPath), null, 2)}\n`,
+  );
+
+  const env = withPgBackend(terraformEnv(config, tfWorkDir));
+  await terraformInit(PANW_VM_STACK, env, log);
+  await terraformSelectWorkspace(PANW_VM_STACK, workspace, env, log);
   await runCommand(
     "terraform",
     [
-      "-chdir=terraform/panw-vm",
+      `-chdir=${PANW_VM_STACK}`,
       "destroy",
       "-input=false",
       "-auto-approve",
       `-var-file=${varsPath}`,
-      `-state=${resolvedTerraformStatePath}`,
     ],
-    {
-      cwd: path.resolve(terraformModuleDir, "..", ".."),
-      env,
-      log,
-    },
+    { cwd: projectRoot, env, log },
   );
 }
 

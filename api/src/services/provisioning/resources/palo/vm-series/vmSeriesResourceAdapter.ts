@@ -19,7 +19,7 @@ import { PanwBootstrapService } from "../shared/bootstrapService.js";
 import { deactivateLicenseIfPossible } from "../shared/panw.js";
 import { toProxmoxFirewallConfig } from "../../../providers/proxmox/config.js";
 import { terraformApplyVm, terraformDestroyVm } from "../../../providers/proxmox/terraform.js";
-import { toProjectRelativePath } from "../../../utils/paths.js";
+import { resolveProjectPath, toProjectRelativePath } from "../../../utils/paths.js";
 import { expandVmSeriesConfigProfiles } from "./configProfiles.js";
 
 export class VmSeriesResourceAdapter implements ResourceAdapter<PanwVmseriesResourceConfig> {
@@ -74,7 +74,7 @@ export class VmSeriesResourceAdapter implements ResourceAdapter<PanwVmseriesReso
         context.configPath,
       );
       log("Applying Proxmox Terraform module");
-      applyResult = await terraformApplyVm(config, bootstrap.isoPath, log);
+      applyResult = await terraformApplyVm(config, bootstrap.isoPath, log, context.deployment.name);
     } else {
       applyResult = await context.terraform.apply(context, log);
     }
@@ -104,15 +104,21 @@ export class VmSeriesResourceAdapter implements ResourceAdapter<PanwVmseriesReso
     await deactivateLicenseIfPossible(context.resource, record, outputs, log, this.panwBootstrap);
 
     if (isLegacyProxmoxVmSeries(context.provider)) {
-      if (!record.terraformStatePath) {
-        throw new Error(`No Terraform state path recorded for ${record.hostname}`);
-      }
       const config = toProxmoxFirewallConfig(
         context.deployment,
         context.resource,
         context.configPath,
       );
-      await terraformDestroyVm(config, record.terraformStatePath, log);
+      const isoPath = record.bootstrapIsoPath
+        ? resolveProjectPath(record.bootstrapIsoPath)
+        : "";
+      await terraformDestroyVm(
+        config,
+        record.terraformStatePath ?? null,
+        log,
+        context.deployment.name,
+        isoPath,
+      );
       return;
     }
 

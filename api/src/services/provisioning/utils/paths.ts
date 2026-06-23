@@ -6,7 +6,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 // projectRoot is the provisioning service's shipped config/artifact root. The
 // source runs in place under tsx (no dist/), so the default is the provisioning
 // service dir itself (one level up from utils/). Override with PROVISIONING_ROOT
-// only when the shipped database/terraform artifacts live elsewhere.
+// only when the shipped terraform/config artifacts live elsewhere.
 export const projectRoot = process.env.PROVISIONING_ROOT
   ? path.resolve(process.env.PROVISIONING_ROOT)
   : path.resolve(here, "..");

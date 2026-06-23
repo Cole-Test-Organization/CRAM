@@ -226,6 +226,62 @@ Staged cheapest-first; **D is the only step that touches AWS — run it only wit
 
 ---
 
+## Post-migration code review (2026-06-22)
+
+Full review of `api/src/services/provisioning/` ahead of shipping to homelab users. Auth/RLS
+findings are intentionally excluded (single-user, local). Status as of 2026-06-23 (most items below were addressed):
+
+**Resolved in this pass**
+- ✅ **Proxmox VM-Series deploy/destroy** — ported the legacy `providers/proxmox/terraform.ts` to
+  the Terraform pg backend + workspace-per-resource (it now shares `TerraformRunner`'s helpers),
+  matching the AWS path and `panw-vm`'s `backend "pg" {}`. *True end-to-end still needs a real
+  Proxmox host + the bpg/proxmox provider; the HCL is unchanged and the runner mechanics mirror AWS.*
+- ✅ **EKS removed entirely** — deployment, resource profile, adapter, `terraform/aws-eks-cluster`,
+  and both registries (per user: not needed).
+- ✅ **Job worker can no longer wedge** — setup (active-job write + `hydrateAll`) moved inside the
+  try/finally and the claim loop wraps `runJob` in try/catch, so a bad/rotated secret fails one
+  job and the worker keeps claiming.
+- ✅ **Cancel kills the whole process group** — `runCommand`/`captureCommand` spawn `detached` and
+  signal `-pid` on abort (SIGTERM→SIGKILL after 5s), so terraform's provider plugins and any
+  `local-exec` grandchildren die too.
+- ✅ **`validateReferences` walks deployment resource bodies** — `fromResource` typos in
+  placement/managementServer/nextHop are now caught by the preflight (and seed/CI), not mid-deploy.
+- ✅ **Windows admin password → SSM Parameter Store (SecureString)** — no longer inlined into
+  user_data or the SSM document body; the bootstrap fetches it at boot with a scoped
+  `ssm:GetParameter`/`kms:Decrypt` grant and falls back to the EC2 key-pair password if the fetch
+  fails. *Residual: the value still transits Terraform state. Runtime fetch needs a real AWS deploy
+  to confirm (AMI AWS-CLI availability); HCL `terraform validate` passes.*
+- ✅ **Proxmox discovery wired** across all four surfaces (service `discoverProxmox` + HTTP
+  `GET /api/provisioning/providers/proxmox/discovery` + MCP `discover_proxmox` + REFS/prose); it
+  decrypts `PROXMOX_VE_ENDPOINT`/`PROXMOX_VE_API_TOKEN` inline (no global overlay). GUI button: later.
+- ✅ **Proxmox API token is a required secret** for `proxmox-fw-lab` — surfaced by the `requiredEnv`
+  provider-walk (`PROXMOX_VE_API_TOKEN` is in the secret allowlist).
+- ✅ **Removed two hardcoded residential IPs** from `aws-windows-endpoint`/`aws-ubuntu-server`
+  (now fall back to `currentPublicIpCidrList`, the operator's own IP).
+
+**By decision (left as-is)**
+- **RDP tunnel binds `0.0.0.0`** — intentional: the broker proxy must be reachable over the LAN.
+  The Windows endpoint *itself* is not internet-exposed (SG only opens WinRM, and only when
+  `enable_winrm`, which the default leaves off; RDP reaches it only via the SSM tunnel).
+- **SSM port-forward leaks the session child on cancel** — out of scope (low-value edge case).
+
+**Remaining (nice-to-have)**
+- Terraform provider plugin-cache volume (each resource re-downloads the ~600 MB AWS provider).
+- `panw-broker` branding still baked into AWS tags, on-host paths, and bucket prefixes.
+- Cost-awareness in the GUI picker (Panorama m5.4xlarge + 2 TiB EBS).
+- SSH host-key verification + PAN-OS API TLS are TOFU/disabled (expected for first-boot — document it).
+- Bootstrap secrets (auth codes, vm-auth-key) written under `work/` and into ISOs are never cleaned up.
+- `checkip.amazonaws.com` IP resolver has no retry/override → a network blip aborts a deploy.
+
+**Verified healthy:** five-surface parity is complete (all ops across HTTP/MCP/both service
+bags/REFS; `seedSecretsFromEnv` is intentionally surface-less); child processes spawn without a
+shell (no command injection); EC2 security groups scope to the operator's IP by default (not wide
+open); startup seeding is env-gated and failure-tolerant; the DB-claim worker's serial guard +
+orphan recovery are sound. The `secrets/` crypto implementation was **not** read (behind the
+`Read(**/secrets/**)` guardrail) — review separately.
+
+---
+
 ## Reference: key files
 
 **Broker source (read-only):** `src/resourceBroker.ts`; `src/state/stateRepository.ts`; `src/repositories/` (ConfigRepository); `src/types/{state,deployment,resource,provider,terraformResourceProfile}.ts`; `src/providers/index.ts`; `src/resources/{terraformRunner,types,genericTerraformResourceAdapter}.ts`; `src/resources/palo/{panorama,vm-series}/*`, `src/resources/palo/shared/{bootstrapService,client,ssh}.ts`, `src/resources/windows/*`; `src/entrypoints/{server,cli}.ts`; `Dockerfile`, `compose.yaml`, `docker-entrypoint.sh`, `.env.example`; `terraform/`.

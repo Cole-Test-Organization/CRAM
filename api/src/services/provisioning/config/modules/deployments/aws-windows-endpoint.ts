@@ -50,10 +50,9 @@ const deployment = {
       "placement": {
         "provider": "aws",
         "availabilityZoneIndex": 0,
-        "allowedSourceCidrs": [
-          "74.51.2.242/32",
-          "98.101.148.0/24"
-        ],
+        // allowedSourceCidrs omitted: the resource profile falls back to currentPublicIpCidrList,
+        // scoping the security group to the operator's own public IP. Set placement.allowedSourceCidrs
+        // (or the provider's allowedSourceCidrEnv) to widen it.
         "subnetCidr": "10.110.30.0/24",
         "rootVolumeGb": 128,
         "associatePublicIp": true,

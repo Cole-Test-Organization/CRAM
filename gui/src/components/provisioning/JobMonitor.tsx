@@ -8,6 +8,15 @@ function isActiveJob(job: ProvisioningJob | null | undefined): boolean {
   return job?.status === 'queued' || job?.status === 'running';
 }
 
+// Logs are append-only and monotonic, so "more lines wins". This lets a logless
+// SSE-snapshot job (the `/events` snapshot omits log lines) get backfilled from the
+// DB without a later logless live update clobbering the lines we just loaded.
+function withRicherLogs(prev: ProvisioningJob | null, incoming: ProvisioningJob): ProvisioningJob {
+  const prevLogs = prev?.logs ?? [];
+  const incomingLogs = incoming.logs ?? [];
+  return { ...incoming, logs: incomingLogs.length >= prevLogs.length ? incomingLogs : prevLogs };
+}
+
 export default function JobMonitor(props: {
   jobId: string | null;
   liveConnected?: boolean;
@@ -38,7 +47,7 @@ export default function JobMonitor(props: {
   const fetchJob = async (id: string) => {
     try {
       const next = await api.getProvisioningJob(id);
-      setJob(next);
+      setJob((prev) => withRicherLogs(prev, next));
       props.onJobUpdate?.(next);
       setError('');
       if (isActiveJob(next) && !props.liveConnected) {
@@ -63,6 +72,9 @@ export default function JobMonitor(props: {
     if (live?.id === id) {
       setJob(live);
       handleSettled(live);
+      // The SSE snapshot carries job status but no log lines — backfill them from
+      // the DB (which has the full history) so a refresh doesn't show empty logs.
+      if (!live.logs?.length) fetchJob(id);
     } else {
       fetchJob(id);
     }
@@ -73,7 +85,7 @@ export default function JobMonitor(props: {
     const live = props.liveJob;
     if (!id || !live || live.id !== id) return;
     clearTimer();
-    setJob(live);
+    setJob((prev) => withRicherLogs(prev, live));
     setError('');
     handleSettled(live);
   });

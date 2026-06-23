@@ -1,4 +1,4 @@
-import { A, useNavigate, useParams } from '@solidjs/router';
+import { A, useNavigate, useParams, useSearchParams } from '@solidjs/router';
 import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
 import { api, type ProvisioningJob, type ProvisioningRdpTunnel, type ProvisioningResource } from '../lib/api';
 import { createProvisioningEventStream } from '../lib/provisioningEvents';
@@ -7,26 +7,51 @@ import Button from '../components/Button';
 import JobMonitor from '../components/provisioning/JobMonitor';
 import StatusBadge from '../components/StatusBadge';
 import { formatDateTime } from '../utils/date';
-import { LaunchModal, RdpTunnelEndpoint, ResourceConnections, StreamStatusPill } from './HomelabCommon';
+import { LaunchModal, RdpTunnelEndpoint, ResourceConnections } from './HomelabCommon';
 import { activeProvisioningResources } from '../lib/provisioningResources';
 
 export default function HomelabDetail() {
   const params = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [launchOpen, setLaunchOpen] = createSignal(false);
-  const [monitorJobId, setMonitorJobId] = createSignal<string | null>(null);
+  // Keep the monitored job in the URL so a refresh restores the live log panel
+  // instead of dropping it (the job + its logs already live in the DB).
+  const [searchParams, setSearchParams] = useSearchParams<{ job?: string }>();
+  const monitorJobId = () => searchParams.job ?? null;
+  const setMonitorJobId = (id: string | null) => setSearchParams({ job: id ?? undefined });
   const [actionError, setActionError] = createSignal('');
   const [actionNotice, setActionNotice] = createSignal('');
   const [busy, setBusy] = createSignal('');
 
-  const [deployments] = createResource(() => api.listProvisioningDeployments());
+  const [deployments, { refetch: refetchDeployments }] = createResource(() => api.listProvisioningDeployments());
   const [deployment] = createResource(() => params.id, (id) => api.getProvisioningDeployment(id));
   const [rdpTunnels, { refetch: refetchRdpTunnels }] = createResource(() => api.listProvisioningRdpTunnels());
   const stream = createProvisioningEventStream({ jobsLimit: 50 });
 
   const deploymentResourceRecords = createMemo(() => stream.resources().filter((r) => r.deploymentId === params.id));
   const activeDeploymentResources = createMemo(() => activeProvisioningResources(deploymentResourceRecords()));
-  const deploymentJobs = createMemo(() => stream.jobs().filter((j) => j.deployment === params.id || deploymentResourceRecords().some((r) => r.hostname === j.target || r.id === j.target)).slice(0, 10));
+
+  // When this row is a template, its launched instances are the deployments whose
+  // templateName points back at it — that's the "all deployments for this template"
+  // list. Each is clickable through to its own detail page.
+  const templateInstances = createMemo(() =>
+    (deployments() || [])
+      .filter((d) => d.templateName === params.id)
+      .sort((a, b) => (a.displayName || a.id).localeCompare(b.displayName || b.id)),
+  );
+  const liveResourceCount = (deploymentId: string) =>
+    activeProvisioningResources(stream.resources().filter((r) => r.deploymentId === deploymentId)).length;
+
+  // Jobs touching this deployment. For a template, fold in jobs run against any of
+  // its instances so the template page shows activity across all of them.
+  const deploymentJobs = createMemo(() => {
+    const instanceIds = new Set(templateInstances().map((d) => d.id));
+    return stream.jobs().filter((j) =>
+      j.deployment === params.id
+      || (j.deployment != null && instanceIds.has(j.deployment))
+      || deploymentResourceRecords().some((r) => r.hostname === j.target || r.id === j.target),
+    ).slice(0, 10);
+  });
   const tunnelForResource = (resource: ProvisioningResource): ProvisioningRdpTunnel | undefined =>
     (rdpTunnels() || []).find((tunnel) => tunnel.resourceId === resource.id || tunnel.hostname === resource.hostname);
 
@@ -38,6 +63,8 @@ export default function HomelabDetail() {
     stream.upsertJob(job);
     stream.setActiveJobId(job.id);
     setMonitorJobId(job.id);
+    // A launch from a template page creates a new instance — pull it into the list.
+    refetchDeployments();
   };
 
   const runJob = async (label: string, runner: () => Promise<ProvisioningJob>) => {
@@ -159,7 +186,6 @@ export default function HomelabDetail() {
                 </div>
               </div>
               <div class="flex gap-2 flex-wrap">
-                <StreamStatusPill status={stream.connectionStatus()} error={stream.error()} />
                 <Button variant="ghost" size="sm" onClick={refreshAll}>Refresh</Button>
                 <Show when={d().isTemplate} fallback={
                   <Button variant="primary" size="sm" disabled={Boolean(busy())} onClick={redeploy}>
@@ -203,6 +229,33 @@ export default function HomelabDetail() {
 
             <div class="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
               <section class="flex flex-col gap-5">
+                <Show when={!d().isTemplate} fallback={
+                  <div>
+                    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+                      <h2 class="text-[14px] uppercase tracking-widest font-bold text-surf-300">Deployments</h2>
+                      <span class="text-[11px] text-base-400 uppercase tracking-wider">{templateInstances().length} from this template</span>
+                    </div>
+                    <div class="panel panel-accent">
+                      <For each={templateInstances()} fallback={<div class="text-base-400 text-center p-8 text-sm italic">No deployments from this template yet — click Deploy to create one.</div>}>
+                        {(instance) => (
+                          <A href={`/broker/${instance.id}`} class="press-row gap-3 flex-wrap border-b border-base-700 last:border-b-0 no-underline">
+                            <div class="flex-1 min-w-[58%]">
+                              <div class="text-sm text-base-50 font-semibold break-words">{instance.displayName || instance.id}</div>
+                              <div class="flex gap-2 flex-wrap text-[11px] text-base-400 uppercase tracking-wider mt-1">
+                                <span>{instance.provider || 'unknown'}</span>
+                                <span>{instance.resourceCount} resources</span>
+                                <Show when={liveResourceCount(instance.id)}>
+                                  <span class="text-surf-300">{liveResourceCount(instance.id)} live</span>
+                                </Show>
+                              </div>
+                            </div>
+                            <StatusBadge status={liveResourceCount(instance.id) ? 'ready' : 'idle'} />
+                          </A>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                }>
                 <div>
                   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
                     <h2 class="text-[14px] uppercase tracking-widest font-bold text-surf-300">Active Resources</h2>
@@ -255,6 +308,7 @@ export default function HomelabDetail() {
                     </For>
                   </div>
                 </div>
+                </Show>
 
                 <div>
                   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -288,6 +342,7 @@ export default function HomelabDetail() {
               </section>
 
               <aside class="flex flex-col gap-5">
+                <Show when={!d().isTemplate}>
                 <section>
                   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
                     <h2 class="text-[14px] uppercase tracking-widest font-bold text-surf-300">Active Records</h2>
@@ -312,6 +367,7 @@ export default function HomelabDetail() {
                     </For>
                   </div>
                 </section>
+                </Show>
 
                 <section>
                   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">

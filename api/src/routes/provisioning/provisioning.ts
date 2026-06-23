@@ -114,6 +114,16 @@ export default async function provisioningRoutes(
     schema: { description: 'List every available deployment summary: provider, project, resource kinds, resource count, step count, and launch capability metadata.', tags: [TAG] },
   }, async () => provisioningService.listDeployments());
 
+  fastify.get('/provisioning/providers/proxmox/discovery', {
+    schema: { description: 'Discover the configured Proxmox cluster (nodes, templates, datastores, bridges, used VMIDs) to help fill in a Proxmox deployment. Reads PROXMOX_VE_ENDPOINT / PROXMOX_VE_API_TOKEN from stored secrets (or env).', tags: [TAG] },
+  }, async (_request, reply) => {
+    try {
+      return await provisioningService.discoverProxmox();
+    } catch (err) {
+      return fail(reply, err);
+    }
+  });
+
   fastify.get('/provisioning/events', {
     schema: {
       description: 'Server-Sent Events stream for broker progress. Sends an initial snapshot, then job/resource/active-job updates as deployment state changes.',
@@ -358,8 +368,8 @@ export default async function provisioningRoutes(
     return { name: request.params.name, deleted: true };
   });
 
-  // ── config seed (idempotent import of shipped database/*.yaml) ────────────────
+  // ── config seed (idempotent seed of the typed config modules) ─────────────────
   fastify.post('/provisioning/seed', {
-    schema: { description: 'Seed/refresh the config tables (deployments, provider/resource profiles) from the shipped database/*.yaml. Idempotent.', tags: [TAG] },
+    schema: { description: 'Seed/refresh the config tables (deployments, provider/resource profiles) from the typed config modules (config/modules/**). Idempotent.', tags: [TAG] },
   }, async () => provisioningService.seed());
 }

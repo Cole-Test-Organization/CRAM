@@ -1,34 +1,35 @@
-import { A } from '@solidjs/router';
+import { A, useSearchParams } from '@solidjs/router';
 import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
-import { api, type ProvisioningDeploymentSummary, type ProvisioningJob, type ProvisioningResource } from '../lib/api';
+import { api, type ProvisioningDeploymentSummary, type ProvisioningJob } from '../lib/api';
 import { createProvisioningEventStream } from '../lib/provisioningEvents';
 import Button from '../components/Button';
 import JobMonitor from '../components/provisioning/JobMonitor';
 import StatusBadge from '../components/StatusBadge';
 import { formatDateTime } from '../utils/date';
-import { LaunchModal, StreamStatusPill } from './HomelabCommon';
+import { LaunchModal } from './HomelabCommon';
 import BrokerTabs from './BrokerTabs';
 import { activeProvisioningResources } from '../lib/provisioningResources';
-
-function resourceCounts(resources: ProvisioningResource[]) {
-  const counts = new Map<string, number>();
-  for (const resource of resources) {
-    counts.set(resource.deploymentId, (counts.get(resource.deploymentId) || 0) + 1);
-  }
-  return counts;
-}
 
 export default function HomelabList() {
   const [launchOpen, setLaunchOpen] = createSignal(false);
   const [launchDeployment, setLaunchDeployment] = createSignal<string | null>(null);
-  const [monitorJobId, setMonitorJobId] = createSignal<string | null>(null);
+  // Keep the monitored job in the URL so a refresh restores the live log panel
+  // instead of dropping it (the job + its logs already live in the DB).
+  const [searchParams, setSearchParams] = useSearchParams<{ job?: string }>();
+  const monitorJobId = () => searchParams.job ?? null;
+  const setMonitorJobId = (id: string | null) => setSearchParams({ job: id ?? undefined });
 
   const [deployments, { refetch: refetchDeployments }] = createResource(() => api.listProvisioningDeployments());
   const stream = createProvisioningEventStream({ jobsLimit: 8 });
 
   const activeResources = createMemo(() => activeProvisioningResources(stream.resources()));
-  const trackedCounts = createMemo(() => resourceCounts(activeResources()));
-  const recentJobs = createMemo(() => stream.jobs().slice(0, 8));
+  const trackedCounts = createMemo(() => {
+    const counts = new Map<string, number>();
+    for (const resource of activeResources()) {
+      counts.set(resource.deploymentId, (counts.get(resource.deploymentId) || 0) + 1);
+    }
+    return counts;
+  });
 
   const templates = createMemo(() => (deployments() || []).filter((d) => d.isTemplate));
   // Active "deployments" = launched instances, plus any template still owning live
@@ -66,7 +67,6 @@ export default function HomelabList() {
           </div>
         </div>
         <div class="flex gap-2 flex-wrap">
-          <StreamStatusPill status={stream.connectionStatus()} error={stream.error()} />
           <Button variant="ghost" size="sm" onClick={refreshAll}>Refresh</Button>
           <Button variant="primary" size="sm" onClick={() => openLaunch()}>+ Deploy</Button>
         </div>
@@ -137,15 +137,16 @@ export default function HomelabList() {
                 }>
                   {(deployment) => (
                     <div class="press-row gap-3 flex-wrap border-b border-base-700 last:border-b-0">
-                      <div class="flex-1 min-w-[65%] md:min-w-[260px]">
+                      <A href={`/broker/${deployment.id}`} class="flex-1 min-w-[65%] md:min-w-[260px] no-underline">
                         <div class="font-semibold text-sm text-base-50 break-words">{deployment.id}</div>
                         <div class="flex gap-2 flex-wrap text-[11px] text-base-400 uppercase tracking-wider mt-1">
                           <span>{deployment.provider || 'unknown'}</span>
                           <span>{deployment.resourceCount} resources</span>
                           <span>{deployment.stepCount} steps</span>
                         </div>
-                      </div>
+                      </A>
                       <div class="flex gap-2 flex-wrap">
+                        <Button variant="ghost" size="sm" href={`/broker/${deployment.id}`}>Open</Button>
                         <Button variant="primary" size="sm" onClick={() => openLaunch(deployment)}>Deploy</Button>
                       </div>
                     </div>
@@ -159,33 +160,11 @@ export default function HomelabList() {
         <aside class="flex flex-col gap-5">
           <section>
             <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-              <h2 class="text-[14px] uppercase tracking-widest font-bold text-surf-300">Resources</h2>
-              <span class="text-[11px] text-base-400 uppercase tracking-wider">{activeResources().length} active records</span>
-            </div>
-            <div class="panel panel-accent">
-              <For each={activeResources()} fallback={
-                <div class="text-base-400 text-center p-8 text-sm italic">No provisioned resources yet.</div>
-              }>
-                {(resource) => (
-                  <A href={`/broker/${resource.deploymentId}`} class="press-row gap-3 flex-wrap border-b border-base-700 last:border-b-0">
-                    <div class="flex-1 min-w-[58%]">
-                      <div class="text-sm text-base-50 font-semibold break-words">{resource.name || resource.hostname || resource.id}</div>
-                      <div class="text-[11px] text-base-400 uppercase tracking-wider mt-1">{resource.kind || 'resource'} · {resource.deploymentId}</div>
-                    </div>
-                    <StatusBadge status={resource.lifecycleStatus} />
-                  </A>
-                )}
-              </For>
-            </div>
-          </section>
-
-          <section>
-            <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
               <h2 class="text-[14px] uppercase tracking-widest font-bold text-surf-300">Recent Jobs</h2>
               <Button variant="ghost" size="sm" onClick={() => void stream.refresh()}>Refresh</Button>
             </div>
             <div class="panel panel-accent">
-              <For each={recentJobs()} fallback={
+              <For each={stream.jobs()} fallback={
                 <div class="text-base-400 text-center p-8 text-sm italic">No jobs yet.</div>
               }>
                 {(job) => (

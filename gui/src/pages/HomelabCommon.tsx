@@ -4,21 +4,7 @@ import Button from '../components/Button';
 import Modal from '../components/Modal';
 import FormField, { formInputClass, formSelectClass } from '../components/FormField';
 import { formatDateTime } from '../utils/date';
-
-export function StreamStatusPill(props: { error?: string; status: string }) {
-  const live = () => props.status === 'live';
-  const label = () => props.status.replace(/[-_]/g, ' ');
-  return (
-    <span
-      title={props.error || undefined}
-      class={`text-[10px] uppercase tracking-widest border px-2 py-1 font-semibold ${
-        live() ? 'border-surf-300 text-surf-300' : 'border-base-600 text-base-400'
-      }`}
-    >
-      {label()}
-    </span>
-  );
-}
+import { isHttpUrl, isIpv4, isPrivateIpv4 } from '../utils/network';
 
 // ── Connection endpoints ─────────────────────────────────────────────────────
 // Provider-agnostic by construction: we never branch on `resource.provider`.
@@ -46,103 +32,58 @@ export interface ResourceEndpoint {
   primary: boolean;
 }
 
-const ENDPOINT_ACRONYMS: Record<string, string> = {
-  ip: 'IP', url: 'URL', dns: 'DNS', http: 'HTTP', https: 'HTTPS', ssh: 'SSH',
-  rdp: 'RDP', eks: 'EKS', ecr: 'ECR', vpc: 'VPC', eni: 'ENI', ami: 'AMI',
-  id: 'ID', api: 'API', nat: 'NAT', mgmt: 'Mgmt',
-};
-
-function humanizeEndpointKey(key: string): string {
-  return (
-    key
-      .split(/[_\s]+/)
-      .filter(Boolean)
-      .map((part) => ENDPOINT_ACRONYMS[part.toLowerCase()] ?? part.charAt(0).toUpperCase() + part.slice(1))
-      .join(' ') || key
-  );
-}
-
-function isIpv4(value: string): boolean {
-  const octets = value.split('.');
-  return octets.length === 4 && octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255);
-}
-
-// RFC1918 + CGNAT + link-local + loopback — used to scope an address as private
-// from its value, so scoping stays correct regardless of how a provider names the
-// output key (e.g. a future `nat_ip` vs `network_ip`).
-function isPrivateIpv4(value: string): boolean {
-  const [a, b] = value.split('.').map(Number);
-  return (
-    a === 10 ||
-    a === 127 ||
-    (a === 192 && b === 168) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254)
-  );
-}
-
-function isHttpUrl(value: string): boolean {
-  return /^https?:\/\/\S+$/i.test(value);
-}
-
-function urlScope(value: string): ResourceEndpointScope {
-  try {
-    const host = new URL(value).hostname;
-    if (isIpv4(host)) return isPrivateIpv4(host) ? 'private' : 'public';
-    return 'public';
-  } catch {
-    return 'unknown';
-  }
-}
-
 type RawEndpoint = { label: string; address: string; family: ResourceEndpointFamily };
-
-function collectEndpoints(node: unknown, key: string, out: RawEndpoint[]): void {
-  if (typeof node === 'string') {
-    const value = node.trim();
-    if (isIpv4(value)) out.push({ label: humanizeEndpointKey(key), address: value, family: 'ipv4' });
-    else if (isHttpUrl(value)) out.push({ label: humanizeEndpointKey(key), address: value, family: 'url' });
-    return;
-  }
-  if (Array.isArray(node)) {
-    for (const item of node) collectEndpoints(item, key, out);
-    return;
-  }
-  if (node && typeof node === 'object') {
-    for (const [childKey, childValue] of Object.entries(node as Record<string, unknown>)) {
-      collectEndpoints(childValue, childKey, out);
-    }
-  }
-}
-
-function endpointRank(endpoint: Pick<ResourceEndpoint, 'family' | 'scope'>): number {
-  if (endpoint.family === 'ipv4' && endpoint.scope === 'public') return 0;
-  if (endpoint.family === 'url') return 1;
-  if (endpoint.family === 'ipv4' && endpoint.scope === 'private') return 2;
-  return 3;
-}
 
 // Pull every connectable address out of a resource's Terraform outputs, ordered
 // public-IP → URL → private-IP, with the best "connect here" target flagged primary.
 export function resourceConnections(resource: Pick<ProvisioningResource, 'outputs'>): ResourceEndpoint[] {
   const raw: RawEndpoint[] = [];
-  collectEndpoints(resource.outputs ?? null, 'address', raw);
+  const stack: Array<{ key: string; node: unknown }> = [{ key: 'address', node: resource.outputs ?? null }];
+
+  while (stack.length) {
+    const { key, node } = stack.pop()!;
+    if (typeof node === 'string') {
+      const address = node.trim();
+      const label = key.replace(/[_\s]+/g, ' ').trim() || key;
+      if (isIpv4(address)) raw.push({ label, address, family: 'ipv4' });
+      else if (isHttpUrl(address)) raw.push({ label, address, family: 'url' });
+    } else if (Array.isArray(node)) {
+      for (let i = node.length - 1; i >= 0; i -= 1) stack.push({ key, node: node[i] });
+    } else if (node && typeof node === 'object') {
+      const entries = Object.entries(node as Record<string, unknown>);
+      for (let i = entries.length - 1; i >= 0; i -= 1) {
+        const [childKey, childValue] = entries[i];
+        stack.push({ key: childKey, node: childValue });
+      }
+    }
+  }
 
   const seen = new Set<string>();
   const endpoints: ResourceEndpoint[] = [];
   for (const item of raw) {
     if (seen.has(item.address)) continue;
     seen.add(item.address);
+    let scope: ResourceEndpointScope = item.family === 'ipv4' ? (isPrivateIpv4(item.address) ? 'private' : 'public') : 'unknown';
+    if (item.family === 'url') {
+      const host = new URL(item.address).hostname;
+      scope = isIpv4(host) ? (isPrivateIpv4(host) ? 'private' : 'public') : 'public';
+    }
     endpoints.push({
       ...item,
-      scope: item.family === 'ipv4' ? (isPrivateIpv4(item.address) ? 'private' : 'public') : urlScope(item.address),
+      scope,
       href: item.family === 'url' ? item.address : null,
       primary: false,
     });
   }
 
-  endpoints.sort((a, b) => endpointRank(a) - endpointRank(b));
+  const priority = new Map([
+    ['ipv4:public', 0],
+    ['url:public', 1],
+    ['url:private', 1],
+    ['url:unknown', 1],
+    ['ipv4:private', 2],
+  ]);
+  endpoints.sort((a, b) => (priority.get(`${a.family}:${a.scope}`) ?? 3) - (priority.get(`${b.family}:${b.scope}`) ?? 3));
   const primary = endpoints.find((endpoint) => (endpoint.family === 'ipv4' && endpoint.scope === 'public') || endpoint.family === 'url');
   if (primary) primary.primary = true;
   return endpoints;
@@ -156,7 +97,14 @@ export function ResourceConnections(props: { resource: ProvisioningResource | nu
     <Show when={endpoints().length}>
       <div class={`flex flex-col gap-1 ${props.class ?? ''}`}>
         <For each={endpoints()}>
-          {(endpoint) => <EndpointRow endpoint={endpoint} />}
+          {(endpoint) => (
+            <CopyableValueRow
+              label={endpoint.label}
+              value={endpoint.address}
+              href={endpoint.href}
+              strong={endpoint.primary}
+            />
+          )}
         </For>
       </div>
     </Show>
@@ -182,17 +130,6 @@ export function RdpTunnelEndpoint(props: { tunnel: ProvisioningRdpTunnel | null 
         </div>
       )}
     </Show>
-  );
-}
-
-function EndpointRow(props: { endpoint: ResourceEndpoint }) {
-  return (
-    <CopyableValueRow
-      label={props.endpoint.label}
-      value={props.endpoint.address}
-      href={props.endpoint.href}
-      strong={props.endpoint.primary}
-    />
   );
 }
 
@@ -253,9 +190,9 @@ export function LaunchModal(props: {
 
   // Only templates are launchable into new instances; deployed instances are managed
   // from their own detail page.
-  const templates = () => props.deployments.filter((d) => d.isTemplate);
+  const templates = () => props.deployments.filter((deployment) => deployment.isTemplate);
 
-  const [detail] = createResource(
+  const [deploymentDetail] = createResource(
     () => (props.open && deploymentId() ? deploymentId() : null),
     (id) => id ? api.getProvisioningDeployment(id) : Promise.resolve(null),
   );
@@ -267,7 +204,7 @@ export function LaunchModal(props: {
   createEffect(() => {
     if (!props.open) return;
     const list = templates();
-    const wanted = props.initialDeploymentId && list.some((d) => d.id === props.initialDeploymentId)
+    const wanted = props.initialDeploymentId && list.some((deployment) => deployment.id === props.initialDeploymentId)
       ? props.initialDeploymentId
       : list[0]?.id || '';
     setDeploymentId(wanted);
@@ -277,11 +214,11 @@ export function LaunchModal(props: {
   });
 
   createEffect(() => {
-    const d = detail();
-    if (!d) return;
+    const deployment = deploymentDetail();
+    if (!deployment) return;
 
     const next: Record<string, string | number | boolean> = {};
-    for (const input of d.inputs) {
+    for (const input of deployment.inputs) {
       if (input.default !== undefined) next[input.name] = input.default;
       else if (input.type === 'boolean') next[input.name] = false;
       else next[input.name] = '';
@@ -289,16 +226,16 @@ export function LaunchModal(props: {
     setParamValues((current) => ({ ...next, ...current }));
   });
 
-  const selected = () => detail() as ProvisioningDeploymentDescriptor | null;
-  const storedSecrets = () => new Set((secrets() || []).map((s) => s.name));
-  const missingSecrets = () => selected()?.requiredEnv.filter((name) => !storedSecrets().has(name)) || [];
+  const selectedDeployment = () => deploymentDetail() as ProvisioningDeploymentDescriptor | null;
+  const storedSecrets = () => new Set((secrets() || []).map((secret) => secret.name));
+  const missingSecrets = () => selectedDeployment()?.requiredEnv.filter((name) => !storedSecrets().has(name)) || [];
 
   const params = () => {
-    const d = selected();
-    if (!d) return {};
+    const deployment = selectedDeployment();
+    if (!deployment) return {};
     const values = paramValues();
     const out: Record<string, unknown> = {};
-    for (const input of d.inputs) {
+    for (const input of deployment.inputs) {
       const value = values[input.name];
       if (input.type === 'number') out[input.name] = Number(value);
       else out[input.name] = value;
@@ -307,13 +244,13 @@ export function LaunchModal(props: {
   };
 
   const launch = async () => {
-    const d = selected();
+    const deployment = selectedDeployment();
     const name = instanceName().trim();
-    if (!d || !name) return;
+    if (!deployment || !name) return;
     setSubmitting(true);
     setError('');
     try {
-      const job = await api.createProvisioningInstance(d.id, name, params());
+      const job = await api.createProvisioningInstance(deployment.id, name, params());
       props.onLaunched(job);
       props.onClose();
     } catch (err: any) {
@@ -332,7 +269,7 @@ export function LaunchModal(props: {
       footer={
         <>
           <Button variant="ghost" size="md" onClick={props.onClose}>Cancel</Button>
-          <Button variant="primary" size="md" disabled={submitting() || !selected() || !instanceName().trim()} onClick={launch}>
+          <Button variant="primary" size="md" disabled={submitting() || !selectedDeployment() || !instanceName().trim()} onClick={launch}>
             {submitting() ? 'Deploying...' : 'Deploy'}
           </Button>
         </>
@@ -342,7 +279,7 @@ export function LaunchModal(props: {
         <FormField label="Template">
           <select class={formSelectClass} value={deploymentId()} onChange={(e) => { setDeploymentId(e.currentTarget.value); setParamValues({}); }}>
             <For each={templates()}>
-              {(d) => <option value={d.id}>{d.id}</option>}
+              {(deployment) => <option value={deployment.id}>{deployment.id}</option>}
             </For>
           </select>
         </FormField>
@@ -358,31 +295,31 @@ export function LaunchModal(props: {
           <div class="text-[11px] text-base-400 mt-1">A unique copy is created under this name — deploy the same template again for another.</div>
         </FormField>
 
-        <Show when={selected()}>
-          {(d) => (
+        <Show when={selectedDeployment()}>
+          {(deployment) => (
             <>
               <div class="grid grid-cols-1 gap-3 md:grid-cols-3 mb-4">
                 <div class="border-2 border-base-600 bg-base-950 p-3">
                   <div class="text-[10px] uppercase tracking-widest text-surf-300 font-bold">Provider</div>
-                  <div class="text-base-50 text-sm mt-1">{d().provider || 'unknown'}</div>
+                  <div class="text-base-50 text-sm mt-1">{deployment().provider || 'unknown'}</div>
                 </div>
                 <div class="border-2 border-base-600 bg-base-950 p-3">
                   <div class="text-[10px] uppercase tracking-widest text-surf-300 font-bold">Resources</div>
-                  <div class="text-base-50 text-sm mt-1">{d().resourceCount}</div>
+                  <div class="text-base-50 text-sm mt-1">{deployment().resourceCount}</div>
                 </div>
                 <div class="border-2 border-base-600 bg-base-950 p-3">
                   <div class="text-[10px] uppercase tracking-widest text-surf-300 font-bold">Secrets</div>
                   <div class={`text-sm mt-1 ${missingSecrets().length ? 'text-amber-300' : 'text-surf-300'}`}>
-                    {d().requiredEnv.length - missingSecrets().length}/{d().requiredEnv.length} stored
+                    {deployment().requiredEnv.length - missingSecrets().length}/{deployment().requiredEnv.length} stored
                   </div>
                 </div>
               </div>
 
-              <Show when={d().inputs.length}>
+              <Show when={deployment().inputs.length}>
                 <div class="border-t-2 border-base-700 pt-3 mt-3">
                   <div class="text-[11px] uppercase tracking-widest text-surf-300 font-bold mb-2">Inputs</div>
                   <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <For each={d().inputs}>
+                    <For each={deployment().inputs}>
                       {(input) => {
                         const label = input.label || input.name;
                         const description = input.description;

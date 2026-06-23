@@ -4,7 +4,8 @@ $ProgressPreference = "SilentlyContinue"
 
 $Hostname = ${hostname}
 $AdminUsername = ${admin_username}
-$AdminPassword = ${admin_password}
+$Region = ${region}
+$AdminPasswordParam = ${admin_password_param}
 $InstallSsmAgent = ${install_ssm_agent}
 $InstallPython = ${install_python}
 $PythonInstallUrl = ${python_install_url}
@@ -80,7 +81,30 @@ function Install-SSMAgent {
   Start-Service -Name AmazonSSMAgent
 }
 
+function Get-AdminPassword {
+  if (-not $AdminPasswordParam) {
+    return $null
+  }
+
+  # The password lives in SSM Parameter Store (SecureString), never in user_data or the
+  # SSM document body. Fetch it at boot with the instance role. Non-fatal: if the fetch
+  # fails (no role, no AWS CLI), leave the admin login unchanged so the EC2 key-pair
+  # password-decrypt fallback still works.
+  try {
+    $Value = & aws ssm get-parameter --name $AdminPasswordParam --with-decryption --query "Parameter.Value" --output text --region $Region 2>$null
+    if ($LASTEXITCODE -eq 0 -and $Value) {
+      return $Value.Trim()
+    }
+    Write-Host "Could not fetch the admin password from SSM Parameter Store (exit $LASTEXITCODE); leaving local admin credentials unchanged."
+    return $null
+  } catch {
+    Write-Host "Could not fetch the admin password from SSM Parameter Store: $($_.Exception.Message)"
+    return $null
+  }
+}
+
 function Set-LocalAdminCredential {
+  $AdminPassword = Get-AdminPassword
   if (-not $AdminPassword) {
     Write-Host "No Windows admin password configured; leaving local admin credentials unchanged."
     return

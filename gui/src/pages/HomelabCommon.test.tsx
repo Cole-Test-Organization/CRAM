@@ -119,8 +119,8 @@ describe('resourceConnections', () => {
     });
 
     expect(endpoints).toEqual([
-      { label: 'Public IP', address: '54.1.2.3', family: 'ipv4', scope: 'public', href: null, primary: true },
-      { label: 'Private IP', address: '10.0.1.20', family: 'ipv4', scope: 'private', href: null, primary: false },
+      { label: 'public ip', address: '54.1.2.3', family: 'ipv4', scope: 'public', href: null, primary: true },
+      { label: 'private ip', address: '10.0.1.20', family: 'ipv4', scope: 'private', href: null, primary: false },
     ]);
   });
 
@@ -138,7 +138,7 @@ describe('resourceConnections', () => {
     });
 
     expect(endpoints).toEqual([
-      { label: 'Private IP', address: '10.0.2.30', family: 'ipv4', scope: 'private', href: null, primary: false },
+      { label: 'private ip', address: '10.0.2.30', family: 'ipv4', scope: 'private', href: null, primary: false },
     ]);
   });
 
@@ -159,14 +159,14 @@ describe('resourceConnections', () => {
     });
 
     expect(endpoints.map((e) => [e.label, e.scope, e.family])).toEqual([
-      ['Management Public', 'public', 'ipv4'],
-      ['Untrust Public', 'public', 'ipv4'],
-      ['HTTPS URL', 'public', 'url'],
-      ['Management IP', 'private', 'ipv4'],
-      ['Untrust IP', 'private', 'ipv4'],
-      ['Trust IP', 'private', 'ipv4'],
+      ['management public', 'public', 'ipv4'],
+      ['untrust public', 'public', 'ipv4'],
+      ['https url', 'public', 'url'],
+      ['management ip', 'private', 'ipv4'],
+      ['untrust ip', 'private', 'ipv4'],
+      ['trust ip', 'private', 'ipv4'],
     ]);
-    expect(endpoints.find((e) => e.primary)?.label).toBe('Management Public');
+    expect(endpoints.find((e) => e.primary)?.label).toBe('management public');
     expect(endpoints.find((e) => e.family === 'url')?.href).toBe('https://52.10.0.5');
   });
 

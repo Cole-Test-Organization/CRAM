@@ -12,8 +12,8 @@ import { findAppProfile, findConfigProfile } from "./modules/index.js";
 // the same raw-read hooks the file repo does, so the discovery contract and the
 // broker's lifecycle loaders are unchanged. Storage split:
 //   - deployments / provider_profiles / resource_profiles come from rows seeded out
-//     of database/*.yaml (readDeploymentConfig reassembles a DeploymentConfig from
-//     the parent deployment row + ordered deployment_resources children).
+//     of the typed config modules (config/modules/**); readDeploymentConfig reassembles
+//     a DeploymentConfig from the parent deployment row + ordered deployment_resources children.
 //   - app profiles and config profiles have NO tables; they resolve straight from the
 //     in-code module registry (config/modules), the same source the seed reads.
 // All row reads run under withUser(); forced RLS scopes them to this user.

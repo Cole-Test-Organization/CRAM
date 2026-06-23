@@ -7,6 +7,8 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
+  set_admin_password   = var.admin_password != null && var.admin_password != ""
+  admin_password_param = local.set_admin_password ? "/${var.project_name}/${var.hostname}/admin-password" : ""
   use_existing_network = var.network_mode == "existing" || (var.vpc_id != null && var.subnet_id != null)
   availability_zone    = data.aws_availability_zones.available.names[var.availability_zone_index]
   subnet_cidr          = var.subnet_cidr == null ? cidrsubnet(var.vpc_cidr, 8, 30) : var.subnet_cidr
@@ -18,7 +20,8 @@ locals {
   bootstrap_script = templatefile("${path.module}/user-data.ps1.tftpl", {
     hostname              = jsonencode(var.hostname)
     admin_username        = jsonencode(var.admin_username)
-    admin_password        = jsonencode(var.admin_password == null ? "" : var.admin_password)
+    region                = jsonencode(var.region)
+    admin_password_param  = jsonencode(local.admin_password_param)
     install_ssm_agent     = var.install_ssm_agent ? "$true" : "$false"
     install_python        = var.install_python ? "$true" : "$false"
     python_install_url    = jsonencode(var.python_install_url == null ? "" : var.python_install_url)
@@ -178,6 +181,50 @@ resource "aws_iam_instance_profile" "endpoint" {
   count = var.enable_ssm ? 1 : 0
   name  = "${var.project_name}-${var.hostname}-profile"
   role  = aws_iam_role.endpoint[0].name
+}
+
+# Local Windows admin password kept in SSM Parameter Store (SecureString) instead of
+# inlined into user_data / the SSM document content, so it can't be read via
+# ssm:GetDocument or ec2:DescribeInstanceAttribute. The bootstrap fetches it at boot
+# with the instance role. (The value still transits Terraform state.)
+resource "aws_ssm_parameter" "admin_password" {
+  count       = local.set_admin_password ? 1 : 0
+  name        = local.admin_password_param
+  description = "Local Windows admin password for ${var.project_name}-${var.hostname}, fetched by the bootstrap."
+  type        = "SecureString"
+  value       = var.admin_password
+
+  tags = {
+    Name      = "${var.project_name}-${var.hostname}-admin-password"
+    ManagedBy = "panw-broker"
+  }
+}
+
+resource "aws_iam_role_policy" "admin_password_read" {
+  count = var.enable_ssm && local.set_admin_password ? 1 : 0
+  name  = "${var.project_name}-${var.hostname}-admin-password-read"
+  role  = aws_iam_role.endpoint[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
+        Resource = aws_ssm_parameter.admin_password[0].arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "ssm.${var.region}.amazonaws.com"
+          }
+        }
+      },
+    ]
+  })
 }
 
 resource "aws_instance" "endpoint" {

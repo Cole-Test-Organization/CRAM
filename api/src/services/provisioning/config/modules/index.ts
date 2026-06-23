@@ -14,14 +14,12 @@ import type {
 import pp_aws_lab from "./provider-profiles/aws-lab.js";
 import pp_proxmox_home from "./provider-profiles/proxmox-home.js";
 import rp_aws_egress_route from "./resource-profiles/aws-egress-route.js";
-import rp_aws_eks_cluster from "./resource-profiles/aws-eks-cluster.js";
 import rp_aws_network from "./resource-profiles/aws-network.js";
 import rp_aws_panorama from "./resource-profiles/aws-panorama.js";
 import rp_aws_panw_vmseries from "./resource-profiles/aws-panw-vmseries.js";
 import rp_aws_s3_bucket from "./resource-profiles/aws-s3-bucket.js";
 import rp_aws_ubuntu_server from "./resource-profiles/aws-ubuntu-server.js";
 import rp_aws_windows_endpoint from "./resource-profiles/aws-windows-endpoint.js";
-import dep_aws_eks_cluster from "./deployments/aws-eks-cluster.js";
 import dep_aws_enterprise_firewall from "./deployments/aws-enterprise-firewall.js";
 import dep_aws_gp_lab_trusted_users from "./deployments/aws-gp-lab-trusted-users.js";
 import dep_aws_panorama_lan from "./deployments/aws-panorama-lan.js";
@@ -44,7 +42,6 @@ export const providerProfiles: ProviderProfileModule[] = [
 
 export const resourceProfiles: ResourceProfileModule[] = [
   rp_aws_egress_route,
-  rp_aws_eks_cluster,
   rp_aws_network,
   rp_aws_panorama,
   rp_aws_panw_vmseries,
@@ -54,7 +51,6 @@ export const resourceProfiles: ResourceProfileModule[] = [
 ];
 
 export const deployments: DeploymentModule[] = [
-  dep_aws_eks_cluster,
   dep_aws_enterprise_firewall,
   dep_aws_gp_lab_trusted_users,
   dep_aws_panorama_lan,

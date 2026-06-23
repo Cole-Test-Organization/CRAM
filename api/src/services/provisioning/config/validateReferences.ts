@@ -17,9 +17,10 @@ export interface ReferenceConfigSource {
   getResourceProfile(name: string): Promise<TerraformResourceProfile | null>;
   /**
    * Distinct providers that have at least one Terraform resource profile. A provider
-   * with none provisions via a non-Terraform adapter (e.g. Proxmox clones VMs through
-   * its own API), so a derived `${provider}-${kind}` profile is not expected for it —
-   * the check skips those to avoid false positives.
+   * with none provisions another way (e.g. Proxmox uses a dedicated hardcoded stack,
+   * terraform/panw-vm, not a per-kind resource profile), so a derived
+   * `${provider}-${kind}` profile is not expected for it — the check skips those to
+   * avoid false positives.
    */
   listResourceProfileProviders(): Promise<string[]>;
 }
@@ -125,6 +126,23 @@ export async function collectDeploymentReferenceProblems(
     }
   }
 
+  // fromResource references also live in the deployment resource bodies (placement,
+  // managementServer, nextHop, …) — the resource profile pulls them via `path:` specs,
+  // so the profile walk above never sees them. Walk each body so a typo'd or renamed
+  // reference is caught here instead of failing mid-deploy in the var resolver.
+  for (const resource of resources) {
+    const where = resourceLabel(resource);
+    const bodyRefs = new Set<string>();
+    collectFromResourceRefs(resource, bodyRefs);
+    for (const ref of bodyRefs) {
+      if (!resourceIds.has(ref)) {
+        problems.push(
+          `${where}: references resource "${ref}" via fromResource, but deployment "${deployment.name}" has no such resource`,
+        );
+      }
+    }
+  }
+
   // Step targets must resolve to a resource (hostname or name).
   for (const step of deployment.steps ?? []) {
     for (const target of step.targets ?? []) {
@@ -152,6 +170,23 @@ function walkSpec(spec: TerraformValueSpec, refs: Set<string>): void {
   if (typeof spec.fromResource === "string" && spec.fromResource) refs.add(spec.fromResource);
   if (Array.isArray(spec.first)) {
     for (const candidate of spec.first) walkSpec(candidate, refs);
+  }
+}
+
+// Every `fromResource` name nested anywhere in a value. Deployment resource bodies hold
+// them inside placement/managementServer/nextHop (sometimes within `first[]` arrays);
+// this mirrors how the runtime var resolver treats any { fromResource } object.
+function collectFromResourceRefs(value: unknown, refs: Set<string>): void {
+  if (Array.isArray(value)) {
+    for (const item of value) collectFromResourceRefs(item, refs);
+    return;
+  }
+  if (value && typeof value === "object") {
+    const ref = (value as { fromResource?: unknown }).fromResource;
+    if (typeof ref === "string" && ref) refs.add(ref);
+    for (const nested of Object.values(value as Record<string, unknown>)) {
+      collectFromResourceRefs(nested, refs);
+    }
   }
 }
 
