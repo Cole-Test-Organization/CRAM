@@ -22,7 +22,6 @@ locals {
     install_ssm_agent     = var.install_ssm_agent ? "$true" : "$false"
     install_python        = var.install_python ? "$true" : "$false"
     python_install_url    = jsonencode(var.python_install_url == null ? "" : var.python_install_url)
-    koi_script_url        = jsonencode(var.koi_script_url == null ? "" : var.koi_script_url)
     koi_script_inline_b64 = jsonencode(base64encode(var.koi_script_inline == null ? "" : var.koi_script_inline))
     koi_script_sha256     = jsonencode(var.koi_script_sha256 == null ? "" : var.koi_script_sha256)
     koi_arguments_json    = jsonencode(var.koi_arguments)

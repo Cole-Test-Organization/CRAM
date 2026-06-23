@@ -8,7 +8,6 @@ $AdminPassword = ${admin_password}
 $InstallSsmAgent = ${install_ssm_agent}
 $InstallPython = ${install_python}
 $PythonInstallUrl = ${python_install_url}
-$KoiScriptUrl = ${koi_script_url}
 $KoiScriptInlineBase64 = ${koi_script_inline_b64}
 $KoiScriptSha256 = ${koi_script_sha256}
 
@@ -388,9 +387,7 @@ ${applications_json}
 }
 
 function Write-KoiScript {
-  if ($KoiScriptUrl) {
-    Invoke-WebRequest -UseBasicParsing -Uri $KoiScriptUrl -OutFile $KoiScriptPath
-  } elseif ($KoiScriptInlineBase64) {
+  if ($KoiScriptInlineBase64) {
     $Bytes = [Convert]::FromBase64String($KoiScriptInlineBase64)
     [IO.File]::WriteAllBytes($KoiScriptPath, $Bytes)
   } else {

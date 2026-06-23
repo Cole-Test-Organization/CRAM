@@ -42,6 +42,11 @@ const deployment = {
         "installPython": true,
         "pythonInstallUrl": "https://www.python.org/ftp/python/3.14.5/python-3.14.5-amd64.exe"
       },
+      "koi": {
+        "scriptPath": "local-artifacts/windows/koi.py",
+        "arguments": [],
+        "environment": {}
+      },
       "placement": {
         "provider": "aws",
         "availabilityZoneIndex": 0,

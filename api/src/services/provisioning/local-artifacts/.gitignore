@@ -1,0 +1,14 @@
+# Keep large/licensed endpoint payloads out of git by default.
+# Small reusable scripts (for example .py or .ps1) may be committed when they
+# contain no secrets and are meant to ship with the provisioning service.
+*.dmg
+*.exe
+*.iso
+*.msi
+*.pkg
+*.pyc
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+__pycache__/

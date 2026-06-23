@@ -62,7 +62,6 @@ test("allowlist excludes runtime-generated / machine-derived / vestigial keys", 
     "PANOS_SSH_PUBLIC_KEY_FILE",
     "AWS_GP_LAB_ALLOWED_SOURCE_CIDRS", // auto-detected public IP
     "AWS_GP_LAB_SSH_PUBLIC_KEY", // read from ~/.ssh
-    "KOI_SCRIPT_URL", // vestigial; koi uses a local scriptPath
   ]) {
     assert.ok(!BROKER_SECRET_KEYS.includes(excluded), `${excluded} is sourced at runtime — must not be a seeded secret`);
   }

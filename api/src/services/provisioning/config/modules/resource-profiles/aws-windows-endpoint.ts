@@ -190,20 +190,6 @@ const resourceProfile = {
         "path": "resource.bootstrap.pythonInstallUrl",
         "default": "https://www.python.org/ftp/python/3.14.5/python-3.14.5-amd64.exe"
       },
-      "koi_script_url": {
-        "first": [
-          {
-            "path": "resource.koi.scriptUrl"
-          },
-          {
-            "envPath": "resource.koi.scriptUrlEnv",
-            "optional": true
-          },
-          {
-            "value": ""
-          }
-        ]
-      },
       "koi_script_inline": {
         "path": "resource.koi.scriptInline",
         "default": ""

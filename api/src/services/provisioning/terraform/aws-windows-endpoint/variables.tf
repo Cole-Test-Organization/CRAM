@@ -146,14 +146,8 @@ variable "python_install_url" {
   default     = "https://www.python.org/ftp/python/3.14.5/python-3.14.5-amd64.exe"
 }
 
-variable "koi_script_url" {
-  description = "HTTPS URL for the Koi Python script. Leave empty when koi_script_inline is provided."
-  type        = string
-  default     = ""
-}
-
 variable "koi_script_inline" {
-  description = "Inline Koi Python script body. Prefer koi_script_url for anything substantial."
+  description = "Inline Koi Python script body. The broker normally derives this from resource.koi.scriptPath."
   type        = string
   default     = ""
   sensitive   = true

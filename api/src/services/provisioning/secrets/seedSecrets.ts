@@ -21,8 +21,8 @@ import { SecretsService } from "./secretsService.js";
 //   • AWS_GP_LAB_ALLOWED_SOURCE_CIDRS — auto-detected from the deploy host's public IP
 //     (checkip.amazonaws.com) when unset.
 //   • AWS_GP_LAB_SSH_PUBLIC_KEY     — read from the host's ~/.ssh/*.pub when unset.
-//   • KOI_SCRIPT_URL               — vestigial; Koi ships from a local file
-//     (resource.koi.scriptPath, inlined + hashed), not a URL.
+//   • Koi script payloads           — shipped from a local file
+//     (resource.koi.scriptPath, inlined + hashed), not from env.
 //   • AWS_ACCESS_KEY_ID / _SECRET   — Terraform reads these from ~/.aws or the process env.
 export const BROKER_SECRET_KEYS: readonly string[] = [
   // PAN-OS / PANW licensing — proof-of-purchase from the CSP, no runtime source
