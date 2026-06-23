@@ -1,6 +1,6 @@
 import { A } from '@solidjs/router';
 
-type BrokerTab = 'deployments' | 'secrets';
+type BrokerTab = 'deployments' | 'secrets' | 'proxmox';
 
 export default function BrokerTabs(props: { active: BrokerTab }) {
   const tabClass = (tab: BrokerTab) =>
@@ -10,6 +10,7 @@ export default function BrokerTabs(props: { active: BrokerTab }) {
     <div class="flex gap-2 flex-wrap mb-5">
       <A href="/broker" class={tabClass('deployments')}>Deployments</A>
       <A href="/broker/secrets" class={tabClass('secrets')}>Secrets</A>
+      <A href="/broker/proxmox" class={tabClass('proxmox')}>Proxmox</A>
     </div>
   );
 }

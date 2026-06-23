@@ -126,6 +126,68 @@ export type ProvisioningSecretSummary = {
   updatedAt: string;
 };
 
+export type ProxmoxDiscoveredStorage = {
+  node: string;
+  storage: string;
+  type?: string;
+  content: string[];
+  active?: boolean;
+  enabled?: boolean;
+  shared?: boolean;
+  availableBytes?: number;
+  totalBytes?: number;
+};
+
+export type ProxmoxDiscoveredNetwork = {
+  node: string;
+  iface: string;
+  type?: string;
+  active?: boolean;
+  autostart?: boolean;
+  bridgePorts?: string;
+  address?: string;
+  cidr?: string;
+  gateway?: string;
+  vlanAware?: boolean;
+  isBridge: boolean;
+};
+
+export type ProxmoxDiscoveredVm = {
+  node: string;
+  vmid: number;
+  name?: string;
+  status?: string;
+  template: boolean;
+};
+
+export type ProxmoxDiscoveredNode = {
+  name: string;
+  status?: string;
+  cpu?: number;
+  memoryBytes?: number;
+  maxMemoryBytes?: number;
+  storages: ProxmoxDiscoveredStorage[];
+  networks: ProxmoxDiscoveredNetwork[];
+  templates: ProxmoxDiscoveredVm[];
+  vms: ProxmoxDiscoveredVm[];
+};
+
+export type ProxmoxDiscovery = {
+  endpoint: string;
+  nodes: ProxmoxDiscoveredNode[];
+  templates: ProxmoxDiscoveredVm[];
+  usedVmIds: number[];
+  recommendations: {
+    targetNodes: string[];
+    templateVmIds: ProxmoxDiscoveredVm[];
+    isoDatastoresByNode: Record<string, ProxmoxDiscoveredStorage[]>;
+    vmDatastoresByNode: Record<string, ProxmoxDiscoveredStorage[]>;
+    bridgesByNode: Record<string, ProxmoxDiscoveredNetwork[]>;
+  };
+  errors: string[];
+  permissionHints: string[];
+};
+
 export type ProvisioningRdpTunnel = {
   id: string;
   resourceId: string;
@@ -834,6 +896,8 @@ export const api = {
     del<ProvisioningRdpTunnel>(`/provisioning/tunnels/${encodeURIComponent(id)}`),
   closeProvisioningResourceRdpTunnel: (id: string) =>
     del<ProvisioningRdpTunnel>(`/provisioning/resources/${encodeURIComponent(id)}/rdp-tunnel`),
+  discoverProxmox: () =>
+    get<ProxmoxDiscovery>('/provisioning/providers/proxmox/discovery'),
   listProvisioningSecrets: () =>
     get<ProvisioningSecretSummary[]>('/provisioning/secrets'),
   setProvisioningSecret: (name: string, data: { value: string; description?: string }) =>

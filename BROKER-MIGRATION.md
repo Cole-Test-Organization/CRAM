@@ -253,7 +253,9 @@ findings are intentionally excluded (single-user, local). Status as of 2026-06-2
   to confirm (AMI AWS-CLI availability); HCL `terraform validate` passes.*
 - ✅ **Proxmox discovery wired** across all four surfaces (service `discoverProxmox` + HTTP
   `GET /api/provisioning/providers/proxmox/discovery` + MCP `discover_proxmox` + REFS/prose); it
-  decrypts `PROXMOX_VE_ENDPOINT`/`PROXMOX_VE_API_TOKEN` inline (no global overlay). GUI button: later.
+  decrypts `PROXMOX_VE_ENDPOINT`/`PROXMOX_VE_API_TOKEN` inline (no global overlay). GUI: a
+  "Proxmox" tab (`/broker/proxmox`) with a Discover button + an asset view (nodes, templates,
+  datastores, bridges, used VMIDs).
 - ✅ **Proxmox API token is a required secret** for `proxmox-fw-lab` — surfaced by the `requiredEnv`
   provider-walk (`PROXMOX_VE_API_TOKEN` is in the secret allowlist).
 - ✅ **Removed two hardcoded residential IPs** from `aws-windows-endpoint`/`aws-ubuntu-server`

@@ -18,6 +18,7 @@ import Settings from './pages/Settings';
 import HomelabList from './pages/HomelabList';
 import HomelabDetail from './pages/HomelabDetail';
 import BrokerSecrets from './pages/BrokerSecrets';
+import BrokerProxmox from './pages/BrokerProxmox';
 
 function LegacyHomelabDetailRedirect() {
   const params = useParams<{ id: string }>();
@@ -42,6 +43,7 @@ export default function App() {
       <Route path="/products" component={Products} />
       <Route path="/broker" component={HomelabList} />
       <Route path="/broker/secrets" component={BrokerSecrets} />
+      <Route path="/broker/proxmox" component={BrokerProxmox} />
       <Route path="/broker/:id" component={HomelabDetail} />
       <Route path="/homelab" component={() => <Navigate href="/broker" />} />
       <Route path="/homelab/:id" component={LegacyHomelabDetailRedirect} />
