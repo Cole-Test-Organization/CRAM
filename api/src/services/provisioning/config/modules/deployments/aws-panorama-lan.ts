@@ -5,7 +5,7 @@ const deployment = {
   "providerProfile": "aws-lab",
   "provider": {
     "projectName": "panorama-lan",
-    "panosVersionMajor": "11.2.11"
+    "panosVersionMajor": "11.2"
   },
   "steps": [
     {

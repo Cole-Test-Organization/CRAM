@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateCatalog } from '../src/services/provisioning/config/validateCatalog.js';
+import { deployments } from '../src/services/provisioning/config/modules/index.js';
 
 // validateCatalog() with no args validates the real shipped registry; passing a
 // Catalog validates that one. Pure — no DB, no running API.
@@ -19,6 +20,28 @@ const winProfile = { name: 'aws-windows-endpoint', provider: 'aws', kind: 'windo
 describe('Provisioning — config catalog validation', () => {
   it('the shipped catalog has no shape or reference problems', async () => {
     await assert.doesNotReject(validateCatalog());
+  });
+
+  it('keeps AWS PAN-OS image selection aligned with the trusted-users source template', () => {
+    const source = deployments.find((deployment) => deployment.name === 'aws-gp-lab-trusted-users');
+    assert.ok(source, 'source deployment aws-gp-lab-trusted-users should exist');
+    const sourcePanosVersion = source.provider?.panosVersionMajor;
+    assert.equal(sourcePanosVersion, '11.2');
+
+    const panosDeployments = deployments.filter((deployment) => {
+      if (deployment.providerProfile !== 'aws-lab') return false;
+      const resources = deployment.resources ?? [];
+      return resources.some((resource) => resource.kind === 'panw-vmseries' || resource.kind === 'panorama');
+    });
+
+    assert.ok(panosDeployments.length > 0);
+    for (const deployment of panosDeployments) {
+      assert.equal(
+        deployment.provider?.panosVersionMajor,
+        sourcePanosVersion,
+        `${deployment.name} should use the trusted-users PAN-OS selector`,
+      );
+    }
   });
 
   it('flags a deployment referencing a missing terraform resource profile', async () => {

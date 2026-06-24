@@ -6,7 +6,7 @@ const deployment = {
   "provider": {
     "projectName": "enterprise-firewall-lab",
     "vpcCidr": "10.125.0.0/16",
-    "panosVersionMajor": "11.2.11"
+    "panosVersionMajor": "11.2"
   },
   "steps": [
     {

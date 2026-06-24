@@ -1,0 +1,30 @@
+# Cloudflare tunnel for the cram app (remotely-managed "token" tunnel).
+#
+# The token (in .env, gitignored) is the tunnel's FULL identity + credential:
+# account tag + tunnel UUID + secret. Cloudflare authenticates the tunnel from
+# the token alone — nothing about this container, the host, or the launch method
+# is part of the signature — so this Compose-managed container is the SAME tunnel
+# as the original `docker run`. Public-hostname routing (-> http://cram:3200)
+# lives in the Cloudflare dashboard, keyed by the tunnel UUID, and is unaffected.
+#
+# Bring up:   docker compose -f tunnel/docker-compose.yml up -d
+# Requires the cram stack to be running first (it owns the external cram_default
+# network). cloudflared tolerates the origin being briefly unreachable and
+# retries per request, so no depends_on ordering is needed.
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cram-tunnel
+    restart: unless-stopped
+    # Matches Cloudflare's own Docker install command verbatim; the image's
+    # default entrypoint already prepends `cloudflared --no-autoupdate`.
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    networks:
+      - appnet
+
+networks:
+  # The network the cram compose stack already creates. Referenced as external
+  # so this file never tries to create or own it.
+  appnet:
+    external: true
+    name: cram_default
