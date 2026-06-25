@@ -2,6 +2,7 @@ import { createResource, createSignal, createMemo, For, Show } from 'solid-js';
 import { A } from '@solidjs/router';
 import { api } from '../lib/api';
 import { debounce } from '../lib/editing';
+import { todayLocalDate } from '../utils/date';
 import Button from '../components/Button';
 
 const MODE_LABEL: Record<string, string> = {
@@ -19,10 +20,6 @@ function modeChipClass(mode: string | null): string {
     case 'on_demand': return 'bg-papaya-500/20 text-papaya-200 border-papaya-400';
     default: return 'bg-base-800 text-base-300 border-base-500';
   }
-}
-
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 function formatShortDate(iso: string): string {
@@ -58,7 +55,7 @@ export default function EventsList() {
   const [country, setCountry] = createSignal('');
   const [tag, setTag] = createSignal('');
   const [hasLocation, setHasLocation] = createSignal(false);
-  const [after, setAfter] = createSignal(todayISO());
+  const [after, setAfter] = createSignal(todayLocalDate());
   const [before, setBefore] = createSignal('');
   const [sort, setSort] = createSignal('start_date');
   const [order, setOrder] = createSignal<'asc' | 'desc'>('asc');
@@ -116,7 +113,7 @@ export default function EventsList() {
     setCountry('');
     setTag('');
     setHasLocation(false);
-    setAfter(todayISO());
+    setAfter(todayLocalDate());
     setBefore('');
     setSort('start_date');
     setOrder('asc');
@@ -130,7 +127,7 @@ export default function EventsList() {
     if (country()) n++;
     if (tag()) n++;
     if (hasLocation()) n++;
-    if (after() && after() !== todayISO()) n++;
+    if (after() && after() !== todayLocalDate()) n++;
     if (before()) n++;
     return n;
   };

@@ -6,6 +6,7 @@ import AttendeePicker from './AttendeePicker';
 import { api } from '../lib/api';
 import { STAGES, type OpportunityStage } from '../lib/stages';
 import { createUnsavedGuard } from '../lib/unsavedGuard';
+import { todayLocalDate } from '../utils/date';
 
 function slugify(name: string) {
   return name
@@ -352,7 +353,7 @@ export function MeetingFormModal(props: MeetingModalProps) {
   // Manual-mode state (existing fields)
   const [account, setAccount] = createSignal<AccountLite | null>(null);
   const [internal, setInternal] = createSignal(false);
-  const [date, setDate] = createSignal(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = createSignal(todayLocalDate());
   const [startTime, setStartTime] = createSignal('');
   const [endTime, setEndTime] = createSignal('');
   const [meetingLocation, setMeetingLocation] = createSignal('');
@@ -411,7 +412,7 @@ export function MeetingFormModal(props: MeetingModalProps) {
   createEffect(() => {
     if (props.open) {
       const e = props.existing;
-      setDate(e?.date || new Date().toISOString().slice(0, 10));
+      setDate(e?.date || todayLocalDate());
       setStartTime(isoToLocalTime(e?.starts_at));
       setEndTime(isoToLocalTime(e?.ends_at));
       setMeetingLocation(e?.location || '');

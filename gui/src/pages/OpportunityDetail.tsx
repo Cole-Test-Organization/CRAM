@@ -6,6 +6,7 @@ import Button from '../components/Button';
 import NotesPanel from '../components/NotesPanel';
 import BackLink from '../components/BackLink';
 import { stageLabel, stageChipClass } from '../lib/stages';
+import { localDateStr } from '../utils/date';
 
 // Vendor categories mirrored from TechnicalProfilePanel — used to flatten the
 // account's technical profile into a Design of Record prompt without empty rows.
@@ -154,7 +155,7 @@ export default function OpportunityDetail() {
       lines.push('');
       lines.push('Opportunity Notes (timestamped):');
       for (const n of timestamped) {
-        const ts = n.created_at ? new Date(n.created_at).toISOString().slice(0, 10) : '';
+        const ts = n.created_at ? localDateStr(new Date(n.created_at)) : '';
         lines.push(`- [${ts}] ${String(n.body || '').trim()}`);
       }
     }

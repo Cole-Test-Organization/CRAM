@@ -22,3 +22,24 @@ export function formatDateTime(value: string | null | undefined, options?: Intl.
     if (Number.isNaN(date.getTime())) return value;
     return options ? date.toLocaleString("en-US", options) : date.toLocaleString();
 }
+
+// A Date → YYYY-MM-DD in the browser's LOCAL calendar day.
+//
+// Use this instead of `someDate.toISOString().slice(0, 10)`. toISOString() is
+// always UTC, so once it's past ~5-8pm in the Americas the UTC date has already
+// rolled to tomorrow — which silently shifts "today" defaults and date
+// comparisons a day forward every evening. getFullYear/getMonth/getDate read the
+// local calendar instead. Returns '' for an invalid Date.
+export function localDateStr(d: Date): string {
+    if (Number.isNaN(d.getTime())) return "";
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+}
+
+// Today's date as YYYY-MM-DD in the browser's local zone. The local-safe
+// replacement for `new Date().toISOString().slice(0, 10)`.
+export function todayLocalDate(): string {
+    return localDateStr(new Date());
+}

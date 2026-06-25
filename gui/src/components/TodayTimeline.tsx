@@ -1,5 +1,6 @@
 import { createSignal, createMemo, onMount, onCleanup, For, Show } from 'solid-js';
 import { A, useNavigate } from '@solidjs/router';
+import { localDateStr } from '../utils/date';
 
 // A meeting as the Today timeline needs it. Loosely typed because the meetings
 // list endpoint hands rows back as `any`; we only touch these fields.
@@ -28,12 +29,6 @@ const GUTTER = 52; // left column reserved for hour labels
 const MAX_VIEWPORT_PX = 460; // scroll past this height; we auto-scroll to "now"
 const DEFAULT_DURATION_MIN = 30; // assumed length when a meeting has no end time
 
-function localDateStr(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
 function minsSinceMidnight(d: Date): number {
   return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
 }

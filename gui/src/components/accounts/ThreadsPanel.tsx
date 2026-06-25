@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show } from 'solid-js';
 import { api } from '../../lib/api';
 import type { Thread, ThreadTask, ThreadContact } from '../../lib/types';
+import { todayLocalDate } from '../../utils/date';
 import Button from '../Button';
 
 // Threads + tasks for one account. Self-contained (owns its own fetch + CRUD,
@@ -17,7 +18,7 @@ function fmtDue(d: string | null): string {
 
 function isOverdue(due: string | null, completed: string | null): boolean {
   if (!due || completed) return false;
-  return due < new Date().toISOString().slice(0, 10);
+  return due < todayLocalDate();
 }
 
 const label = (c: ThreadContact) => c.full_name || c.email || `#${c.id}`;

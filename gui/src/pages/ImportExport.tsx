@@ -2,7 +2,7 @@ import { createResource, createSignal, For, Show } from 'solid-js';
 import { api } from '../lib/api';
 import Button from '../components/Button';
 import NotesImportPanel from '../components/NotesImportPanel';
-import { formatDateTime } from '../utils/date';
+import { formatDateTime, todayLocalDate } from '../utils/date';
 
 type ImportResult = {
   imported_at: string;
@@ -60,7 +60,7 @@ export default function ImportExport() {
     setExporting(true);
     try {
       const bundle = await api.exportBundle(slugs);
-      const date = new Date().toISOString().slice(0, 10);
+      const date = todayLocalDate();
       const name = slugs.length === 1 ? `${slugs[0]}.json` : `accounts-export-${date}.json`;
       downloadJson(name, bundle);
     } catch (err: any) {
