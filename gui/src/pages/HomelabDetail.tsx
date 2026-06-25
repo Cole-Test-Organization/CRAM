@@ -1,13 +1,13 @@
 import { A, useNavigate, useParams, useSearchParams } from '@solidjs/router';
 import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
-import { api, type ProvisioningJob, type ProvisioningRdpTunnel, type ProvisioningResource } from '../lib/api';
+import { api, type ProvisioningJob, type ProvisioningResource, type ProvisioningTunnel } from '../lib/api';
 import { createProvisioningEventStream } from '../lib/provisioningEvents';
 import BackLink from '../components/BackLink';
 import Button from '../components/Button';
 import JobMonitor from '../components/provisioning/JobMonitor';
 import StatusBadge from '../components/StatusBadge';
 import { formatDateTime } from '../utils/date';
-import { LaunchModal, RdpTunnelEndpoint, ResourceConnections } from './HomelabCommon';
+import { LaunchModal, ResourceConnections, TunnelEndpoint } from './HomelabCommon';
 import { activeProvisioningResources } from '../lib/provisioningResources';
 
 export default function HomelabDetail() {
@@ -25,7 +25,7 @@ export default function HomelabDetail() {
 
   const [deployments, { refetch: refetchDeployments }] = createResource(() => api.listProvisioningDeployments());
   const [deployment] = createResource(() => params.id, (id) => api.getProvisioningDeployment(id));
-  const [rdpTunnels, { refetch: refetchRdpTunnels }] = createResource(() => api.listProvisioningRdpTunnels());
+  const [tunnels, { refetch: refetchTunnels }] = createResource(() => api.listProvisioningTunnels());
   const stream = createProvisioningEventStream({ jobsLimit: 50 });
 
   const deploymentResourceRecords = createMemo(() => stream.resources().filter((r) => r.deploymentId === params.id));
@@ -52,8 +52,8 @@ export default function HomelabDetail() {
       || deploymentResourceRecords().some((r) => r.hostname === j.target || r.id === j.target),
     ).slice(0, 10);
   });
-  const tunnelForResource = (resource: ProvisioningResource): ProvisioningRdpTunnel | undefined =>
-    (rdpTunnels() || []).find((tunnel) => tunnel.resourceId === resource.id || tunnel.hostname === resource.hostname);
+  const tunnelForResource = (resource: ProvisioningResource): ProvisioningTunnel | undefined =>
+    (tunnels() || []).find((tunnel) => tunnel.resourceId === resource.id || tunnel.hostname === resource.hostname);
 
   const refreshAll = () => {
     void stream.refresh();
@@ -140,10 +140,25 @@ export default function HomelabDetail() {
     setActionNotice('');
     try {
       const tunnel = await api.openProvisioningRdpTunnel(resource.id);
-      await refetchRdpTunnels();
-      setActionNotice(`RDP tunnel ready: ${tunnel.rdpEndpoint}${tunnel.username ? ` as ${tunnel.username}` : ''}`);
+      await refetchTunnels();
+      setActionNotice(`RDP tunnel ready: ${tunnel.endpoint || tunnel.rdpEndpoint}${tunnel.username ? ` as ${tunnel.username}` : ''}`);
     } catch (err: any) {
       setActionError(err?.message || `Failed to open RDP tunnel for ${resource.name || resource.hostname || resource.id}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const openSshTunnel = async (resource: ProvisioningResource) => {
+    setBusy(`ssh-${resource.id}`);
+    setActionError('');
+    setActionNotice('');
+    try {
+      const tunnel = await api.openProvisioningSshTunnel(resource.id);
+      await refetchTunnels();
+      setActionNotice(`SSH tunnel ready: ${tunnel.sshCommand || tunnel.endpoint}`);
+    } catch (err: any) {
+      setActionError(err?.message || `Failed to open SSH tunnel for ${resource.name || resource.hostname || resource.id}`);
     } finally {
       setBusy('');
     }
@@ -155,9 +170,23 @@ export default function HomelabDetail() {
     setActionNotice('');
     try {
       await api.closeProvisioningResourceRdpTunnel(resource.id);
-      await refetchRdpTunnels();
+      await refetchTunnels();
     } catch (err: any) {
       setActionError(err?.message || `Failed to close RDP tunnel for ${resource.name || resource.hostname || resource.id}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const closeSshTunnel = async (resource: ProvisioningResource) => {
+    setBusy(`ssh-close-${resource.id}`);
+    setActionError('');
+    setActionNotice('');
+    try {
+      await api.closeProvisioningResourceSshTunnel(resource.id);
+      await refetchTunnels();
+    } catch (err: any) {
+      setActionError(err?.message || `Failed to close SSH tunnel for ${resource.name || resource.hostname || resource.id}`);
     } finally {
       setBusy('');
     }
@@ -174,7 +203,7 @@ export default function HomelabDetail() {
               <div class="min-w-0">
                 <div class="flex items-center gap-2 flex-wrap mb-2">
                   <h1 class="text-[26px] font-bold font-[family-name:var(--font-display)] break-words">{d().displayName || d().id}</h1>
-                  <StatusBadge status={d().isTemplate ? 'deployment' : (activeDeploymentResources().length ? 'ready' : 'idle')} />
+                  <StatusBadge status={activeDeploymentResources().length ? 'ready' : (d().isTemplate ? 'deployment' : 'idle')} />
                 </div>
                 <div class="text-base-400 text-[12px] flex gap-3 flex-wrap uppercase tracking-wider break-words">
                   <span>{d().provider || 'unknown'}</span>
@@ -229,7 +258,7 @@ export default function HomelabDetail() {
 
             <div class="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
               <section class="flex flex-col gap-5">
-                <Show when={!d().isTemplate} fallback={
+                <Show when={d().isTemplate}>
                   <div>
                     <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
                       <h2 class="text-[14px] uppercase tracking-widest font-bold text-surf-300">Deployments</h2>
@@ -255,7 +284,8 @@ export default function HomelabDetail() {
                       </For>
                     </div>
                   </div>
-                }>
+                </Show>
+
                 <div>
                   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
                     <h2 class="text-[14px] uppercase tracking-widest font-bold text-surf-300">Active Resources</h2>
@@ -275,7 +305,7 @@ export default function HomelabDetail() {
                                 <div class="font-mono text-[11px] text-base-300 mt-1 break-all">{resource.providerResourceId}</div>
                               </Show>
                               <ResourceConnections resource={resource} class="mt-2" />
-                              <RdpTunnelEndpoint tunnel={tunnelForResource(resource)} class="mt-2" />
+                              <TunnelEndpoint tunnel={tunnelForResource(resource)} class="mt-2" />
                             </div>
                             <StatusBadge status={resource.lifecycleStatus} />
                             <div class="grid grid-cols-2 gap-2 w-full max-w-full min-w-0 md:flex md:w-auto md:max-w-none md:flex-wrap">
@@ -287,7 +317,7 @@ export default function HomelabDetail() {
                               <Button class="w-full md:w-auto" variant="ghost" size="sm" disabled={Boolean(busy())} onClick={() => powerAction(resource, 'stop')}>Stop</Button>
                               <Show when={resource.kind === 'windows-endpoint'}>
                                 <Show
-                                  when={tunnelForResource(resource)}
+                                  when={tunnelForResource(resource)?.protocol === 'rdp' ? tunnelForResource(resource) : null}
                                   fallback={
                                     <Button class="w-full md:w-auto" variant="primary" size="sm" disabled={Boolean(busy())} onClick={() => openRdpTunnel(resource)}>
                                       {busy() === `rdp-${resource.id}` ? 'Opening...' : 'RDP'}
@@ -301,6 +331,22 @@ export default function HomelabDetail() {
                                   )}
                                 </Show>
                               </Show>
+                              <Show when={resource.kind === 'ubuntu-server'}>
+                                <Show
+                                  when={tunnelForResource(resource)?.protocol === 'ssh' ? tunnelForResource(resource) : null}
+                                  fallback={
+                                    <Button class="w-full md:w-auto" variant="primary" size="sm" disabled={Boolean(busy())} onClick={() => openSshTunnel(resource)}>
+                                      {busy() === `ssh-${resource.id}` ? 'Opening...' : 'SSH'}
+                                    </Button>
+                                  }
+                                >
+                                  {(tunnel) => (
+                                    <Button class="w-full md:w-auto" variant="ghost" size="sm" disabled={Boolean(busy())} onClick={() => closeSshTunnel(resource)}>
+                                      {busy() === `ssh-close-${resource.id}` ? 'Closing...' : `Close ${tunnel().publicPort}`}
+                                    </Button>
+                                  )}
+                                </Show>
+                              </Show>
                             </div>
                           </div>
                         );
@@ -308,7 +354,6 @@ export default function HomelabDetail() {
                     </For>
                   </div>
                 </div>
-                </Show>
 
                 <div>
                   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -342,7 +387,6 @@ export default function HomelabDetail() {
               </section>
 
               <aside class="flex flex-col gap-5">
-                <Show when={!d().isTemplate}>
                 <section>
                   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
                     <h2 class="text-[14px] uppercase tracking-widest font-bold text-surf-300">Active Records</h2>
@@ -367,7 +411,6 @@ export default function HomelabDetail() {
                     </For>
                   </div>
                 </section>
-                </Show>
 
                 <section>
                   <div class="flex items-center justify-between mb-3 flex-wrap gap-2">

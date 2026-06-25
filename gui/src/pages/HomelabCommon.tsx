@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createResource, createSignal, For, Show } from 'solid-js';
-import { api, type ProvisioningDeploymentDescriptor, type ProvisioningDeploymentSummary, type ProvisioningJob, type ProvisioningRdpTunnel, type ProvisioningResource } from '../lib/api';
+import { api, type ProvisioningDeploymentDescriptor, type ProvisioningDeploymentSummary, type ProvisioningJob, type ProvisioningRdpTunnel, type ProvisioningResource, type ProvisioningTunnel } from '../lib/api';
 import Button from '../components/Button';
 import Modal from '../components/Modal';
 import FormField, { formInputClass, formSelectClass } from '../components/FormField';
@@ -111,12 +111,19 @@ export function ResourceConnections(props: { resource: ProvisioningResource | nu
   );
 }
 
-export function RdpTunnelEndpoint(props: { tunnel: ProvisioningRdpTunnel | null | undefined; class?: string }) {
+export function TunnelEndpoint(props: { tunnel: ProvisioningTunnel | null | undefined; class?: string }) {
   return (
     <Show when={props.tunnel && props.tunnel.status !== 'closed' ? props.tunnel : null}>
       {(tunnel) => (
         <div class={`flex flex-col gap-1 ${props.class ?? ''}`}>
-          <CopyableValueRow label="Broker RDP" value={tunnel().rdpEndpoint} strong />
+          <CopyableValueRow
+            label={tunnel().protocol === 'ssh' ? 'Broker SSH' : 'Broker RDP'}
+            value={tunnel().endpoint || tunnel().rdpEndpoint}
+            strong
+          />
+          <Show when={tunnel().sshCommand}>
+            <CopyableValueRow label="SSH command" value={tunnel().sshCommand!} />
+          </Show>
           <Show when={tunnel().username}>
             <CopyableValueRow label="Username" value={tunnel().username!} />
           </Show>
@@ -131,6 +138,10 @@ export function RdpTunnelEndpoint(props: { tunnel: ProvisioningRdpTunnel | null 
       )}
     </Show>
   );
+}
+
+export function RdpTunnelEndpoint(props: { tunnel: ProvisioningRdpTunnel | null | undefined; class?: string }) {
+  return <TunnelEndpoint tunnel={props.tunnel} class={props.class} />;
 }
 
 function CopyableValueRow(props: { label: string; value: string; href?: string | null; strong?: boolean }) {

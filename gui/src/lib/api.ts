@@ -188,8 +188,11 @@ export type ProxmoxDiscovery = {
   permissionHints: string[];
 };
 
-export type ProvisioningRdpTunnel = {
+export type ProvisioningTunnelProtocol = 'rdp' | 'ssh';
+
+export type ProvisioningTunnel = {
   id: string;
+  protocol: ProvisioningTunnelProtocol;
   resourceId: string;
   hostname: string;
   providerResourceId: string;
@@ -199,7 +202,9 @@ export type ProvisioningRdpTunnel = {
   publicPort: number;
   internalPort: number;
   remotePort: number;
+  endpoint: string;
   rdpEndpoint: string;
+  sshCommand: string | null;
   username: string | null;
   startedAt: string;
   expiresAt: string | null;
@@ -207,6 +212,8 @@ export type ProvisioningRdpTunnel = {
   closeReason: string | null;
   logs: string[];
 };
+
+export type ProvisioningRdpTunnel = ProvisioningTunnel;
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`);
@@ -888,14 +895,22 @@ export const api = {
     get<ProvisioningJob>(`/provisioning/jobs/${encodeURIComponent(id)}`),
   cancelProvisioningJob: (id: string) =>
     post<ProvisioningJob>(`/provisioning/jobs/${encodeURIComponent(id)}/cancel`, {}),
+  listProvisioningTunnels: () =>
+    get<ProvisioningTunnel[]>('/provisioning/tunnels'),
   listProvisioningRdpTunnels: () =>
     get<ProvisioningRdpTunnel[]>('/provisioning/tunnels'),
   openProvisioningRdpTunnel: (id: string, data?: { port?: number; remotePort?: number; ttlSeconds?: number }) =>
     post<ProvisioningRdpTunnel>(`/provisioning/resources/${encodeURIComponent(id)}/rdp-tunnel`, data ?? {}),
+  openProvisioningSshTunnel: (id: string, data?: { port?: number; remotePort?: number; ttlSeconds?: number }) =>
+    post<ProvisioningTunnel>(`/provisioning/resources/${encodeURIComponent(id)}/ssh-tunnel`, data ?? {}),
   closeProvisioningRdpTunnel: (id: string) =>
     del<ProvisioningRdpTunnel>(`/provisioning/tunnels/${encodeURIComponent(id)}`),
+  closeProvisioningTunnel: (id: string) =>
+    del<ProvisioningTunnel>(`/provisioning/tunnels/${encodeURIComponent(id)}`),
   closeProvisioningResourceRdpTunnel: (id: string) =>
     del<ProvisioningRdpTunnel>(`/provisioning/resources/${encodeURIComponent(id)}/rdp-tunnel`),
+  closeProvisioningResourceSshTunnel: (id: string) =>
+    del<ProvisioningTunnel>(`/provisioning/resources/${encodeURIComponent(id)}/ssh-tunnel`),
   discoverProxmox: () =>
     get<ProxmoxDiscovery>('/provisioning/providers/proxmox/discovery'),
   listProvisioningSecrets: () =>

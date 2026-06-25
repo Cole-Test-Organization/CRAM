@@ -12,13 +12,15 @@ import {
     SecretsService,
     SecretResolver,
     seedProvisioningSecrets,
-    type SecretSummary,
+    type ListedSecretSummary,
     type SeedSecretsResult,
 } from "./secrets/index.js";
 import {
     RdpTunnelManager,
     type RdpTunnelOpenOptions,
     type RdpTunnelView,
+    type TunnelOpenOptions,
+    type TunnelView,
 } from "./rdpTunnelManager.js";
 import { discoverProxmox as runProxmoxDiscovery } from "./providers/proxmox/discovery.js";
 import type { ProxmoxDiscovery } from "./types/proxmoxDiscovery.js";
@@ -174,27 +176,49 @@ export class ProvisioningService {
         return this.broker.stopResource(target, NOOP_LOG);
     }
 
-    // ── LAN RDP tunnels (runtime sessions, not Terraform resources) ────────────
-    async listRdpTunnels(): Promise<RdpTunnelView[]> {
+    // ── LAN tunnels (runtime sessions, not Terraform resources) ────────────────
+    async listTunnels(): Promise<TunnelView[]> {
         return this.rdpTunnels.list();
+    }
+
+    async listRdpTunnels(): Promise<RdpTunnelView[]> {
+        return this.listTunnels();
     }
 
     async openRdpTunnel(
         target: string,
         options: RdpTunnelOpenOptions = {},
     ): Promise<RdpTunnelView> {
+        return this.openTunnel(target, { ...options, protocol: "rdp" });
+    }
+
+    async openSshTunnel(
+        target: string,
+        options: TunnelOpenOptions = {},
+    ): Promise<TunnelView> {
+        return this.openTunnel(target, { ...options, protocol: "ssh" });
+    }
+
+    async openTunnel(
+        target: string,
+        options: TunnelOpenOptions = {},
+    ): Promise<TunnelView> {
         const record = await this.broker.getResource(target);
         if (!record)
             throw httpError(404, `no provisioned resource "${target}"`);
         return this.rdpTunnels.open(record, options);
     }
 
-    async closeRdpTunnel(idOrResource: string): Promise<RdpTunnelView | null> {
+    async closeTunnel(idOrResource: string): Promise<TunnelView | null> {
         return this.rdpTunnels.close(idOrResource);
     }
 
-    // ── secrets (encrypted at rest; values never returned) ──────────────────────
-    async listSecrets(): Promise<SecretSummary[]> {
+    async closeRdpTunnel(idOrResource: string): Promise<RdpTunnelView | null> {
+        return this.closeTunnel(idOrResource);
+    }
+
+    // ── secrets (encrypted at rest; only allowlisted values are returned) ─────────
+    async listSecrets(): Promise<ListedSecretSummary[]> {
         return this.secrets.listSecrets(this.userId);
     }
 

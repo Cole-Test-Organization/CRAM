@@ -15,11 +15,11 @@ const paramsBody = {
   properties: { params: { type: 'object', additionalProperties: true, description: 'Deploy-time inputs, including declared launch inputs and step toggles (`when` params).' } },
   additionalProperties: false,
 } as const;
-const rdpTunnelBody = {
+const tunnelBody = {
   type: 'object',
   properties: {
-    port: { type: 'integer', minimum: 1, maximum: 65535, description: 'Optional LAN-facing port from PROVISIONING_RDP_TUNNEL_PORTS.' },
-    remotePort: { type: 'integer', minimum: 1, maximum: 65535, description: 'Remote Windows port. Defaults to 3389.' },
+    port: { type: 'integer', minimum: 1, maximum: 65535, description: 'Optional LAN-facing port from PROVISIONING_TUNNEL_PORTS / PROVISIONING_RDP_TUNNEL_PORTS.' },
+    remotePort: { type: 'integer', minimum: 1, maximum: 65535, description: 'Remote resource port. Defaults to 3389 for RDP and 22 for SSH.' },
     ttlSeconds: { type: 'integer', minimum: 0, description: 'Seconds before the broker closes the tunnel. 0 disables TTL.' },
   },
   additionalProperties: false,
@@ -226,15 +226,15 @@ export default async function provisioningRoutes(
 
   // ── runtime tunnels ────────────────────────────────────────────────────────
   fastify.get('/provisioning/tunnels', {
-    schema: { description: 'List broker-managed runtime tunnels, including SSM-backed RDP tunnels. These are process-local sessions, not Terraform resources.', tags: [TAG] },
-  }, async () => provisioningService.listRdpTunnels());
+    schema: { description: 'List broker-managed runtime tunnels, including SSM-backed RDP and SSH tunnels. These are process-local sessions, not Terraform resources.', tags: [TAG] },
+  }, async () => provisioningService.listTunnels());
 
   fastify.post<{ Params: { id: string }; Body: { port?: number; remotePort?: number; ttlSeconds?: number } }>('/provisioning/resources/:id/rdp-tunnel', {
     schema: {
       description: 'Open an SSM-backed RDP tunnel for a Windows endpoint. The broker listens on a Docker-published LAN port and proxies to the private instance over SSM.',
       tags: [TAG],
       params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
-      body: rdpTunnelBody,
+      body: tunnelBody,
     },
   }, async (request, reply) => {
     try {
@@ -247,10 +247,28 @@ export default async function provisioningRoutes(
     } catch (err) { return fail(reply, err); }
   });
 
+  fastify.post<{ Params: { id: string }; Body: { port?: number; remotePort?: number; ttlSeconds?: number } }>('/provisioning/resources/:id/ssh-tunnel', {
+    schema: {
+      description: 'Open an SSM-backed SSH tunnel for a Linux endpoint. The broker listens on a Docker-published LAN port and proxies to the private instance port 22 over SSM.',
+      tags: [TAG],
+      params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } },
+      body: tunnelBody,
+    },
+  }, async (request, reply) => {
+    try {
+      return await provisioningService.openSshTunnel(request.params.id, {
+        port: request.body?.port,
+        remotePort: request.body?.remotePort,
+        ttlSeconds: request.body?.ttlSeconds,
+        advertisedHost: advertisedTunnelHost(request),
+      });
+    } catch (err) { return fail(reply, err); }
+  });
+
   fastify.delete<{ Params: { id: string } }>('/provisioning/tunnels/:id', {
     schema: { description: 'Close a broker-managed runtime tunnel by tunnel id.', tags: [TAG], params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } } },
   }, async (request, reply) => {
-    const closed = await provisioningService.closeRdpTunnel(request.params.id);
+    const closed = await provisioningService.closeTunnel(request.params.id);
     if (!closed) { reply.code(404); return { error: `No tunnel "${request.params.id}"` }; }
     return closed;
   });
@@ -258,8 +276,16 @@ export default async function provisioningRoutes(
   fastify.delete<{ Params: { id: string } }>('/provisioning/resources/:id/rdp-tunnel', {
     schema: { description: 'Close the active RDP tunnel for a resource by resource id/hostname/name.', tags: [TAG], params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } } },
   }, async (request, reply) => {
-    const closed = await provisioningService.closeRdpTunnel(request.params.id);
+    const closed = await provisioningService.closeTunnel(request.params.id);
     if (!closed) { reply.code(404); return { error: `No RDP tunnel for "${request.params.id}"` }; }
+    return closed;
+  });
+
+  fastify.delete<{ Params: { id: string } }>('/provisioning/resources/:id/ssh-tunnel', {
+    schema: { description: 'Close the active SSH tunnel for a resource by resource id/hostname/name.', tags: [TAG], params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } } },
+  }, async (request, reply) => {
+    const closed = await provisioningService.closeTunnel(request.params.id);
+    if (!closed) { reply.code(404); return { error: `No SSH tunnel for "${request.params.id}"` }; }
     return closed;
   });
 
@@ -343,14 +369,14 @@ export default async function provisioningRoutes(
     return job;
   });
 
-  // ── secrets (encrypted at rest; values never returned) ───────────────────────
+  // ── secrets (encrypted at rest; only allowlisted values are returned) ────────
   fastify.get('/provisioning/secrets', {
-    schema: { description: 'List secret names + descriptions (no values). These satisfy a deployment\'s `requiredEnv`.', tags: [TAG] },
+    schema: { description: 'List secret names + descriptions. Most values are write-only; allowlisted non-secret values are returned for dashboard display. These satisfy a deployment\'s `requiredEnv`.', tags: [TAG] },
   }, async () => provisioningService.listSecrets());
 
   fastify.put<{ Params: { name: string }; Body: { value: string; description?: string } }>('/provisioning/secrets/:name', {
     schema: {
-      description: 'Create or replace a secret (UPPER_SNAKE name, e.g. PANW_PANORAMA_AUTH_CODE). Encrypted at rest with AES-256-GCM; the value is write-only.',
+      description: 'Create or replace a secret (UPPER_SNAKE name, e.g. PANW_PANORAMA_AUTH_CODE). Encrypted at rest with AES-256-GCM; most values are write-only, while allowlisted non-secret values can be returned by the list endpoint.',
       tags: [TAG],
       params: { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
       body: { type: 'object', required: ['value'], properties: { value: { type: 'string' }, description: { type: 'string' } }, additionalProperties: false },

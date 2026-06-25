@@ -60,7 +60,7 @@ describe('MCP — tool set + parity', () => {
     for (const a of ['link_product', 'unlink_product']) assert.ok(actionsOf('opportunities').includes(a));
     assert.ok(actionsOf('vendors').includes('restore'));
     assert.ok(actionsOf('account_details').includes('vendor_heatmap'));
-    for (const a of ['list_deployments', 'get_deployment', 'deploy', 'get_job', 'cancel_job', 'list_secrets']) {
+    for (const a of ['list_deployments', 'get_deployment', 'deploy', 'get_job', 'cancel_job', 'list_secrets', 'open_ssh_tunnel']) {
       assert.ok(actionsOf('provisioning').includes(a), `provisioning tool missing action "${a}"`);
     }
     for (const a of ['list', 'create', 'update', 'delete', 'add_task', 'update_task', 'delete_task', 'link_contact', 'unlink_contact']) {

@@ -508,8 +508,8 @@ export class ResourceBroker {
 
   // Open a provider-managed TCP port-forward from a resource to a local loopback
   // port. The provider-specific transport (e.g. AWS SSM) lives entirely in the
-  // provider adapter; the caller (RdpTunnelManager) owns the public proxy, port
-  // pool and TTL. Providers without openPortForward yield a clean 400.
+  // provider adapter; the tunnel manager owns the public proxy, port pool and TTL.
+  // Providers without openPortForward yield a clean 400.
   async openResourcePortForward(
     record: ResourceRecord,
     request: ProviderPortForwardRequest,

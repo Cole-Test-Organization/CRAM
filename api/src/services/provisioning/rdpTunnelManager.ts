@@ -21,19 +21,24 @@ export interface ResourcePortForwarder {
 
 const DEFAULT_PUBLIC_PORTS = "13389-13399";
 const DEFAULT_INTERNAL_PORTS = "23389-23399";
-const DEFAULT_REMOTE_PORT = 3389;
+const DEFAULT_RDP_REMOTE_PORT = 3389;
+const DEFAULT_SSH_REMOTE_PORT = 22;
 const DEFAULT_TTL_SECONDS = 8 * 60 * 60;
 const TCP_WAIT_MS = 30_000;
 
-export interface RdpTunnelOpenOptions {
+export type TunnelProtocol = "rdp" | "ssh";
+
+export interface TunnelOpenOptions {
+  protocol?: TunnelProtocol;
   port?: number | null;
   remotePort?: number | null;
   ttlSeconds?: number | null;
   advertisedHost?: string | null;
 }
 
-export interface RdpTunnelView {
+export interface TunnelView {
   id: string;
+  protocol: TunnelProtocol;
   resourceId: string;
   hostname: string;
   providerResourceId: string;
@@ -43,7 +48,10 @@ export interface RdpTunnelView {
   publicPort: number;
   internalPort: number;
   remotePort: number;
+  endpoint: string;
+  /** Backward-compatible alias for older RDP callers. */
   rdpEndpoint: string;
+  sshCommand: string | null;
   username: string | null;
   startedAt: string;
   expiresAt: string | null;
@@ -52,7 +60,10 @@ export interface RdpTunnelView {
   logs: string[];
 }
 
-interface RdpTunnelRecord extends RdpTunnelView {
+export type RdpTunnelOpenOptions = TunnelOpenOptions;
+export type RdpTunnelView = TunnelView;
+
+interface TunnelRecord extends TunnelView {
   forward: ProviderPortForward | null;
   proxy: Server;
   ttlTimer: NodeJS.Timeout | null;
@@ -62,29 +73,34 @@ export class RdpTunnelManager {
   constructor(private readonly forwarder: ResourcePortForwarder) {}
 
   private readonly publicPorts = parsePortList(
-    process.env.PROVISIONING_RDP_TUNNEL_PORTS,
+    process.env.PROVISIONING_TUNNEL_PORTS ?? process.env.PROVISIONING_RDP_TUNNEL_PORTS,
     DEFAULT_PUBLIC_PORTS,
   );
   private readonly internalPorts = parsePortList(
-    process.env.PROVISIONING_RDP_TUNNEL_INTERNAL_PORTS,
+    process.env.PROVISIONING_TUNNEL_INTERNAL_PORTS ?? process.env.PROVISIONING_RDP_TUNNEL_INTERNAL_PORTS,
     DEFAULT_INTERNAL_PORTS,
   );
-  private readonly bindAddress = process.env.PROVISIONING_RDP_TUNNEL_BIND_ADDRESS || "0.0.0.0";
+  private readonly bindAddress =
+    process.env.PROVISIONING_TUNNEL_BIND_ADDRESS ??
+    process.env.PROVISIONING_RDP_TUNNEL_BIND_ADDRESS ??
+    "0.0.0.0";
   private readonly configuredAdvertisedHost =
+    normalizeAdvertisedHost(process.env.PROVISIONING_TUNNEL_HOST) ||
     normalizeAdvertisedHost(process.env.PROVISIONING_RDP_TUNNEL_HOST) ||
     normalizeAdvertisedHost(process.env.PROVISIONING_BROKER_HOST);
   private readonly fallbackAdvertisedHost = this.configuredAdvertisedHost ?? fallbackAdvertisedHost(this.bindAddress);
   private readonly defaultTtlSeconds = parsePositiveInteger(
-    process.env.PROVISIONING_RDP_TUNNEL_TTL_SECONDS,
+    process.env.PROVISIONING_TUNNEL_TTL_SECONDS ?? process.env.PROVISIONING_RDP_TUNNEL_TTL_SECONDS,
     DEFAULT_TTL_SECONDS,
   );
-  private readonly tunnels = new Map<string, RdpTunnelRecord>();
+  private readonly tunnels = new Map<string, TunnelRecord>();
 
-  list(): RdpTunnelView[] {
+  list(): TunnelView[] {
     return [...this.tunnels.values()].map(toView);
   }
 
-  async open(resource: ResourceRecord, options: RdpTunnelOpenOptions = {}): Promise<RdpTunnelView> {
+  async open(resource: ResourceRecord, options: TunnelOpenOptions = {}): Promise<TunnelView> {
+    const protocol = options.protocol ?? "rdp";
     const existing = this.findByResource(resource.id) ?? this.findByResource(resource.hostname);
     if (existing?.status === "running" || existing?.status === "opening") {
       return toView(existing);
@@ -93,35 +109,37 @@ export class RdpTunnelManager {
     if (resource.lifecycleStatus === "destroyed") {
       throw httpError(409, `${resource.hostname} has been destroyed`);
     }
-    if (resource.kind !== "windows-endpoint") {
-      throw httpError(400, `${resource.hostname} is not a Windows endpoint`);
-    }
+    validateResourceProtocol(resource, protocol);
     if (!resource.providerResourceId) {
       throw httpError(400, `${resource.hostname} has not been provisioned yet (no provider resource id)`);
     }
     if (!this.publicPorts.length || !this.internalPorts.length) {
-      throw httpError(500, "RDP tunnel port pools are empty");
+      throw httpError(500, "tunnel port pools are empty");
     }
 
     const publicPort = await this.selectPublicPort(options.port ?? null);
     const internalPort = await this.selectInternalPort();
-    const remotePort = sanitizePort(options.remotePort ?? DEFAULT_REMOTE_PORT, "remotePort");
+    const remotePort = sanitizePort(options.remotePort ?? defaultRemotePort(protocol), "remotePort");
     const ttlSeconds = options.ttlSeconds == null
       ? this.defaultTtlSeconds
       : sanitizeNonNegativeInteger(options.ttlSeconds, "ttlSeconds");
     const advertisedHost = this.configuredAdvertisedHost ??
       normalizeAdvertisedHost(options.advertisedHost) ??
       this.fallbackAdvertisedHost;
-    const id = `rdp_${safeId(resource.hostname)}`;
+    const endpoint = `${formatEndpointHost(advertisedHost)}:${publicPort}`;
+    const id = `${protocol}_${safeId(resource.hostname)}`;
     const startedAt = new Date().toISOString();
     const expiresAt = ttlSeconds > 0
       ? new Date(Date.now() + ttlSeconds * 1000).toISOString()
       : null;
-    const username = extractRdpUsername(resource.outputs);
+    const username = protocol === "rdp"
+      ? extractRdpUsername(resource.outputs)
+      : extractSshUsername(resource.outputs);
 
     const proxy = createProxyServer(internalPort);
-    const tunnel: RdpTunnelRecord = {
+    const tunnel: TunnelRecord = {
       id,
+      protocol,
       resourceId: resource.id,
       hostname: resource.hostname,
       providerResourceId: resource.providerResourceId,
@@ -131,7 +149,9 @@ export class RdpTunnelManager {
       publicPort,
       internalPort,
       remotePort,
-      rdpEndpoint: `${formatEndpointHost(advertisedHost)}:${publicPort}`,
+      endpoint,
+      rdpEndpoint: endpoint,
+      sshCommand: protocol === "ssh" ? `ssh ${username ?? "ubuntu"}@${formatEndpointHost(advertisedHost)} -p ${publicPort}` : null,
       username,
       startedAt,
       expiresAt,
@@ -180,19 +200,19 @@ export class RdpTunnelManager {
       if (hasStatusCode(error)) throw error;
       throw httpError(
         500,
-        `failed to open RDP tunnel for ${resource.hostname}: ${message}${formatRecentLogs(tunnel)}`,
+        `failed to open ${protocol.toUpperCase()} tunnel for ${resource.hostname}: ${message}${formatRecentLogs(tunnel)}`,
       );
     }
   }
 
-  async close(idOrResource: string): Promise<RdpTunnelView | null> {
+  async close(idOrResource: string): Promise<TunnelView | null> {
     const tunnel = this.tunnels.get(idOrResource) ?? this.findByResource(idOrResource);
     if (!tunnel) return null;
     await this.stop(tunnel, "closed by request");
     return toView(tunnel);
   }
 
-  private findByResource(idOrHostname: string): RdpTunnelRecord | null {
+  private findByResource(idOrHostname: string): TunnelRecord | null {
     return [...this.tunnels.values()].find((tunnel) => (
       tunnel.resourceId === idOrHostname || tunnel.hostname === idOrHostname
     )) ?? null;
@@ -204,11 +224,11 @@ export class RdpTunnelManager {
       if (!this.publicPorts.includes(port)) {
         throw httpError(
           400,
-          `port ${port} is not in PROVISIONING_RDP_TUNNEL_PORTS (${this.publicPorts.join(", ")})`,
+          `port ${port} is not in PROVISIONING_TUNNEL_PORTS (${this.publicPorts.join(", ")})`,
         );
       }
       if (this.isManagedPortInUse(port) || !(await isPortAvailable(port, this.bindAddress))) {
-        throw httpError(409, `RDP tunnel port ${port} is already in use`);
+        throw httpError(409, `tunnel port ${port} is already in use`);
       }
       return port;
     }
@@ -218,7 +238,7 @@ export class RdpTunnelManager {
         return port;
       }
     }
-    throw httpError(409, "no configured RDP tunnel public ports are available");
+    throw httpError(409, "no configured tunnel public ports are available");
   }
 
   private async selectInternalPort(): Promise<number> {
@@ -227,7 +247,7 @@ export class RdpTunnelManager {
         return port;
       }
     }
-    throw httpError(409, "no configured RDP tunnel internal ports are available");
+    throw httpError(409, "no configured tunnel internal ports are available");
   }
 
   private isManagedPortInUse(port: number): boolean {
@@ -239,7 +259,7 @@ export class RdpTunnelManager {
   }
 
   private async stop(
-    tunnel: RdpTunnelRecord,
+    tunnel: TunnelRecord,
     reason: string,
     options: { closeForward?: boolean } = {},
   ): Promise<void> {
@@ -380,14 +400,27 @@ function parsePositiveInteger(value: string | undefined, fallback: number): numb
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function appendLog(tunnel: RdpTunnelRecord, line: string): void {
+function defaultRemotePort(protocol: TunnelProtocol): number {
+  return protocol === "ssh" ? DEFAULT_SSH_REMOTE_PORT : DEFAULT_RDP_REMOTE_PORT;
+}
+
+function validateResourceProtocol(resource: ResourceRecord, protocol: TunnelProtocol): void {
+  if (protocol === "rdp" && resource.kind !== "windows-endpoint") {
+    throw httpError(400, `${resource.hostname} is not a Windows endpoint`);
+  }
+  if (protocol === "ssh" && resource.kind !== "ubuntu-server") {
+    throw httpError(400, `${resource.hostname} is not a Linux SSH endpoint`);
+  }
+}
+
+function appendLog(tunnel: TunnelRecord, line: string): void {
   const trimmed = line.trim();
   if (!trimmed) return;
   tunnel.logs.push(trimmed);
   if (tunnel.logs.length > 80) tunnel.logs.splice(0, tunnel.logs.length - 80);
 }
 
-function formatRecentLogs(tunnel: RdpTunnelRecord): string {
+function formatRecentLogs(tunnel: TunnelRecord): string {
   const recent = tunnel.logs.slice(-5);
   return recent.length ? `; recent output: ${recent.join(" | ")}` : "";
 }
@@ -399,7 +432,16 @@ function extractRdpUsername(outputs: Record<string, unknown> | null | undefined)
   return typeof username === "string" && username ? username : null;
 }
 
-function toView(tunnel: RdpTunnelRecord): RdpTunnelView {
+function extractSshUsername(outputs: Record<string, unknown> | null | undefined): string {
+  const server = outputs?.server;
+  if (server && typeof server === "object" && !Array.isArray(server)) {
+    const username = (server as { ssh_username?: unknown }).ssh_username;
+    if (typeof username === "string" && username) return username;
+  }
+  return "ubuntu";
+}
+
+function toView(tunnel: TunnelRecord): TunnelView {
   const { forward: _forward, proxy: _proxy, ttlTimer: _ttlTimer, ...view } = tunnel;
   return { ...view, logs: [...view.logs] };
 }

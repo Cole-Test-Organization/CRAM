@@ -1,9 +1,9 @@
 import { render, screen } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
 import { describe, expect, it } from 'vitest';
-import type { ProvisioningJob, ProvisioningRdpTunnel, ProvisioningResource } from '../lib/api';
+import type { ProvisioningJob, ProvisioningRdpTunnel, ProvisioningResource, ProvisioningTunnel } from '../lib/api';
 import JobMonitor from '../components/provisioning/JobMonitor';
-import { RdpTunnelEndpoint, ResourceConnections, resourceConnections } from './HomelabCommon';
+import { RdpTunnelEndpoint, ResourceConnections, TunnelEndpoint, resourceConnections } from './HomelabCommon';
 
 function job(overrides: Partial<ProvisioningJob> = {}): ProvisioningJob {
   return {
@@ -75,6 +75,7 @@ function resourceWithOutputs(outputs: Record<string, unknown> | null): Provision
 function rdpTunnel(overrides: Partial<ProvisioningRdpTunnel> = {}): ProvisioningRdpTunnel {
   return {
     id: 'rdp_host-1',
+    protocol: 'rdp',
     resourceId: 'r1',
     hostname: 'host-1',
     providerResourceId: 'i-0abc',
@@ -84,8 +85,36 @@ function rdpTunnel(overrides: Partial<ProvisioningRdpTunnel> = {}): Provisioning
     publicPort: 13389,
     internalPort: 23389,
     remotePort: 3389,
+    endpoint: '172.20.10.9:13389',
     rdpEndpoint: '172.20.10.9:13389',
+    sshCommand: null,
     username: 'Admin',
+    startedAt: '2026-06-20T00:00:00.000Z',
+    expiresAt: null,
+    closedAt: null,
+    closeReason: null,
+    logs: [],
+    ...overrides,
+  };
+}
+
+function sshTunnel(overrides: Partial<ProvisioningTunnel> = {}): ProvisioningTunnel {
+  return {
+    id: 'ssh_host-1',
+    protocol: 'ssh',
+    resourceId: 'r1',
+    hostname: 'host-1',
+    providerResourceId: 'i-0abc',
+    status: 'running',
+    bindAddress: '0.0.0.0',
+    advertisedHost: '172.20.10.9',
+    publicPort: 13390,
+    internalPort: 23390,
+    remotePort: 22,
+    endpoint: '172.20.10.9:13390',
+    rdpEndpoint: '172.20.10.9:13390',
+    sshCommand: 'ssh ubuntu@172.20.10.9 -p 13390',
+    username: 'ubuntu',
     startedAt: '2026-06-20T00:00:00.000Z',
     expiresAt: null,
     closedAt: null,
@@ -242,5 +271,18 @@ describe('RdpTunnelEndpoint component', () => {
   it('renders nothing for a closed tunnel', () => {
     const { container } = render(() => <RdpTunnelEndpoint tunnel={rdpTunnel({ status: 'closed' })} />);
     expect(container.textContent).toBe('');
+  });
+});
+
+describe('TunnelEndpoint component', () => {
+  it('renders the broker SSH endpoint and command for an active SSH tunnel', () => {
+    render(() => <TunnelEndpoint tunnel={sshTunnel()} />);
+
+    expect(screen.getByText('Broker SSH')).toBeTruthy();
+    expect(screen.getByText('172.20.10.9:13390')).toBeTruthy();
+    expect(screen.getByText('SSH command')).toBeTruthy();
+    expect(screen.getByText('ssh ubuntu@172.20.10.9 -p 13390')).toBeTruthy();
+    expect(screen.getByText('Username')).toBeTruthy();
+    expect(screen.getByText('ubuntu')).toBeTruthy();
   });
 });
