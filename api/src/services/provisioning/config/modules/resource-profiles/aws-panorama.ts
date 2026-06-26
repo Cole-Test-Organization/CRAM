@@ -83,16 +83,7 @@ const resourceProfile = {
           }
         ]
       },
-      "ssh_public_key": {
-        "first": [
-          {
-            "envPath": "provider.sshPublicKeyEnv"
-          },
-          {
-            "resolver": "localSshPublicKey"
-          }
-        ]
-      },
+      "ssh_public_key": { "resolver": "localSshPublicKey" },
       "panos_version_major": {
         "path": "provider.panosVersionMajor",
         "default": "11.2"

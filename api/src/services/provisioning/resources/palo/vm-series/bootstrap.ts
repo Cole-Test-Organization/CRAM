@@ -5,6 +5,25 @@ import type { LogFn } from "../../../types/logging.js";
 import { ensureDir, optionalEnv, requireEnv, runCommand } from "../../../utils/index.js";
 import { workDir } from "../../../utils/paths.js";
 
+export const DEFAULT_DEVICE_CERT_PIN_ID_ENV = "PANW_DEVICE_CERT_PIN_ID";
+export const DEFAULT_DEVICE_CERT_PIN_VALUE_ENV = "PANW_DEVICE_CERT_PIN_VALUE";
+
+export function withDefaultVmSeriesDeviceCertificate<T extends PanwVmseriesConfig>(config: T): T {
+  const current = config.deviceCertificate ?? {};
+  const hasPinId = Boolean(current.pinId || current.pinIdEnv);
+  const hasPinValue = Boolean(current.pinValue || current.pinValueEnv);
+  if (hasPinId && hasPinValue) return config;
+
+  return {
+    ...config,
+    deviceCertificate: {
+      pinIdEnv: DEFAULT_DEVICE_CERT_PIN_ID_ENV,
+      pinValueEnv: DEFAULT_DEVICE_CERT_PIN_VALUE_ENV,
+      ...current,
+    },
+  };
+}
+
 export function resolveAuthCode(config: Pick<PanwVmseriesConfig, "license">): string {
   if (config.license.authCode) return config.license.authCode;
   if (config.license.authCodeEnv) return requireEnv(config.license.authCodeEnv);
@@ -43,6 +62,7 @@ export async function buildBootstrapIso(
 }
 
 export function renderInitCfg(config: PanwVmseriesConfig): string {
+  config = withDefaultVmSeriesDeviceCertificate(config);
   const lines: string[] = [];
   lines.push(`type=${config.management.type}`);
 

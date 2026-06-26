@@ -6,10 +6,13 @@ import type {
   DeploymentStepConfig,
   DeploymentStepSummary,
   DeploymentSummary,
+  PanwVmseriesResourceConfig,
   ProviderConfig,
+  ResourceConfig,
   TerraformResourceProfile,
 } from "../types/index.js";
 import { BROKER_SECRET_KEYS } from "../secrets/seedSecrets.js";
+import { withDefaultVmSeriesDeviceCertificate } from "../resources/palo/vm-series/bootstrap.js";
 
 // `requiredEnv` advertises the *stored secrets* a deploy needs. Only env vars that are
 // real broker secrets qualify. The config tree also references env vars that are
@@ -63,7 +66,7 @@ export abstract class ConfigRepository {
     const summaries: DeploymentSummary[] = [];
     for (const id of ids) {
       try {
-        const raw = await this.readDeploymentConfig(id);
+        const raw = this.withRuntimeDefaults(await this.readDeploymentConfig(id));
         if (!raw) continue;
         summaries.push(await this.buildSummary(id, raw));
       } catch {
@@ -76,7 +79,7 @@ export abstract class ConfigRepository {
   }
 
   async getDeployment(id: string): Promise<DeploymentDescriptor | null> {
-    const raw = await this.readDeploymentConfig(id);
+    const raw = this.withRuntimeDefaults(await this.readDeploymentConfig(id));
     if (!raw) return null;
 
     const merged = await this.mergeProviderProfile(raw);
@@ -108,7 +111,7 @@ export abstract class ConfigRepository {
   // into a throw with a useful message.
 
   async getRawDeploymentConfig(ref: string): Promise<DeploymentConfig | null> {
-    return this.readDeploymentConfig(deploymentIdFromRef(ref));
+    return this.withRuntimeDefaults(await this.readDeploymentConfig(deploymentIdFromRef(ref)));
   }
 
   async getProviderProfile(name: string): Promise<ProviderConfig | null> {
@@ -143,6 +146,18 @@ export abstract class ConfigRepository {
 
   private async buildSummary(id: string, raw: DeploymentConfig): Promise<DeploymentSummary> {
     return this.summaryFrom(id, raw, await this.mergeProviderProfile(raw));
+  }
+
+  private withRuntimeDefaults(raw: DeploymentConfig | null): DeploymentConfig | null {
+    if (!raw) return null;
+    return {
+      ...raw,
+      resources: (raw.resources ?? []).map((resource): ResourceConfig =>
+        isPanwVmseriesResource(resource)
+          ? withDefaultVmSeriesDeviceCertificate(resource)
+          : resource,
+      ),
+    };
   }
 
   private summaryFrom(
@@ -185,6 +200,10 @@ export abstract class ConfigRepository {
 function deploymentIdFromRef(ref: string): string {
   const base = ref.split("/").pop() ?? ref;
   return base.replace(/\.ya?ml$/i, "");
+}
+
+function isPanwVmseriesResource(resource: ResourceConfig): resource is PanwVmseriesResourceConfig {
+  return resource.kind === "panw-vmseries";
 }
 
 function toStepSummary(step: DeploymentStepConfig): DeploymentStepSummary {

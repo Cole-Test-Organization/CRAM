@@ -79,7 +79,7 @@ describe('Seed invariants', () => {
   it('catalogs: seeded products / categories / themes / vendors / vendor-products', async () => {
     assert.equal(listFrom((await get('/products')).body).length, 24, 'seeded products (migration 12)');
     assert.equal(listFrom((await get('/product-categories')).body).length, 5);
-    assert.equal(listFrom((await get('/themes')).body).length, 5, 'five built-in themes (migration 26)');
+    assert.equal(listFrom((await get('/themes')).body).length, 6, 'six built-in themes (migrations 26 + 46)');
     assert.equal(listFrom((await get('/vendors')).body).length, 75, 'seeded vendors (migration 14)');
     assert.equal(listFrom((await get('/vendor-products')).body).length, 180, 'seeded vendor_products (migration 14)');
   });

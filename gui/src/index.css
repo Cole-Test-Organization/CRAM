@@ -224,11 +224,13 @@
     box-shadow: 3px 3px 0 0 var(--color-surf-200);
   }
 
-  /* Secondary — rust */
+  /* Secondary — rust. Same fix as danger: use the cerulean ramp's own light end
+     so dark-themed light text doesn't invert to dark on light themes (Paper)
+     and disappear into the cerulean-600 fill. */
   .press-secondary {
     background: var(--color-cerulean-600);
     border-color: var(--color-cerulean-200);
-    color: var(--color-base-50);
+    color: var(--color-cerulean-50);
     box-shadow: 3px 3px 0 0 var(--color-cerulean-200);
   }
   .press-secondary:hover { background: var(--color-cerulean-500); }
@@ -241,11 +243,14 @@
     box-shadow: 3px 3px 0 0 var(--color-cerulean-200);
   }
 
-  /* Danger — brick red */
+  /* Danger — brick red. Text is the scarlet ramp's own light end, NOT base-50:
+     the scarlet-600 fill stays dark in every theme, but base-50 is the page's
+     *text* color and flips to dark on light themes (Default, Paper) — dark text
+     on the dark fill renders invisible. scarlet-50 is light in every theme. */
   .press-danger {
     background: var(--color-scarlet-600);
     border-color: var(--color-scarlet-200);
-    color: var(--color-base-50);
+    color: var(--color-scarlet-50);
     box-shadow: 3px 3px 0 0 var(--color-scarlet-200);
   }
   .press-danger:hover { background: var(--color-scarlet-500); }

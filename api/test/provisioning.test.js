@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { BASE, get, post } from './helpers.js';
+import { isReadableProvisioningSecret } from '../src/services/provisioning/secrets/index.js';
 
 async function readFirstSseEnvelope(path) {
   const controller = new AbortController();
@@ -70,9 +71,19 @@ describe('Provisioning — discovery and safe enqueue validation', () => {
       !detail.body.requiredEnv.includes('PANW_LICENSE_DEACTIVATION_API_KEY'),
       'license deactivation key is optional, not required',
     );
+
+    const ubuntu = await get('/provisioning/deployments/aws-ubuntu-behind-firewall');
+    assert.equal(ubuntu.status, 200);
+    assert.equal(ubuntu.body.id, 'aws-ubuntu-behind-firewall');
+    for (const required of ['PANW_DEVICE_CERT_PIN_ID', 'PANW_DEVICE_CERT_PIN_VALUE']) {
+      assert.ok(
+        ubuntu.body.requiredEnv.includes(required),
+        `${required} must be required for standalone VM-Series deployments too`,
+      );
+    }
   });
 
-  it('lists resources, jobs, and secret summaries without exposing secret values', async () => {
+  it('lists resources, jobs, and secret summaries with values only for readable secrets', async () => {
     const resources = await get('/provisioning/resources');
     assert.equal(resources.status, 200);
     assert.ok(Array.isArray(resources.body));
@@ -86,7 +97,13 @@ describe('Provisioning — discovery and safe enqueue validation', () => {
     assert.ok(Array.isArray(secrets.body));
     for (const secret of secrets.body) {
       assert.equal(typeof secret.name, 'string');
-      assert.equal('value' in secret, false);
+      assert.equal(secret.readable, isReadableProvisioningSecret(secret.name));
+      if (secret.readable) {
+        assert.equal('value' in secret, true);
+        assert.equal(typeof secret.value, 'string');
+      } else {
+        assert.equal('value' in secret, false);
+      }
       assert.equal('secret' in secret, false);
       assert.equal('secretValue' in secret, false);
     }

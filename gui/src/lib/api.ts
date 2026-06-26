@@ -124,6 +124,8 @@ export type ProvisioningSecretSummary = {
   name: string;
   description: string | null;
   updatedAt: string;
+  readable: boolean;
+  value?: string | null;
 };
 
 export type ProxmoxDiscoveredStorage = {

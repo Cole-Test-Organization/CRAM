@@ -114,16 +114,7 @@ const resourceProfile = {
           }
         ]
       },
-      "admin_public_key": {
-        "first": [
-          {
-            "envPath": "provider.sshPublicKeyEnv"
-          },
-          {
-            "resolver": "localSshPublicKey"
-          }
-        ]
-      },
+      "admin_public_key": { "resolver": "localSshPublicKey" },
       "instance_type": {
         "first": [
           {

@@ -11,6 +11,8 @@ type SecretRow = {
   name: string;
   stored: boolean;
   required: boolean;
+  readable: boolean;
+  value: string | null;
   description: string | null;
   updatedAt: string | null;
   deployments: string[];
@@ -70,6 +72,8 @@ export default function BrokerSecrets() {
           name,
           stored: false,
           required: true,
+          readable: false,
+          value: null,
           description: null,
           updatedAt: null,
           deployments: [],
@@ -85,11 +89,15 @@ export default function BrokerSecrets() {
         name: secret.name,
         stored: false,
         required: false,
+        readable: false,
+        value: null,
         description: null,
         updatedAt: null,
         deployments: [],
       };
       row.stored = true;
+      row.readable = secret.readable;
+      row.value = secret.value ?? null;
       row.description = secret.description;
       row.updatedAt = secret.updatedAt;
       map.set(secret.name, row);
@@ -221,6 +229,11 @@ export default function BrokerSecrets() {
                   <Show when={row.updatedAt}>
                     <div class="text-[11px] text-base-300 mt-1">Updated {formatDateTime(row.updatedAt)}</div>
                   </Show>
+                  <Show when={row.stored && row.readable && row.value}>
+                    <div class="mt-2 border-2 border-base-600 bg-base-950 px-2 py-1 font-mono text-[12px] text-surf-200 break-all">
+                      {row.value}
+                    </div>
+                  </Show>
                   <Show when={row.description}>
                     <div class="text-[11px] text-base-400 mt-1 break-words">{row.description}</div>
                   </Show>
@@ -234,6 +247,9 @@ export default function BrokerSecrets() {
                   </Show>
                   <Show when={!row.required}>
                     <StatusBadge status="stored-only" label="Stored Only" tone="base" />
+                  </Show>
+                  <Show when={row.stored && row.readable}>
+                    <StatusBadge status="readable" label="Readable" tone="cerulean" />
                   </Show>
                   <Button variant={row.stored ? 'ghost' : 'primary'} size="sm" onClick={() => openEditor(row.name)}>
                     {row.stored ? 'Reset' : 'Set'}

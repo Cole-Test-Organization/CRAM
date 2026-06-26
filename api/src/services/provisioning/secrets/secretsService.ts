@@ -2,6 +2,24 @@ import { SecretsRepository, type SecretSummary } from "./secretsRepository.js";
 
 const SECRET_NAME_RE = /^[A-Z][A-Z0-9_]*$/;
 
+export const READABLE_PROVISIONING_SECRET_NAMES = [
+  "PANW_DEVICE_CERT_PIN_ID",
+  "PANW_NGFW_AUTH_CODE",
+  "PANW_PANORAMA_AUTH_CODE",
+  "PANW_PANORAMA_SERIAL",
+] as const;
+
+const READABLE_PROVISIONING_SECRET_SET = new Set<string>(READABLE_PROVISIONING_SECRET_NAMES);
+
+export interface ListedSecretSummary extends SecretSummary {
+  readable: boolean;
+  value?: string | null;
+}
+
+export function isReadableProvisioningSecret(name: string): boolean {
+  return READABLE_PROVISIONING_SECRET_SET.has(name);
+}
+
 function badRequest(message: string): Error {
   return Object.assign(new Error(message), { statusCode: 400 });
 }
@@ -31,8 +49,17 @@ export class SecretsService {
     return { name: key };
   }
 
-  async listSecrets(userId: number): Promise<SecretSummary[]> {
-    return this.repo.list(userId);
+  async listSecrets(userId: number): Promise<ListedSecretSummary[]> {
+    const rows = await this.repo.list(userId);
+    return Promise.all(rows.map(async (secret) => {
+      const readable = isReadableProvisioningSecret(secret.name);
+      if (!readable) return { ...secret, readable };
+      return {
+        ...secret,
+        readable,
+        value: await this.repo.get(userId, secret.name),
+      };
+    }));
   }
 
   async deleteSecret(userId: number, name: string): Promise<boolean> {
