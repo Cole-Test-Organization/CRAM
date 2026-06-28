@@ -60,16 +60,11 @@ describe('Provisioning — discovery and safe enqueue validation', () => {
       'PANW_PANORAMA_AUTH_CODE',
       'PANW_DEVICE_CERT_PIN_ID',
       'PANW_DEVICE_CERT_PIN_VALUE',
+      'PANW_LICENSE_DEACTIVATION_API_KEY',
       'WINDOWS_ENDPOINT_ADMIN_PASSWORD',
     ]) {
       assert.ok(detail.body.requiredEnv.includes(required), `${required} must be a required secret`);
     }
-    // The license deactivation key is a real secret but optional (only used at teardown),
-    // so it is manageable on the Secrets page yet not flagged as a missing prerequisite.
-    assert.ok(
-      !detail.body.requiredEnv.includes('PANW_LICENSE_DEACTIVATION_API_KEY'),
-      'license deactivation key is optional, not required',
-    );
   });
 
   it('lists resources, jobs, and secret summaries without exposing secret values', async () => {

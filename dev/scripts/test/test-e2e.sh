@@ -43,9 +43,11 @@ trap cleanup EXIT
 [ -d outreach/node_modules/pino ] || PUPPETEER_SKIP_DOWNLOAD=true npm --prefix outreach ci
 [ -d gui/node_modules ] || npm --prefix gui ci
 [ -d e2e/node_modules ] || npm --prefix e2e ci
-# Playwright's Chromium binary (cached globally under ~/.cache/ms-playwright on
-# Linux / ~/Library/Caches/ms-playwright on macOS). Idempotent + fast once cached.
-./e2e/node_modules/.bin/playwright install chromium
+# Playwright's Chromium binary and Linux shared-library dependencies. This must
+# match CI; otherwise a fresh Linux host can download the browser but fail to
+# launch it with missing libraries like libatk-1.0.so.0. Idempotent + fast once
+# cached/installed.
+./e2e/node_modules/.bin/playwright install --with-deps chromium
 
 echo "▸ starting isolated test Postgres (db-test) on :${TEST_PG_PORT}…"
 # --force-recreate guarantees a brand-new tmpfs (empty DB) every run, so the

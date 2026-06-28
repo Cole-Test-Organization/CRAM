@@ -6,12 +6,14 @@
 // Google Calendar — so this does NOT resolve an account from emails (a Krisp
 // payload carries none we can trust; Krisp isn't wired to the calendar). Instead:
 //
-//   1. dedupe by krisp_meeting_id   — already imported (or a follow-up event for
-//                                      the same meeting) → append to that row.
-//   2. time-proximity match         — find the existing meeting whose start is
+//   1. time-proximity match         — find the existing meeting whose start is
 //                                      within ±window of Krisp's start (overlap
 //                                      breaks ties). Append the notes to it and
 //                                      flag needs_review so the user verifies.
+//   2. prior Krisp import fallback  — if time is absent/ambiguous but a previous
+//                                      Krisp delivery already parked this meeting,
+//                                      append to that row so retries/follow-ups
+//                                      don't duplicate.
 //   3. no confident match           → create a new meeting flagged needs_review
 //                                      (the user can later merge it onto the real
 //                                      meeting via the generic merge).
@@ -156,31 +158,38 @@ export class KrispWebhookService {
     const p = parseKrisp(raw);
     const fragment = `<!-- krisp:${p.eventType} -->\n${p.content.trim()}\n`;
 
-    // 1. Same Krisp meeting already imported (or a follow-up event) → append.
-    if (p.krispMeetingId) {
-      const existing = await this.meetings.findByKrispMeetingId(userId, p.krispMeetingId);
-      if (existing) return this._append(userId, existing, p, fragment);
-    }
-
-    // 2. Time-proximity match against an existing (e.g. calendar-imported) meeting.
+    // 1. Time-proximity match against an existing (e.g. calendar-imported) meeting.
+    // A Krisp id cannot exist on that row until this webhook has already landed
+    // once, so time is the primary association signal.
     if (p.startsAt) {
       const candidates = await this.meetings.findTimeMatchCandidates(userId, p.startsAt, this.windowMs);
       const match = pickMatch(candidates, new Date(p.startsAt).getTime(), p.endsAt ? new Date(p.endsAt).getTime() : null);
       if (match) {
         const full = await this.meetings.getById(userId, match.id);
-        if (full) return this._append(userId, full, p, fragment, p.krispMeetingId);
+        if (full) {
+          const linkKrispId = full.krisp_meeting_id ? null : p.krispMeetingId;
+          return this._append(userId, full, p, fragment, linkKrispId);
+        }
       }
+    }
+
+    // 2. Fallback only: if a previous Krisp delivery already created/linked a row
+    // and this delivery has no usable/unique time match, fold into that row. This
+    // is not how the first delivery finds the calendar-created meeting.
+    if (p.krispMeetingId) {
+      const existing = await this.meetings.findByKrispMeetingId(userId, p.krispMeetingId);
+      if (existing) return this._append(userId, existing, p, fragment);
     }
 
     // 3. No confident match → park a new meeting for review (mergeable later).
     return this._createParked(userId, p, fragment);
   }
 
-  // Append this event's marker-wrapped content onto an existing meeting (the
-  // krisp-id-linked one or a time-matched one). Marker-guarded: a re-delivered
-  // event is a no-op. Backfills start/end when missing; flags needs_review so the
-  // user verifies. `linkKrispId` is set on a fresh time-match so future events
-  // for this meeting fold in via step 1.
+  // Append this event's marker-wrapped content onto an existing meeting.
+  // Marker-guarded: a re-delivered event is a no-op. Backfills start/end when
+  // missing; flags needs_review so the user verifies. `linkKrispId` is set only
+  // when a fresh time-match needs to remember the Krisp id for retry/follow-up
+  // fallback.
   async _append(userId: number, existing: any, p: ParsedKrisp, fragment: string, linkKrispId?: string | null): Promise<IngestResult> {
     const marker = `<!-- krisp:${p.eventType} -->`;
     const body = existing.body || '';

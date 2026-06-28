@@ -100,6 +100,7 @@ services:
     # Mac/Windows Docker Desktop (host.docker.internal works there natively).
     extra_hosts:
       - "host.docker.internal:host-gateway"
+      - "proxmox.home.justcole.com:192.168.0.220"
     depends_on:
       db:
         condition: service_healthy
@@ -181,6 +182,7 @@ services:
     # Mac/Windows Docker Desktop (where the name resolves natively).
     extra_hosts:
       - "host.docker.internal:host-gateway"
+      - "proxmox.home.justcole.com:192.168.0.220"
     depends_on:
       db:
         condition: service_healthy

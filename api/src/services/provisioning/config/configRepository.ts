@@ -21,15 +21,6 @@ import { BROKER_SECRET_KEYS } from "../secrets/seedSecrets.js";
 // keeps requiredEnv and the seeder in lockstep.
 const BROKER_SECRET_NAMES = new Set<string>(BROKER_SECRET_KEYS);
 
-// Real secrets that are nonetheless *optional* to deploy: they tune behavior not every
-// run exercises (license deactivation only happens at teardown). They stay in the secret
-// allowlist — seedable from .env and manageable on the Secrets page, where they surface
-// as "Stored Only" once set — but are kept out of `requiredEnv` so they are never flagged
-// as a missing prerequisite. NOTE: the VM-Series device-certificate pins
-// (PANW_DEVICE_CERT_PIN_ID / PANW_DEVICE_CERT_PIN_VALUE) are deliberately NOT here — the
-// firewalls must auto-register to pull licenses, so they remain mandatory.
-const OPTIONAL_SECRET_NAMES = new Set<string>(["PANW_LICENSE_DEACTIVATION_API_KEY"]);
-
 /**
  * Read-only source of deployment configuration, abstracted away from storage.
  *
@@ -270,7 +261,7 @@ function enablesValue(equals: string | number | boolean | null | undefined): boo
 function collectRequiredEnv(root: unknown): string[] {
   const acc = new Set<string>();
   walkEnvRefs(root, acc);
-  return [...acc].filter((name) => BROKER_SECRET_NAMES.has(name) && !OPTIONAL_SECRET_NAMES.has(name)).sort();
+  return [...acc].filter((name) => BROKER_SECRET_NAMES.has(name)).sort();
 }
 
 function walkEnvRefs(value: unknown, acc: Set<string>): void {

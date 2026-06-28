@@ -496,14 +496,19 @@ export class ResourceBroker {
       throw new Error(`${record.hostname} is not power-controllable by provider ${provider.type}`);
     }
 
-    const powerState = await provider.getResourcePowerState(context, record, log);
-    if (options.patchUnchangedPowerState === false && powerState === record.powerState) {
-      return record;
+    const releaseSecrets = await this.primeSecretOverlayForInlineProviderAction();
+    try {
+      const powerState = await provider.getResourcePowerState(context, record, log);
+      if (options.patchUnchangedPowerState === false && powerState === record.powerState) {
+        return record;
+      }
+      return await this.store.patchResource(record.id, {
+        powerState,
+        powerStateCheckedAt: nowIso(),
+      });
+    } finally {
+      releaseSecrets();
     }
-    return await this.store.patchResource(record.id, {
-      powerState,
-      powerStateCheckedAt: nowIso(),
-    });
   }
 
   // Open a provider-managed TCP port-forward from a resource to a local loopback
@@ -658,6 +663,12 @@ export class ResourceBroker {
     return () => clearSecretOverlay();
   }
 
+  private async primeSecretOverlayForInlineProviderAction(): Promise<() => void> {
+    const state = await this.store.getState();
+    if (state.activeJobId) return () => {};
+    return await this.primeSecretOverlay();
+  }
+
   async getJob(jobId: string): Promise<JobRecord | null> {
     const jobs = await this.store.getJobs();
     return jobs.find((job) => job.id === jobId) ?? null;
@@ -715,12 +726,17 @@ export class ResourceBroker {
       powerStateCheckedAt: nowIso(),
     });
 
-    const result = await method.call(provider, context, pending, log);
+    const releaseSecrets = await this.primeSecretOverlayForInlineProviderAction();
+    try {
+      const result = await method.call(provider, context, pending, log);
 
-    return await this.store.patchResource(record.id, {
-      powerState: result.powerState,
-      powerStateCheckedAt: nowIso(),
-    });
+      return await this.store.patchResource(record.id, {
+        powerState: result.powerState,
+        powerStateCheckedAt: nowIso(),
+      });
+    } finally {
+      releaseSecrets();
+    }
   }
 
   private async getPowerSupport(

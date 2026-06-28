@@ -88,11 +88,32 @@ async function waitForHealth(url, attempts = 60, delayMs = 1000) {
   throw new Error(`API never became healthy at ${url} after ${attempts}s`);
 }
 
-function stopApi() {
+function hasExited(proc) {
+  return !proc || proc.exitCode !== null || proc.signalCode !== null;
+}
+
+function waitForExit(proc, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    if (hasExited(proc)) {
+      resolve();
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      if (!hasExited(proc)) proc.kill('SIGKILL');
+    }, timeoutMs);
+
+    proc.once('exit', () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
+}
+
+async function stopApi() {
   stopping = true;
-  if (apiProc && apiProc.exitCode === null && !apiProc.killed) {
-    apiProc.kill('SIGTERM');
-  }
+  if (apiProc && !hasExited(apiProc)) apiProc.kill('SIGTERM');
+  await waitForExit(apiProc);
 }
 
 async function main() {
@@ -129,13 +150,13 @@ async function main() {
 }
 
 main()
-  .then(() => {
-    stopApi();
+  .then(async () => {
+    await stopApi();
     console.log('\n✅ API integration suite passed.');
     process.exit(0);
   })
-  .catch((err) => {
+  .catch(async (err) => {
     console.error(`\n✗ ${err.message}`);
-    stopApi();
+    await stopApi();
     process.exit(1);
   });

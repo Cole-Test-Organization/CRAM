@@ -73,7 +73,7 @@ const deployment = {
           "output": "network.panorama_subnet_id"
         },
         "availabilityZoneIndex": 0,
-        "rootVolumeGb": 256,
+        "rootVolumeGb": 81,
         "logVolumeGb": 2048,
         "logVolumeDeviceName": "/dev/sdf",
         "attachManagementElasticIp": true
