@@ -1,8 +1,10 @@
 // Krisp webhook importer — parse + idempotent fold + time-proximity match.
 //
-// Ignores emails entirely; keys on the Krisp meeting id and the meeting's start
-// time. Drives the real KrispWebhookService against the seeded test DB (the
-// pattern calendar-import-backfill.test.js uses) — no LLM, no network. Created
+// Ignores emails entirely; keys first on the meeting's start time. The Krisp
+// meeting id is only a fallback after a row has already been linked/parked, so
+// retries and transcript/outline follow-ups do not duplicate. Drives the real
+// KrispWebhookService against the seeded test DB (the pattern
+// calendar-import-backfill.test.js uses) — no LLM, no network. Created
 // meetings (incl. any tombstoned by a later test) are hard-deleted after.
 
 import { describe, it, before, after } from 'node:test';
@@ -110,12 +112,14 @@ describe('Krisp webhook — import (park / dedupe / append / time-match)', () =>
     assert.equal(parked.krisp_meeting_id, kid);
     assert.match(parked.body, /Note body one\./);
 
-    // Re-deliver the SAME event → found by krisp id, marker already present → no-op.
+    // Re-deliver the SAME event with no start time → no time-match is possible,
+    // so the stored Krisp id acts as retry fallback and the marker makes it a no-op.
     const dupe = await svc.ingest(userId, krispNote({ id: kid, content: 'Note body one.' }));
     assert.equal(dupe.outcome, 'noop', JSON.stringify(dupe));
     assert.equal(dupe.meeting_id, first.meeting_id);
 
-    // A different event (transcript) for the same meeting → appended to the same row.
+    // A different event (transcript) for the same no-start meeting → appended to
+    // the same row via the stored-id fallback.
     const transcript = await svc.ingest(userId, krispNote({ id: kid, event: 'transcript_generated', content: 'Full transcript text.' }));
     assert.equal(transcript.outcome, 'updated', JSON.stringify(transcript));
     assert.equal(transcript.meeting_id, first.meeting_id);
@@ -159,7 +163,8 @@ describe('Krisp webhook — import (park / dedupe / append / time-match)', () =>
     assert.equal(after.krisp_meeting_id, kid, 'krisp id linked onto the matched meeting');
     assert.equal(after.needs_review, true, 'flagged for the user to verify the match');
 
-    // A follow-up event for that krisp id now folds in via the link (step 1).
+    // A follow-up event for that Krisp id still resolves by time first; the stored
+    // id is fallback only.
     const followup = await svc.ingest(userId, krispNote({ id: kid, event: 'outline_generated', content: 'Outline bullets.' }));
     assert.equal(followup.meeting_id, base.id, JSON.stringify(followup));
     const after2 = await meetingsService.getById(userId, base.id);

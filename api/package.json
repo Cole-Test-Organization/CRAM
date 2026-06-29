@@ -16,7 +16,7 @@
     "db:clear": "node ../dev/scripts/clear-db.js",
     "provisioning:seed-secrets": "tsx src/services/provisioning/scripts/seedSecretsFromEnv.ts",
     "provisioning:list-secrets": "tsx src/services/provisioning/scripts/listSecrets.ts",
-    "test": "node --import tsx --test --test-concurrency=1 'test/*.test.js'"
+    "test": "node --import tsx --test --test-concurrency=1 test/*.test.js"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.0",
@@ -28,7 +28,7 @@
     "express": "^5.2.1",
     "fastify": "^5.0.0",
     "mammoth": "^1.12.0",
-    "node-pg-migrate": "^7.9.0",
+    "node-pg-migrate": "^8.0.4",
     "pdf-parse": "^2.4.5",
     "pg": "^8.13.0",
     "pino": "^9.5.0",

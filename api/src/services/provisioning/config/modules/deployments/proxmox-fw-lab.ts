@@ -33,7 +33,8 @@ const deployment = {
         "dnsSecondary": "8.8.8.8"
       },
       "license": {
-        "authCodeEnv": "PANW_NGFW_AUTH_CODE"
+        "authCodeEnv": "PANW_NGFW_AUTH_CODE",
+        "deactivationApiKeyEnv": "PANW_LICENSE_DEACTIVATION_API_KEY"
       },
       "managementServer": {
         "mode": "panorama",
@@ -49,7 +50,7 @@ const deployment = {
       "placement": {
         "provider": "proxmox",
         "templateVmId": 800,
-        "vmId": 802,
+        "vmId": 804,
         "interfaces": [
           {
             "name": "mgmt",
@@ -87,7 +88,8 @@ const deployment = {
         "dnsSecondary": "8.8.8.8"
       },
       "license": {
-        "authCodeEnv": "PANW_NGFW_AUTH_CODE"
+        "authCodeEnv": "PANW_NGFW_AUTH_CODE",
+        "deactivationApiKeyEnv": "PANW_LICENSE_DEACTIVATION_API_KEY"
       },
       "managementServer": {
         "mode": "panorama",
@@ -103,7 +105,7 @@ const deployment = {
       "placement": {
         "provider": "proxmox",
         "templateVmId": 800,
-        "vmId": 803,
+        "vmId": 805,
         "interfaces": [
           {
             "name": "mgmt",

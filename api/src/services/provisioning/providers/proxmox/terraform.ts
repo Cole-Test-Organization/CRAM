@@ -63,6 +63,14 @@ export async function terraformApplyVm(
     vmId,
     providerResourceId: vmId === undefined ? null : String(vmId),
     bootstrapIsoFileId: parsed.bootstrap_iso_file_id?.value as string | undefined,
+    outputs: {
+      vm_id: vmId ?? null,
+      vm_name: parsed.vm_name?.value ?? config.hostname,
+      bootstrap_iso_file_id: parsed.bootstrap_iso_file_id?.value ?? null,
+      firewall: {
+        management_ip: config.management.ipAddress ?? null,
+      },
+    },
     // State is in the pg backend; persist the workspace name (mapped to the
     // terraform_workspace column) exactly as the generic runner does.
     terraformStatePath: workspace,

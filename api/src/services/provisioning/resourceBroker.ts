@@ -654,21 +654,27 @@ export class ResourceBroker {
             );
         }
 
-        const powerState = await provider.getResourcePowerState(
-            context,
-            record,
-            log,
-        );
-        if (
-            options.patchUnchangedPowerState === false &&
-            powerState === record.powerState
-        ) {
-            return record;
+        const releaseSecrets =
+            await this.primeSecretOverlayForInlineProviderAction();
+        try {
+            const powerState = await provider.getResourcePowerState(
+                context,
+                record,
+                log,
+            );
+            if (
+                options.patchUnchangedPowerState === false &&
+                powerState === record.powerState
+            ) {
+                return record;
+            }
+            return await this.stateRepository.patchResource(record.id, {
+                powerState,
+                powerStateCheckedAt: nowIso(),
+            });
+        } finally {
+            releaseSecrets();
         }
-        return await this.stateRepository.patchResource(record.id, {
-            powerState,
-            powerStateCheckedAt: nowIso(),
-        });
     }
 
     // Open a provider-managed TCP port-forward from a resource to a local loopback
@@ -842,6 +848,17 @@ export class ResourceBroker {
         return () => clearSecretOverlay();
     }
 
+    // Prime the secret overlay for a one-off inline provider action (power-state
+    // check / start / stop) that runs outside the job runner. If a job is already
+    // active its overlay is in place, so this is a no-op to avoid tearing it down.
+    private async primeSecretOverlayForInlineProviderAction(): Promise<
+        () => void
+    > {
+        const state = await this.stateRepository.getState();
+        if (state.activeJobId) return () => {};
+        return await this.primeSecretOverlay();
+    }
+
     async getJob(jobId: string): Promise<JobRecord | null> {
         const jobs = await this.stateRepository.getJobs();
         return jobs.find((job) => job.id === jobId) ?? null;
@@ -922,12 +939,18 @@ export class ResourceBroker {
             powerStateCheckedAt: nowIso(),
         });
 
-        const result = await method.call(provider, context, pending, log);
+        const releaseSecrets =
+            await this.primeSecretOverlayForInlineProviderAction();
+        try {
+            const result = await method.call(provider, context, pending, log);
 
-        return await this.stateRepository.patchResource(record.id, {
-            powerState: result.powerState,
-            powerStateCheckedAt: nowIso(),
-        });
+            return await this.stateRepository.patchResource(record.id, {
+                powerState: result.powerState,
+                powerStateCheckedAt: nowIso(),
+            });
+        } finally {
+            releaseSecrets();
+        }
     }
 
     private async getPowerSupport(

@@ -162,6 +162,7 @@ export class VmSeriesResourceAdapter implements ResourceAdapter<PanwVmseriesReso
     record: ResourceRecord,
     log: LogFn,
   ): Promise<Record<string, unknown>> {
+    if (record.outputs) return record.outputs;
     if (!record.terraformStatePath) return {};
     try {
       return await context.terraform.readOutputs(context, record, log);

@@ -385,7 +385,7 @@ export class PanwBootstrapService {
 
     let managementAddress: string;
     try {
-      managementAddress = resolveFirewallManagementAddress(outputs);
+      managementAddress = resolveFirewallDeactivationAddress(resource, outputs);
     } catch (error) {
       return { deactivated: false, reason: `no firewall management address: ${errorMessage(error)}` };
     }
@@ -792,6 +792,21 @@ function resolveFirewallManagementAddress(outputs: Record<string, unknown>): str
   const address = stringValue(firewall?.management_public) ?? stringValue(firewall?.management_ip);
   if (!address) throw new Error("Terraform output firewall.management_public or firewall.management_ip is required");
   return address;
+}
+
+function resolveFirewallDeactivationAddress(
+  resource: PanwVmseriesResourceConfig,
+  outputs: Record<string, unknown>,
+): string {
+  try {
+    return resolveFirewallManagementAddress(outputs);
+  } catch (error) {
+    const staticAddress = resource.management.type === "static"
+      ? stringValue(resource.management.ipAddress)
+      : null;
+    if (staticAddress) return staticAddress;
+    throw error;
+  }
 }
 
 function objectValue(value: unknown): Record<string, unknown> | null {

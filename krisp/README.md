@@ -16,16 +16,17 @@ start_date,end_date}`, and `data.raw_content` — Krisp's pre-rendered markdown)
 **ignoring participant emails / `calendar_event_id` entirely** (those only appear
 when Krisp is wired to Google Calendar, which we don't rely on). It then:
 
-1. **Dedupes by the Krisp meeting id** — if a meeting already carries this
-   `krisp_meeting_id` (a re-delivery, or a follow-up event like the transcript
-   after the note), it appends to that row. Each event is wrapped in a hidden
-   marker (`<!-- krisp:note -->`), so a re-sent event is a no-op.
-2. **Time-proximity match** — finds the existing meeting (e.g. one
+1. **Time-proximity match** — finds the existing meeting (e.g. one
    `calendar-import` created) whose **start** is within ±`KRISP_MATCH_WINDOW_MIN`
    (default 10 min) of Krisp's start; ties broken by largest overlap. Matching
    gates on **start, never end** (meetings run short/long). On a confident match
    it appends the notes, links the `krisp_meeting_id`, and flags `needs_review`
    so you can verify the match.
+2. **Prior Krisp import fallback** — if time is absent/ambiguous but a meeting
+   already carries this `krisp_meeting_id` from a previous delivery, it appends
+   to that row. This is retry/follow-up protection, not the first-delivery match
+   path. Each event is wrapped in a hidden marker (`<!-- krisp:note -->`), so a
+   re-sent event is a no-op.
 3. **No confident match** → parks a **new** meeting (`internal`, `needs_review`)
    with the notes. You can later fold it onto the real meeting with the generic
    **merge** (select both meetings in the GUI → *Merge 2*, or the `merge` MCP
@@ -33,8 +34,8 @@ when Krisp is wired to Google Calendar, which we don't rely on). It then:
    onto the survivor, so a later transcript event still lands on the right row.
 
 The meeting almost always already exists (`calendar-import` makes it from Google
-Calendar), so steps 1–2 are the common path; step 3 is the fallback for
-postponed/untimed meetings.
+Calendar), so step 1 is the common path; steps 2–3 are fallback handling for
+retries, follow-up events, postponed meetings, or untimed meetings.
 
 ## How it connects
 

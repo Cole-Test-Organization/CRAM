@@ -1,5 +1,10 @@
 import { withUser } from '../../db/connection.js';
 
+const HIGHLIGHT_START = '__CRAM_SEARCH_MARK_START__';
+const HIGHLIGHT_END = '__CRAM_SEARCH_MARK_END__';
+const HEADLINE_OPTIONS = `StartSel=${HIGHLIGHT_START}, StopSel=${HIGHLIGHT_END}, MaxWords=20, MinWords=5, ShortWord=3, HighlightAll=FALSE`;
+const MEETING_HEADLINE_OPTIONS = `StartSel=${HIGHLIGHT_START}, StopSel=${HIGHLIGHT_END}, MaxWords=25, MinWords=5, ShortWord=3, HighlightAll=FALSE`;
+
 export class SearchService {
   /**
    * Global search across all tables using Postgres tsvector/tsquery.
@@ -13,22 +18,22 @@ export class SearchService {
       const results: Record<string, unknown[]> = {};
 
       if (type === 'all' || type === 'accounts') {
-        results.accounts = (await client.query(`
+        results.accounts = escapeResultSnippets((await client.query(`
           SELECT a.id, a.slug, a.name, a.status, a.last_contact,
             ts_headline('english', coalesce(a.relationship_summary, ''),
               to_tsquery('english', $1),
-              'StartSel=<mark>, StopSel=</mark>, MaxWords=20, MinWords=5, ShortWord=3, HighlightAll=FALSE'
+              $3
             ) AS snippet,
             ts_rank(a.search_vector, to_tsquery('english', $1)) AS rank
           FROM accounts a
           WHERE a.search_vector @@ to_tsquery('english', $1)
           ORDER BY rank DESC
           LIMIT $2
-        `, [tsQuery, limit])).rows;
+        `, [tsQuery, limit, HEADLINE_OPTIONS])).rows);
       }
 
       if (type === 'all' || type === 'contacts') {
-        results.contacts = (await client.query(`
+        results.contacts = escapeResultSnippets((await client.query(`
           SELECT DISTINCT c.id, c.full_name, c.company, c.title, c.email,
             (SELECT string_agg(a2.slug, ',')
              FROM account_contacts ac2 JOIN accounts a2 ON a2.id = ac2.account_id
@@ -38,23 +43,23 @@ export class SearchService {
              WHERE ac2.contact_id = c.id) AS account_name,
             ts_headline('english', coalesce(c.notes, ''),
               to_tsquery('english', $1),
-              'StartSel=<mark>, StopSel=</mark>, MaxWords=20, MinWords=5, ShortWord=3, HighlightAll=FALSE'
+              $3
             ) AS snippet,
             ts_rank(c.search_vector, to_tsquery('english', $1)) AS rank
           FROM contacts c
           WHERE c.search_vector @@ to_tsquery('english', $1)
           ORDER BY rank DESC
           LIMIT $2
-        `, [tsQuery, limit])).rows;
+        `, [tsQuery, limit, HEADLINE_OPTIONS])).rows);
       }
 
       if (type === 'all' || type === 'meetings') {
-        results.meetings = (await client.query(`
+        results.meetings = escapeResultSnippets((await client.query(`
           SELECT m.id, m.date, m.title, m.filename, m.account_id, m.internal,
             a.slug AS account_slug, a.name AS account_name,
             ts_headline('english', coalesce(m.body, ''),
               to_tsquery('english', $1),
-              'StartSel=<mark>, StopSel=</mark>, MaxWords=25, MinWords=5, ShortWord=3, HighlightAll=FALSE'
+              $3
             ) AS snippet,
             ts_rank(m.search_vector, to_tsquery('english', $1)) AS rank
           FROM meetings m
@@ -62,16 +67,16 @@ export class SearchService {
           WHERE m.search_vector @@ to_tsquery('english', $1) AND m.deleted_at IS NULL
           ORDER BY rank DESC
           LIMIT $2
-        `, [tsQuery, limit])).rows;
+        `, [tsQuery, limit, MEETING_HEADLINE_OPTIONS])).rows);
       }
 
       if (type === 'all' || type === 'opportunities') {
-        results.opportunities = (await client.query(`
+        results.opportunities = escapeResultSnippets((await client.query(`
           SELECT o.id, o.name, o.stage, o.account_id,
             a.slug AS account_slug, a.name AS account_name,
             ts_headline('english', coalesce(o.notes, ''),
               to_tsquery('english', $1),
-              'StartSel=<mark>, StopSel=</mark>, MaxWords=20, MinWords=5, ShortWord=3, HighlightAll=FALSE'
+              $3
             ) AS snippet,
             ts_rank(o.search_vector, to_tsquery('english', $1)) AS rank
           FROM opportunities o
@@ -79,7 +84,7 @@ export class SearchService {
           WHERE o.search_vector @@ to_tsquery('english', $1)
           ORDER BY rank DESC
           LIMIT $2
-        `, [tsQuery, limit])).rows;
+        `, [tsQuery, limit, HEADLINE_OPTIONS])).rows);
       }
 
       const total = Object.values(results).reduce((sum, arr) => sum + (arr?.length || 0), 0);
@@ -124,4 +129,26 @@ function buildTsQuery(input: string): string | null {
     .filter(Boolean);
   if (!tokens.length) return null;
   return tokens.map(t => `${t}:*`).join(' & ');
+}
+
+function escapeResultSnippets<T extends Record<string, unknown>>(rows: T[]): T[] {
+  return rows.map((row) => {
+    if (typeof row.snippet !== 'string') return row;
+    return { ...row, snippet: renderSnippetHtml(row.snippet) };
+  });
+}
+
+function renderSnippetHtml(snippet: string): string {
+  return escapeHtml(snippet)
+    .replaceAll(HIGHLIGHT_START, '<mark>')
+    .replaceAll(HIGHLIGHT_END, '</mark>');
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }

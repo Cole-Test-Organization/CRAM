@@ -39,7 +39,7 @@ describe('ProvisioningJobWorker events', () => {
     const worker = new ProvisioningJobWorker({
       userId: 1,
       broker,
-      store,
+      postgresStateRepository: store,
       secretResolver: { hydrateAll: async () => ({}) },
       cancelPollMs: 10000,
       progressEventMs: 10,
