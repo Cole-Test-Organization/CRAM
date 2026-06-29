@@ -3,6 +3,7 @@ import Modal, { modalBtn } from './Modal';
 import FormField, { FormRow, formInputClass, formTextareaClass, formSelectClass } from './FormField';
 import AccountPicker from './AccountPicker';
 import AttendeePicker from './AttendeePicker';
+import SegmentedControl from './SegmentedControl';
 import { api } from '../lib/api';
 import { STAGES, type OpportunityStage } from '../lib/stages';
 import { createUnsavedGuard } from '../lib/unsavedGuard';
@@ -759,22 +760,14 @@ export function MeetingFormModal(props: MeetingModalProps) {
           label="Source"
           hint='Manual: pick the account and attendees yourself. From emails: paste a calendar-invite attendee list and we look up matching contacts + account, with optional background LinkedIn research on new attendees.'
         >
-          <div class="flex gap-2">
-            <button
-              type="button"
-              class={`press press-sm ${mode() === 'manual' ? 'press-primary' : 'press-ghost'}`}
-              onClick={() => setMode('manual')}
-            >
-              Manual
-            </button>
-            <button
-              type="button"
-              class={`press press-sm ${mode() === 'from-emails' ? 'press-primary' : 'press-ghost'}`}
-              onClick={() => setMode('from-emails')}
-            >
-              From emails
-            </button>
-          </div>
+          <SegmentedControl
+            value={mode()}
+            onChange={setMode}
+            options={[
+              { value: 'manual', label: 'Manual' },
+              { value: 'from-emails', label: 'From emails' },
+            ]}
+          />
         </FormField>
       </Show>
 

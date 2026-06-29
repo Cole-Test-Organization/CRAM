@@ -2,8 +2,9 @@ import { createResource, createSignal, createMemo, For, Show } from 'solid-js';
 import { A } from '@solidjs/router';
 import { api } from '../lib/api';
 import { debounce } from '../lib/editing';
-import { todayLocalDate } from '../utils/date';
+import { formatShortDate, todayLocalDate } from '../utils/date';
 import Button from '../components/Button';
+import SegmentedControl from '../components/SegmentedControl';
 
 const MODE_LABEL: Record<string, string> = {
   in_person: 'In Person',
@@ -20,14 +21,6 @@ function modeChipClass(mode: string | null): string {
     case 'on_demand': return 'bg-papaya-500/20 text-papaya-200 border-papaya-400';
     default: return 'bg-base-800 text-base-300 border-base-500';
   }
-}
-
-function formatShortDate(iso: string): string {
-  const [y, m, d] = iso.split('-').map(Number);
-  if (!y) return iso;
-  const date = new Date(Date.UTC(y, (m || 1) - 1, d || 1));
-  const month = date.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' });
-  return `${month} ${d || 1}, ${y}`;
 }
 
 function formatLocation(e: any): string {
@@ -141,22 +134,16 @@ export default function EventsList() {
         </div>
       </div>
 
-      {/* View toggle */}
       <div class="flex gap-2 mb-5 flex-wrap">
-        <button
-          type="button"
-          class={`press press-sm ${view() === 'all' ? 'press-primary' : 'press-ghost'}`}
-          onClick={() => setView('all')}
-        >
-          All Events
-        </button>
-        <button
-          type="button"
-          class={`press press-sm ${view() === 'with_contacts' ? 'press-primary' : 'press-ghost'}`}
-          onClick={() => setView('with_contacts')}
-        >
-          Travel Planner
-        </button>
+        <SegmentedControl
+          value={view()}
+          onChange={setView}
+          options={[
+            { value: 'all', label: 'All Events' },
+            { value: 'with_contacts', label: 'Travel Planner' },
+          ]}
+          size="md"
+        />
         <Show when={view() === 'with_contacts'}>
           <span class="text-base-300 text-[11px] uppercase tracking-wider self-center ml-1">
             Upcoming events near my contacts

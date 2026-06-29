@@ -25,11 +25,9 @@ export default function ContactList(props: Props = {}) {
   const [modalOpen, setModalOpen] = createSignal(false);
   const navigate = useNavigate();
 
-  const isEmbedded = () => props.accountId !== undefined && props.accountId !== null;
-
   // Companies dropdown is only useful on the global page — skip the fetch when embedded.
   const [companies, { refetch: refetchCompanies }] = createResource(
-    () => ({ embedded: isEmbedded() }),
+    () => ({ embedded: props.accountId !== undefined && props.accountId !== null }),
     async ({ embedded }) => (embedded ? [] : api.getContactCompanies()),
   );
 
@@ -47,31 +45,24 @@ export default function ContactList(props: Props = {}) {
     },
   );
 
-  const matchesSearch = (c: any, q: string) =>
-    (c.full_name || '').toLowerCase().includes(q) ||
-    (c.email || '').toLowerCase().includes(q) ||
-    (c.title || '').toLowerCase().includes(q) ||
-    (c.company || '').toLowerCase().includes(q) ||
-    (c.account_names || '').toLowerCase().includes(q);
-
   const filtered = () => {
     const list = contacts() || [];
-    if (!isEmbedded()) return list;
+    if (props.accountId === undefined || props.accountId === null) return list;
     const q = search().toLowerCase();
     if (!q) return list;
-    return list.filter((c: any) => matchesSearch(c, q));
+    return list.filter((c: any) =>
+      (c.full_name || '').toLowerCase().includes(q) ||
+      (c.email || '').toLowerCase().includes(q) ||
+      (c.title || '').toLowerCase().includes(q) ||
+      (c.company || '').toLowerCase().includes(q) ||
+      (c.account_names || '').toLowerCase().includes(q)
+    );
   };
 
   const sel = createSelection(
     () => filtered().map((c: any) => c.id),
     () => props.accountId,
   );
-
-  const buildExport = (ids: number[]) => {
-    const idSet = new Set(ids);
-    const items = (contacts() || []).filter((c: any) => idSet.has(c.id));
-    return buildContactsExport(items);
-  };
 
   const deleteContact = async (id: number) => {
     if (!confirm('Delete this contact?')) return;
@@ -85,14 +76,14 @@ export default function ContactList(props: Props = {}) {
   return (
     <div>
       <div class="flex flex-col gap-3 mb-6 md:flex-row md:items-center">
-        <Show when={!isEmbedded()}>
+        <Show when={props.accountId === undefined || props.accountId === null}>
           <h1 class="text-[26px] font-bold font-[family-name:var(--font-display)]">Contacts</h1>
         </Show>
         <div class="flex items-center gap-4 flex-wrap md:ml-auto">
           <span class="text-base-300 text-[12px] uppercase tracking-wider">
             {filtered().length} contact{filtered().length === 1 ? '' : 's'}
           </span>
-          <Button variant="primary" size={isEmbedded() ? 'sm' : 'md'} onClick={() => setModalOpen(true)}>+ New Contact</Button>
+          <Button variant="primary" size={props.accountId !== undefined && props.accountId !== null ? 'sm' : 'md'} onClick={() => setModalOpen(true)}>+ New Contact</Button>
         </div>
       </div>
 
@@ -108,7 +99,7 @@ export default function ContactList(props: Props = {}) {
           />
         </div>
 
-        <Show when={!isEmbedded()}>
+        <Show when={props.accountId === undefined || props.accountId === null}>
           <select
             class="input-vintage cursor-pointer w-full md:max-w-[220px]"
             value={company()}
@@ -124,7 +115,14 @@ export default function ContactList(props: Props = {}) {
         </Show>
       </div>
 
-      <SelectionToolbar selection={sel} buildExport={buildExport} loading={() => contacts.loading} />
+      <SelectionToolbar
+        selection={sel}
+        buildExport={(ids) => {
+          const idSet = new Set(ids);
+          return buildContactsExport((contacts() || []).filter((c: any) => idSet.has(c.id)));
+        }}
+        loading={() => contacts.loading}
+      />
 
       <ListRows
         items={filtered}
@@ -137,7 +135,7 @@ export default function ContactList(props: Props = {}) {
             <Show when={c.title}>
               <span class="text-base-300 text-[12px]">{c.title}</span>
             </Show>
-            <Show when={!isEmbedded() && c.account_names}>
+            <Show when={(props.accountId === undefined || props.accountId === null) && c.account_names}>
               <span class="text-base-300 text-[12px]">{c.account_names}</span>
             </Show>
             <Show when={c.email}>

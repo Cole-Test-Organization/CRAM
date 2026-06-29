@@ -1,175 +1,247 @@
-import { createResource, createSignal, Show } from 'solid-js';
-import { useNavigate } from '@solidjs/router';
-import { api } from '../lib/api';
-import { MeetingFormModal } from '../components/FormModals';
-import Button from '../components/Button';
-import ListRows from '../components/ListRows';
-import TodayTimeline from '../components/TodayTimeline';
-import SelectionToolbar from '../components/SelectionToolbar';
-import { createSelection } from '../components/createSelection';
-import MergeModal from '../components/MergeModal';
-import { buildMeetingsExport } from '../lib/meetingExport';
+import { createResource, createSignal, Show } from "solid-js";
+import { useNavigate } from "@solidjs/router";
+import { api } from "../lib/api";
+import { MeetingFormModal } from "../components/FormModals";
+import Button from "../components/Button";
+import ListRows from "../components/ListRows";
+import TodayTimeline from "../components/TodayTimeline";
+import SelectionToolbar from "../components/SelectionToolbar";
+import SegmentedControl from "../components/SegmentedControl";
+import { createSelection } from "../components/createSelection";
+import MergeModal from "../components/MergeModal";
+import { buildMeetingsExport } from "../lib/meetingExport";
 
 type Props = {
-  // When set, the list is scoped to this account's meetings (via the per-account
-  // endpoint) and the New Meeting modal is pinned to that account. When unset,
-  // this is the standalone /meetings page: shows all meetings, the H1, and the
-  // account-name column, and navigates to the new meeting after creation.
-  accountId?: number;
-  accountName?: string;
-  onAfterCreate?: (meeting: any) => void;
-  onAfterDelete?: () => void;
+    accountId?: number;
+    accountName?: string;
+    onAfterCreate?: (meeting: any) => void;
+    onAfterDelete?: () => void;
 };
 
 export default function MeetingsList(props: Props = {}) {
-  const [filter, setFilter] = createSignal('');
-  const [reviewOnly, setReviewOnly] = createSignal(false);
-  const [modalOpen, setModalOpen] = createSignal(false);
-  const [mergeOpen, setMergeOpen] = createSignal(false);
-  const [mergePair, setMergePair] = createSignal<[number, number] | null>(null);
-  const navigate = useNavigate();
-
-  const isEmbedded = () => props.accountId !== undefined && props.accountId !== null;
-
-  const [meetings, { refetch }] = createResource(
-    () => ({ accountId: props.accountId }),
-    async ({ accountId }) => {
-      if (accountId !== undefined && accountId !== null) return api.getMeetings(accountId);
-      return api.getAllMeetings({ limit: 100000 });
-    }
-  );
-
-  const filtered = () => {
-    const q = filter().toLowerCase();
-    let list = meetings() || [];
-    if (reviewOnly()) list = list.filter((m: any) => m.needs_review);
-    if (!q) return list;
-    return list.filter((m: any) =>
-      (m.title || m.filename || '').toLowerCase().includes(q) ||
-      (m.account_name || '').toLowerCase().includes(q) ||
-      (m.attendees || '').toLowerCase().includes(q) ||
-      (m.date || '').includes(q) ||
-      (m.internal && 'internal'.includes(q))
+    const [filter, setFilter] = createSignal("");
+    const [reviewOnly, setReviewOnly] = createSignal(false);
+    const [kindFilter, setKindFilter] = createSignal<"all" | "external" | "internal">("all");
+    const [modalOpen, setModalOpen] = createSignal(false);
+    const [mergeOpen, setMergeOpen] = createSignal(false);
+    const [mergePair, setMergePair] = createSignal<[number, number] | null>(
+        null,
     );
-  };
+    const navigate = useNavigate();
 
-  // Parked notes awaiting triage (account-less / imported, flagged needs_review).
-  const reviewCount = () => (meetings() || []).filter((m: any) => m.needs_review).length;
+    const [meetings, { refetch }] = createResource(
+        () => ({ accountId: props.accountId }),
+        async ({ accountId }) => {
+            if (accountId !== undefined && accountId !== null)
+                return api.getMeetings(accountId);
+            return api.getAllMeetings({ limit: 100000 });
+        },
+    );
 
-  const sel = createSelection(
-    () => filtered().map((m: any) => m.id),
-    () => props.accountId,
-  );
+    const filtered = () => {
+        const q = filter().toLowerCase();
+        let list = meetings() || [];
+        if (reviewOnly()) list = list.filter((m: any) => m.needs_review);
+        if (kindFilter() === "internal") list = list.filter((m: any) => m.internal);
+        if (kindFilter() === "external") list = list.filter((m: any) => !m.internal);
+        if (!q) return list;
+        return list.filter(
+            (m: any) =>
+                (m.title || m.filename || "").toLowerCase().includes(q) ||
+                (m.account_name || "").toLowerCase().includes(q) ||
+                (m.attendees || "").toLowerCase().includes(q) ||
+                (m.date || "").includes(q) ||
+                (m.internal && "internal".includes(q)),
+        );
+    };
 
-  const deleteMeeting = async (id: number) => {
-    if (!confirm('Delete this meeting?')) return;
-    await api.deleteMeeting(id);
-    sel.remove(id);
-    refetch();
-    props.onAfterDelete?.();
-  };
+    // Parked notes awaiting triage (account-less / imported, flagged needs_review).
+    const reviewCount = () =>
+        (meetings() || []).filter((m: any) => m.needs_review).length;
 
-  // Snapshot the two selected ids when opening the merge resolver so the modal's
-  // pair is stable even if the selection changes underneath.
-  const openMerge = () => {
-    const ids = sel.idList();
-    if (ids.length === 2) {
-      setMergePair([ids[0], ids[1]]);
-      setMergeOpen(true);
-    }
-  };
+    const sel = createSelection(
+        () => filtered().map((m: any) => m.id),
+        () => props.accountId,
+    );
 
-  return (
-    <div>
-      <div class="flex flex-col gap-3 mb-6 md:flex-row md:items-center">
-        <Show when={!isEmbedded()}>
-          <h1 class="text-[26px] font-bold font-[family-name:var(--font-display)]">Meetings</h1>
-        </Show>
-        <div class="flex items-center gap-4 flex-wrap md:ml-auto">
-          <span class="text-base-300 text-[12px] uppercase tracking-wider">{filtered().length} meeting{filtered().length === 1 ? '' : 's'}</span>
-          <Show when={sel.count() === 2}>
-            <button class="press press-ghost press-sm md:press-md" onClick={openMerge} title="Merge the two selected meetings">⇄ Merge 2</button>
-          </Show>
-          <Button variant="primary" size={isEmbedded() ? 'sm' : 'md'} onClick={() => setModalOpen(true)}>+ New Meeting</Button>
-        </div>
-      </div>
+    const deleteMeeting = async (id: number) => {
+        if (!confirm("Delete this meeting?")) return;
+        await api.deleteMeeting(id);
+        sel.remove(id);
+        refetch();
+        props.onAfterDelete?.();
+    };
 
-      <Show when={!isEmbedded()}>
-        <TodayTimeline meetings={() => meetings() || []} getHref={(m: any) => `/meetings/${m.id}`} />
-      </Show>
+    // Snapshot the two selected ids when opening the merge resolver so the modal's
+    // pair is stable even if the selection changes underneath.
+    const openMerge = () => {
+        const ids = sel.idList();
+        if (ids.length === 2) {
+            setMergePair([ids[0], ids[1]]);
+            setMergeOpen(true);
+        }
+    };
 
-      <div class="mb-5 flex flex-col gap-3 md:flex-row md:items-center">
-        <div class="flex items-center bg-base-950 border-2 border-base-500 px-3 py-2 gap-2 focus-within:border-surf-300 transition-colors flex-1">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-surf-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-          <input
-            type="text"
-            placeholder="Filter meetings..."
-            value={filter()}
-            onInput={(e) => setFilter(e.currentTarget.value)}
-            class="flex-1 bg-transparent border-none outline-none text-base-50 text-sm placeholder:text-base-400"
-          />
-        </div>
-        <Show when={!isEmbedded() && (reviewCount() || reviewOnly())}>
-          <label class="flex items-center gap-2 cursor-pointer text-[11px] uppercase tracking-wider font-semibold text-amber-300 shrink-0 px-1" title="Show only parked notes awaiting an account">
-            <input type="checkbox" class="accent-amber-300 w-4 h-4 cursor-pointer" checked={reviewOnly()} onChange={(e) => setReviewOnly(e.currentTarget.checked)} />
-            Needs review{reviewCount() ? ` (${reviewCount()})` : ''}
-          </label>
-        </Show>
-      </div>
+    return (
+        <div>
+            <div class="flex flex-col gap-3 mb-6 md:flex-row md:items-center">
+                <Show when={props.accountId === undefined || props.accountId === null}>
+                    <h1 class="text-[26px] font-bold font-[family-name:var(--font-display)]">
+                        Meetings
+                    </h1>
+                </Show>
+                <div class="flex items-center gap-4 flex-wrap md:ml-auto">
+                    <span class="text-base-300 text-[12px] uppercase tracking-wider">
+                        {filtered().length} meeting
+                        {filtered().length === 1 ? "" : "s"}
+                    </span>
+                    <Show when={sel.count() === 2}>
+                        <button
+                            class="press press-ghost press-sm md:press-md"
+                            onClick={openMerge}
+                            title="Merge the two selected meetings"
+                        >
+                            ⇄ Merge 2
+                        </button>
+                    </Show>
+                    <Button
+                        variant="primary"
+                        size={props.accountId !== undefined && props.accountId !== null ? "sm" : "md"}
+                        onClick={() => setModalOpen(true)}
+                    >
+                        + New Meeting
+                    </Button>
+                </div>
+            </div>
 
-      <SelectionToolbar selection={sel} buildExport={buildMeetingsExport} loading={() => meetings.loading} />
-
-      <ListRows
-        items={filtered}
-        loading={() => meetings.loading}
-        getId={(m: any) => m.id}
-        getHref={(m: any) => `/meetings/${m.id}`}
-        renderRow={(m: any) => (
-          <>
-            <span class="flex-1 min-w-full md:min-w-0 font-semibold text-sm text-base-50 flex items-center gap-2 flex-wrap">
-              <Show when={m.internal}>
-                <span class="bg-base-950 border-2 border-surf-300 text-surf-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">Internal</span>
-              </Show>
-              <Show when={m.needs_review}>
-                <span class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">Review</span>
-              </Show>
-              <span>{m.title || m.filename}</span>
-            </span>
-            <Show when={!isEmbedded()}>
-              <span class="text-base-300 text-[12px]">{m.internal ? '' : m.account_name}</span>
+            <Show when={props.accountId === undefined || props.accountId === null}>
+                <TodayTimeline
+                    meetings={() => meetings() || []}
+                    getHref={(m: any) => `/meetings/${m.id}`}
+                />
             </Show>
-            <span class="text-base-300 text-[12px]">{m.date}</span>
-          </>
-        )}
-        selection={sel}
-        onDelete={deleteMeeting}
-        deleteTitle="Delete meeting"
-        emptyState={<div class="text-base-300 text-center p-10 text-sm">No meetings found</div>}
-      />
 
-      <MeetingFormModal
-        open={modalOpen()}
-        onClose={() => setModalOpen(false)}
-        fixedAccountId={props.accountId}
-        fixedAccountName={props.accountName}
-        onSaved={(m) => {
-          refetch();
-          if (props.onAfterCreate) {
-            props.onAfterCreate(m);
-          } else {
-            navigate(`/meetings/${m.id}`);
-          }
-        }}
-      />
+            <div class="mb-5 flex flex-col gap-3 md:flex-row md:items-center">
+                <div class="flex items-center bg-base-950 border-2 border-base-500 px-3 py-2 gap-2 focus-within:border-surf-300 transition-colors flex-1">
+                    <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        class="text-surf-400"
+                    >
+                        <circle cx="11" cy="11" r="8" />
+                        <path d="m21 21-4.35-4.35" />
+                    </svg>
+                    <input
+                        type="text"
+                        placeholder="Filter meetings..."
+                        value={filter()}
+                        onInput={(e) => setFilter(e.currentTarget.value)}
+                        class="flex-1 bg-transparent border-none outline-none text-base-50 text-sm placeholder:text-base-400"
+                    />
+                </div>
+                <Show when={(props.accountId === undefined || props.accountId === null) && (reviewCount() || reviewOnly())}>
+                    <label
+                        class="flex items-center gap-2 cursor-pointer text-[11px] uppercase tracking-wider font-semibold text-amber-300 shrink-0 px-1"
+                        title="Show only parked notes awaiting an account"
+                    >
+                        <input
+                            type="checkbox"
+                            class="accent-amber-300 w-4 h-4 cursor-pointer"
+                            checked={reviewOnly()}
+                            onChange={(e) =>
+                                setReviewOnly(e.currentTarget.checked)
+                            }
+                        />
+                        Needs review{reviewCount() ? ` (${reviewCount()})` : ""}
+                    </label>
+                </Show>
+            </div>
 
-      <MergeModal
-        open={mergeOpen()}
-        entity="meetings"
-        idA={mergePair()?.[0] ?? null}
-        idB={mergePair()?.[1] ?? null}
-        onClose={() => setMergeOpen(false)}
-        onMerged={() => { sel.clear(); refetch(); props.onAfterDelete?.(); }}
-      />
-    </div>
-  );
+            <SelectionToolbar
+                selection={sel}
+                buildExport={buildMeetingsExport}
+                loading={() => meetings.loading}
+            >
+                <SegmentedControl
+                    value={kindFilter()}
+                    onChange={setKindFilter}
+                    options={[
+                        { value: "all", label: "All" },
+                        { value: "external", label: "External" },
+                        { value: "internal", label: "Internal" },
+                    ]}
+                />
+            </SelectionToolbar>
+
+            <ListRows
+                items={filtered}
+                loading={() => meetings.loading}
+                getId={(m: any) => m.id}
+                getHref={(m: any) => `/meetings/${m.id}`}
+                renderRow={(m: any) => (
+                    <>
+                        <span class="flex-1 min-w-full md:min-w-0 font-semibold text-sm text-base-50 flex items-center gap-2 flex-wrap">
+                            <span>{m.title || m.filename}</span>
+                            <Show when={m.needs_review}>
+                                <span class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">
+                                    Review
+                                </span>
+                            </Show>
+                            <Show when={m.internal}>
+                                <span class="bg-base-950 border-2 border-surf-300 text-surf-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">
+                                    Internal
+                                </span>
+                            </Show>
+                        </span>
+                        <Show when={props.accountId === undefined || props.accountId === null}>
+                            <span class="text-base-300 text-[12px]">
+                                {m.internal ? "" : m.account_name}
+                            </span>
+                        </Show>
+                        <span class="text-base-300 text-[12px]">{m.date}</span>
+                    </>
+                )}
+                selection={sel}
+                onDelete={deleteMeeting}
+                deleteTitle="Delete meeting"
+                emptyState={
+                    <div class="text-base-300 text-center p-10 text-sm">
+                        No meetings found
+                    </div>
+                }
+            />
+
+            <MeetingFormModal
+                open={modalOpen()}
+                onClose={() => setModalOpen(false)}
+                fixedAccountId={props.accountId}
+                fixedAccountName={props.accountName}
+                onSaved={(m) => {
+                    refetch();
+                    if (props.onAfterCreate) {
+                        props.onAfterCreate(m);
+                    } else {
+                        navigate(`/meetings/${m.id}`);
+                    }
+                }}
+            />
+
+            <MergeModal
+                open={mergeOpen()}
+                entity="meetings"
+                idA={mergePair()?.[0] ?? null}
+                idB={mergePair()?.[1] ?? null}
+                onClose={() => setMergeOpen(false)}
+                onMerged={() => {
+                    sel.clear();
+                    refetch();
+                    props.onAfterDelete?.();
+                }}
+            />
+        </div>
+    );
 }

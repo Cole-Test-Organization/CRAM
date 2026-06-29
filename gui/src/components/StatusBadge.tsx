@@ -12,10 +12,8 @@ function toneClass(tone: StatusTone) {
 }
 
 export default function StatusBadge(props: { status: string | null; label?: string; tone?: StatusTone }) {
-  const normalized = () => (props.status || '').toLowerCase();
-
   const inferredTone = (): StatusTone => {
-    const status = normalized();
+    const status = (props.status || '').toLowerCase();
     if (status === 'partner') return 'papaya';
     if (['succeeded', 'ready', 'running', 'stored'].includes(status)) return 'surf';
     if (['queued', 'terraform_applying', 'terraform_destroying', 'destroy_requested', 'pending', 'stopping', 'missing'].includes(status)) return 'amber';
@@ -24,16 +22,9 @@ export default function StatusBadge(props: { status: string | null; label?: stri
     return 'cerulean';
   };
 
-  const variant = () =>
-    props.tone
-      ? toneClass(props.tone)
-      : toneClass(inferredTone());
-
-  const label = () => props.label ?? (props.status || 'unknown').replace(/[-_]/g, ' ');
-
   return (
-    <span class={`inline-block px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest border-2 ${variant()}`}>
-      {label()}
+    <span class={`inline-block px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest border-2 ${props.tone ? toneClass(props.tone) : toneClass(inferredTone())}`}>
+      {props.label ?? (props.status || 'unknown').replace(/[-_]/g, ' ')}
     </span>
   );
 }

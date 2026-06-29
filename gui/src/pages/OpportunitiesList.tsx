@@ -8,13 +8,7 @@ import SelectionToolbar from '../components/SelectionToolbar';
 import { createSelection } from '../components/createSelection';
 import { buildOpportunitiesExport } from '../lib/opportunityExport';
 import { STAGES, STAGE_BY_ID, stageShort, stageChipClass, type OpportunityStage } from '../lib/stages';
-
-function formatShortDate(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-}
+import { formatShortDate } from '../utils/date';
 
 type Props = {
   // When set, scopes the list to this account's opportunities (same endpoint,
@@ -33,8 +27,6 @@ export default function OpportunitiesList(props: Props = {}) {
   const [modalOpen, setModalOpen] = createSignal(false);
   const navigate = useNavigate();
 
-  const isEmbedded = () => props.accountId !== undefined && props.accountId !== null;
-
   const [data, { refetch }] = createResource(
     () => ({ accountId: props.accountId, stage: stageFilter() }),
     async ({ accountId, stage }) =>
@@ -47,17 +39,12 @@ export default function OpportunitiesList(props: Props = {}) {
       }),
   );
 
-  const stageIndex = (s: string | null | undefined) =>
-    STAGE_BY_ID[s as OpportunityStage]?.index ?? 999;
-  const isTerminal = (s: string | null | undefined) =>
-    !!STAGE_BY_ID[s as OpportunityStage]?.terminal;
-
   const filtered = createMemo(() => {
     const q = filter().toLowerCase();
     const stage = stageFilter();
     const opps = data()?.opportunities || [];
     const result = opps.filter((o: any) => {
-      if (!stage && isTerminal(o.stage)) return false;
+      if (!stage && STAGE_BY_ID[o.stage as OpportunityStage]?.terminal) return false;
       if (!q) return true;
       return (
         o.name.toLowerCase().includes(q) ||
@@ -65,19 +52,16 @@ export default function OpportunitiesList(props: Props = {}) {
         (o.account_slug && o.account_slug.toLowerCase().includes(q))
       );
     });
-    return result.slice().sort((a: any, b: any) => stageIndex(a.stage) - stageIndex(b.stage));
+    return result.slice().sort((a: any, b: any) =>
+      (STAGE_BY_ID[a.stage as OpportunityStage]?.index ?? 999) -
+      (STAGE_BY_ID[b.stage as OpportunityStage]?.index ?? 999)
+    );
   });
 
   const sel = createSelection(
     () => filtered().map((o: any) => o.id),
     () => props.accountId,
   );
-
-  const buildExport = (ids: number[]) => {
-    const idSet = new Set(ids);
-    const items = (data()?.opportunities || []).filter((o: any) => idSet.has(o.id));
-    return buildOpportunitiesExport(items);
-  };
 
   const deleteOpportunity = async (id: number) => {
     if (!confirm('Delete this opportunity?')) return;
@@ -90,14 +74,14 @@ export default function OpportunitiesList(props: Props = {}) {
   return (
     <div>
       <div class="flex flex-col gap-3 mb-6 md:flex-row md:items-center">
-        <Show when={!isEmbedded()}>
+        <Show when={props.accountId === undefined || props.accountId === null}>
           <h1 class="text-[26px] font-bold font-[family-name:var(--font-display)]">Opportunities</h1>
         </Show>
         <div class="flex items-center gap-3 flex-wrap md:ml-auto">
           <span class="text-base-300 text-[12px] uppercase tracking-wider">
             {filtered().length} opp{filtered().length === 1 ? '' : 's'}
           </span>
-          <Button variant="primary" size={isEmbedded() ? 'sm' : 'md'} onClick={() => setModalOpen(true)}>+ New Opportunity</Button>
+          <Button variant="primary" size={props.accountId !== undefined && props.accountId !== null ? 'sm' : 'md'} onClick={() => setModalOpen(true)}>+ New Opportunity</Button>
         </div>
       </div>
 
@@ -125,7 +109,14 @@ export default function OpportunitiesList(props: Props = {}) {
         </select>
       </div>
 
-      <SelectionToolbar selection={sel} buildExport={buildExport} loading={() => data.loading} />
+      <SelectionToolbar
+        selection={sel}
+        buildExport={(ids) => {
+          const idSet = new Set(ids);
+          return buildOpportunitiesExport((data()?.opportunities || []).filter((o: any) => idSet.has(o.id)));
+        }}
+        loading={() => data.loading}
+      />
 
       <ListRows
         items={filtered}
@@ -135,7 +126,7 @@ export default function OpportunitiesList(props: Props = {}) {
         renderRow={(opp: any) => (
           <>
             <span class="flex-1 min-w-full md:min-w-[280px] font-semibold text-sm text-base-50">{opp.name}</span>
-            <Show when={!isEmbedded() && opp.account_name}>
+            <Show when={(props.accountId === undefined || props.accountId === null) && opp.account_name}>
               <span class="text-base-300 text-[12px]">{opp.account_name}</span>
             </Show>
             <span class={`text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 border ${stageChipClass(opp.stage)}`}>

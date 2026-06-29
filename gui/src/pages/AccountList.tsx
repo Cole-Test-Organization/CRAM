@@ -33,19 +33,6 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
   // Accounts flagged for review (e.g. auto-created by importers).
   const reviewCount = () => (data()?.accounts || []).filter((a: any) => a.needs_review).length;
 
-  const favorites = () => filtered().filter((a: any) => a.favorite);
-  const regulars = () => filtered().filter((a: any) => !a.favorite);
-
-  const title = () => {
-    if (props.type === 'partner') return 'Partners';
-    return 'Accounts';
-  };
-
-  const singular = () => {
-    if (props.type === 'partner') return 'Partner';
-    return 'Account';
-  };
-
   const sortRows = (accounts: any[]) =>
     [...accounts].sort((a: any, b: any) => {
       if (!!a.favorite !== !!b.favorite) return a.favorite ? -1 : 1;
@@ -77,10 +64,10 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
   return (
     <div>
       <div class="flex flex-col gap-3 mb-6 md:flex-row md:justify-between md:items-center">
-        <h1 class="text-[26px] font-bold font-[family-name:var(--font-display)]">{title()}</h1>
+        <h1 class="text-[26px] font-bold font-[family-name:var(--font-display)]">{props.type === 'partner' ? 'Partners' : 'Accounts'}</h1>
         <div class="flex items-center gap-4 flex-wrap">
-          <span class="text-base-300 text-[12px] uppercase tracking-wider">{filtered().length} {title().toLowerCase()}</span>
-          <Button variant="primary" onClick={() => setModalOpen(true)}>+ New {singular()}</Button>
+          <span class="text-base-300 text-[12px] uppercase tracking-wider">{filtered().length} {props.type === 'partner' ? 'partners' : 'accounts'}</span>
+          <Button variant="primary" onClick={() => setModalOpen(true)}>+ New {props.type === 'partner' ? 'Partner' : 'Account'}</Button>
         </div>
       </div>
 
@@ -89,7 +76,7 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-surf-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
           <input
             type="text"
-            placeholder={`Filter ${title().toLowerCase()}...`}
+            placeholder={`Filter ${props.type === 'partner' ? 'partners' : 'accounts'}...`}
             value={filter()}
             onInput={(e) => setFilter(e.currentTarget.value)}
             class="flex-1 bg-transparent border-none outline-none text-base-50 text-sm placeholder:text-base-400"
@@ -105,24 +92,24 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
 
       <div class="panel panel-accent">
         <Show when={!data.loading} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
-          <Show when={filtered().length} fallback={<div class="text-base-300 text-center p-10 text-sm">No {title().toLowerCase()} found</div>}>
-            <Show when={favorites().length}>
+          <Show when={filtered().length} fallback={<div class="text-base-300 text-center p-10 text-sm">No {props.type === 'partner' ? 'partners' : 'accounts'} found</div>}>
+            <Show when={filtered().some((a: any) => a.favorite)}>
               <div class="px-4 py-1.5 bg-base-900 border-b-2 border-amber-300/60 text-amber-300 text-[10px] font-bold uppercase tracking-widest flex items-center gap-1.5">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
                   <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
                 </svg>
                 Favorites
               </div>
-              <For each={favorites()}>
+              <For each={filtered().filter((a: any) => a.favorite)}>
                 {(acct) => <AccountRow acct={acct} onToggleFavorite={toggleFavorite} onReview={setReviewAccount} />}
               </For>
             </Show>
-            <Show when={favorites().length && regulars().length}>
+            <Show when={filtered().some((a: any) => a.favorite) && filtered().some((a: any) => !a.favorite)}>
               <div class="px-4 py-1.5 bg-base-900 border-y border-base-600 text-base-300 text-[10px] font-bold uppercase tracking-widest">
-                All {title().toLowerCase()}
+                All {props.type === 'partner' ? 'partners' : 'accounts'}
               </div>
             </Show>
-            <For each={regulars()}>
+            <For each={filtered().filter((a: any) => !a.favorite)}>
               {(acct) => <AccountRow acct={acct} onToggleFavorite={toggleFavorite} onReview={setReviewAccount} />}
             </For>
           </Show>

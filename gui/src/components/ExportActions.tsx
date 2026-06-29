@@ -54,14 +54,12 @@ export default function ExportActions(props: Props) {
     }
   };
 
-  const size = () => props.size || 'sm';
-
   return (
     <div class="flex items-center gap-2 flex-wrap">
-      <Button variant="ghost" size={size()} disabled={disabled()} onClick={handleCopy}>
+      <Button variant="ghost" size={props.size || 'sm'} disabled={disabled()} onClick={handleCopy}>
         {busy() === 'copy' ? 'Copying...' : copied() ? 'Copied!' : 'Copy'}
       </Button>
-      <Button variant="ghost" size={size()} disabled={disabled()} onClick={handleExport}>
+      <Button variant="ghost" size={props.size || 'sm'} disabled={disabled()} onClick={handleExport}>
         {busy() === 'export' ? 'Exporting...' : 'Export TXT'}
       </Button>
       {error() && (

@@ -23,6 +23,21 @@ export function formatDateTime(value: string | null | undefined, options?: Intl.
     return options ? date.toLocaleString("en-US", options) : date.toLocaleString();
 }
 
+export function formatShortDate(value: string | null | undefined): string {
+    if (!value) return "";
+    const dateOnly = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const date = dateOnly
+        ? new Date(Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])))
+        : new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        ...(dateOnly ? { timeZone: "UTC" } : {}),
+    });
+}
+
 // A Date → YYYY-MM-DD in the browser's LOCAL calendar day.
 //
 // Use this instead of `someDate.toISOString().slice(0, 10)`. toISOString() is

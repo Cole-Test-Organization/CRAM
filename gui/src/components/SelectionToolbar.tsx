@@ -1,4 +1,4 @@
-import { Show } from 'solid-js';
+import { Show, type JSX } from 'solid-js';
 import ExportActions from './ExportActions';
 import type { Selection } from './createSelection';
 
@@ -8,6 +8,7 @@ type Props = {
   selection: Selection;
   buildExport: (ids: number[]) => Promise<BuildResult> | BuildResult;
   loading: () => boolean;
+  children?: JSX.Element;
 };
 
 export default function SelectionToolbar(props: Props) {
@@ -34,6 +35,7 @@ export default function SelectionToolbar(props: Props) {
             Clear
           </button>
         </Show>
+        {props.children}
       </div>
       <ExportActions ids={props.selection.idList} build={props.buildExport} disabled={props.loading} />
     </div>
