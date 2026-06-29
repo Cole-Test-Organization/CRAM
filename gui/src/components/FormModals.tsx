@@ -159,6 +159,101 @@ export function AccountFormModal(props: AccountModalProps) {
   );
 }
 
+interface AccountReviewModalProps {
+  open: boolean;
+  account?: any;
+  onClose: () => void;
+  onSaved?: (account: any) => void;
+}
+
+export function AccountReviewModal(props: AccountReviewModalProps) {
+  const [name, setName] = createSignal('');
+  const [saving, setSaving] = createSignal(false);
+  const [error, setError] = createSignal('');
+
+  const serialize = () => JSON.stringify({ name: name() });
+  const guard = createUnsavedGuard({ serialize, isOpen: () => props.open });
+  const requestClose = () => { if (saving()) return; guard.guardedClose(props.onClose); };
+
+  const domains = () => {
+    const raw = props.account?.domains;
+    if (Array.isArray(raw)) return raw.filter((d: unknown) => typeof d === 'string' && d.trim());
+    if (typeof raw !== 'string') return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((d: unknown) => typeof d === 'string' && d.trim()) : [];
+    } catch {
+      return raw.split(',').map((d) => d.trim()).filter(Boolean);
+    }
+  };
+
+  createEffect(() => {
+    if (!props.open) return;
+    setName(props.account?.name || '');
+    setSaving(false);
+    setError('');
+    guard.rebaseline();
+  });
+
+  const submit = async () => {
+    if (!props.account) return;
+    const nextName = name().trim();
+    if (!nextName) { setError('Name is required'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      const account = await api.patchAccount(props.account.id, {
+        name: nextName,
+        needs_review: false,
+      });
+      guard.rebaseline();
+      props.onSaved?.(account);
+      props.onClose();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={props.open}
+      onClose={requestClose}
+      title="Review Account"
+      footer={
+        <>
+          <button class={modalBtn.secondary} onClick={requestClose} disabled={saving()}>Cancel</button>
+          <button class={modalBtn.primary} onClick={submit} disabled={saving() || !props.account}>
+            {saving() ? 'Saving...' : 'Save and Confirm'}
+          </button>
+        </>
+      }
+    >
+      <FormField label="Name" required error={error()}>
+        <input
+          class={formInputClass}
+          value={name()}
+          placeholder="Acme Corp"
+          onInput={(e) => setName(e.currentTarget.value)}
+          autofocus
+        />
+      </FormField>
+      <FormField label={domains().length === 1 ? 'Domain' : 'Domains'} hint="These domains remain attached to the account.">
+        <div class="min-h-11 bg-base-950 border-2 border-base-600 px-3 py-2 flex flex-wrap gap-2 items-center">
+          <For each={domains()} fallback={<span class="text-[12px] text-base-400">No domains</span>}>
+            {(domain) => (
+              <span class="bg-base-900 border-2 border-base-500 px-2 py-1 text-[12px] font-mono text-base-100 break-all">
+                {domain}
+              </span>
+            )}
+          </For>
+        </div>
+      </FormField>
+    </Modal>
+  );
+}
+
 // ----------------------- Contact Form Modal -----------------------
 
 interface ContactModalProps {
@@ -1625,4 +1720,3 @@ export function VendorProductFormModal(props: VendorProductModalProps) {
     </Modal>
   );
 }
-

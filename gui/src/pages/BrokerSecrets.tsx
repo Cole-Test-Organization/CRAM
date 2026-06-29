@@ -13,6 +13,7 @@ type SecretRow = {
   required: boolean;
   readable: boolean;
   value: string | null;
+  valueSuffix: string | null;
   description: string | null;
   updatedAt: string | null;
   deployments: string[];
@@ -74,6 +75,7 @@ export default function BrokerSecrets() {
           required: true,
           readable: false,
           value: null,
+          valueSuffix: null,
           description: null,
           updatedAt: null,
           deployments: [],
@@ -91,6 +93,7 @@ export default function BrokerSecrets() {
         required: false,
         readable: false,
         value: null,
+        valueSuffix: null,
         description: null,
         updatedAt: null,
         deployments: [],
@@ -98,6 +101,7 @@ export default function BrokerSecrets() {
       row.stored = true;
       row.readable = secret.readable;
       row.value = secret.value ?? null;
+      row.valueSuffix = secret.valueSuffix ?? null;
       row.description = secret.description;
       row.updatedAt = secret.updatedAt;
       map.set(secret.name, row);
@@ -232,6 +236,12 @@ export default function BrokerSecrets() {
                   <Show when={row.stored && row.readable && row.value}>
                     <div class="mt-2 border-2 border-base-600 bg-base-950 px-2 py-1 font-mono text-[12px] text-surf-200 break-all">
                       {row.value}
+                    </div>
+                  </Show>
+                  <Show when={row.stored && !row.readable && row.valueSuffix}>
+                    <div class="mt-2 border-2 border-base-600 bg-base-950 px-2 py-1 text-[12px] text-surf-200">
+                      <span class="text-[10px] uppercase tracking-widest text-base-400 font-bold mr-2">Ends with</span>
+                      <span class="font-mono break-all">****{row.valueSuffix}</span>
                     </div>
                   </Show>
                   <Show when={row.description}>

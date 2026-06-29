@@ -27,6 +27,7 @@ beforeEach(() => {
       description: 'Still write-only',
       updatedAt: '2026-06-24T00:00:00.000Z',
       readable: false,
+      valueSuffix: 'alue',
     },
   ]);
   apiMock.listProvisioningDeployments.mockResolvedValue([
@@ -44,6 +45,7 @@ describe('BrokerSecrets readable values', () => {
 
     expect(await screen.findByText('readable-auth-code')).toBeTruthy();
     expect(screen.getByText('Readable')).toBeTruthy();
+    expect(screen.getByText('****alue')).toBeTruthy();
     expect(screen.queryByText('hidden-pin-value')).toBeNull();
     expect(screen.getByText('Still write-only')).toBeTruthy();
   });

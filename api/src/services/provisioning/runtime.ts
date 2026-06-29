@@ -13,7 +13,7 @@ export interface ProvisioningRuntimeOptions {
 export interface ProvisioningRuntime {
   userId: number;
   config: PostgresConfigRepository;
-  store: PostgresStateRepository;
+  postgresStateRepository: PostgresStateRepository;
   secrets: SecretsService;
   secretResolver: SecretResolver;
   broker: ResourceBroker;
@@ -21,15 +21,15 @@ export interface ProvisioningRuntime {
 }
 
 // Single construction point for provisioning's shared object graph. The service
-// and worker both receive the same broker/store/secrets instances; only the API
+// and worker both receive the same broker/Postgres state/secrets instances; only the API
 // process creates a worker, while MCP processes use the service for reads/enqueue.
 export function createProvisioningRuntime(options: ProvisioningRuntimeOptions): ProvisioningRuntime {
   const config = new PostgresConfigRepository(options.userId);
-  const store = new PostgresStateRepository(options.userId);
+  const postgresStateRepository = new PostgresStateRepository(options.userId);
   const secrets = new SecretsService();
   const secretResolver = new SecretResolver(options.userId, secrets);
   const broker = new ResourceBroker({
-    store,
+    stateRepository: postgresStateRepository,
     configRepository: config,
     secretResolver,
     resourceAdapters: createDefaultResourceAdapterRegistry(),
@@ -37,7 +37,7 @@ export function createProvisioningRuntime(options: ProvisioningRuntimeOptions): 
   const service = new ProvisioningService({
     userId: options.userId,
     broker,
-    store,
+    postgresStateRepository,
     config,
     secrets,
     secretResolver,
@@ -46,7 +46,7 @@ export function createProvisioningRuntime(options: ProvisioningRuntimeOptions): 
   return {
     userId: options.userId,
     config,
-    store,
+    postgresStateRepository,
     secrets,
     secretResolver,
     broker,
@@ -58,7 +58,7 @@ export function createProvisioningWorker(runtime: ProvisioningRuntime): Provisio
   return new ProvisioningJobWorker({
     userId: runtime.userId,
     broker: runtime.broker,
-    store: runtime.store,
+    postgresStateRepository: runtime.postgresStateRepository,
     secretResolver: runtime.secretResolver,
   });
 }

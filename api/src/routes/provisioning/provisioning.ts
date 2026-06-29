@@ -371,7 +371,7 @@ export default async function provisioningRoutes(
 
   // ── secrets (encrypted at rest; only allowlisted values are returned) ────────
   fastify.get('/provisioning/secrets', {
-    schema: { description: 'List secret names + descriptions. Most values are write-only; allowlisted non-secret values are returned for dashboard display. These satisfy a deployment\'s `requiredEnv`.', tags: [TAG] },
+    schema: { description: 'List secret names + descriptions. Most values are write-only and return only a server-computed `valueSuffix`; allowlisted non-secret values return `value` for dashboard display. These satisfy a deployment\'s `requiredEnv`.', tags: [TAG] },
   }, async () => provisioningService.listSecrets());
 
   fastify.put<{ Params: { name: string }; Body: { value: string; description?: string } }>('/provisioning/secrets/:name', {

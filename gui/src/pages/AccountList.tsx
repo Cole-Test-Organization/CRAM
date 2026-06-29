@@ -1,13 +1,14 @@
 import { createResource, createSignal, For, Show } from 'solid-js';
 import { A, useNavigate } from '@solidjs/router';
 import { api } from '../lib/api';
-import { AccountFormModal } from '../components/FormModals';
+import { AccountFormModal, AccountReviewModal } from '../components/FormModals';
 import Button from '../components/Button';
 
 export default function AccountList(props: { type?: 'account' | 'partner' }) {
   const [filter, setFilter] = createSignal('');
   const [reviewOnly, setReviewOnly] = createSignal(false);
   const [modalOpen, setModalOpen] = createSignal(false);
+  const [reviewAccount, setReviewAccount] = createSignal<any>(null);
   const navigate = useNavigate();
 
   // Accounts list: everything that isn't a partner. Partners list: just partners.
@@ -29,7 +30,7 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
     return accounts.filter((a: any) => a.name.toLowerCase().includes(q) || a.slug.includes(q));
   };
 
-  // Accounts flagged for review (e.g. auto-created by the notes importer).
+  // Accounts flagged for review (e.g. auto-created by importers).
   const reviewCount = () => (data()?.accounts || []).filter((a: any) => a.needs_review).length;
 
   const favorites = () => filtered().filter((a: any) => a.favorite);
@@ -45,18 +46,19 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
     return 'Account';
   };
 
+  const sortRows = (accounts: any[]) =>
+    [...accounts].sort((a: any, b: any) => {
+      if (!!a.favorite !== !!b.favorite) return a.favorite ? -1 : 1;
+      return (a.name || '').localeCompare(b.name || '');
+    });
+
   // Toggle favorite optimistically — re-sort favorites to the top to match the
   // server ordering (favorite DESC, name ASC). On error, revert to the snapshot.
   const toggleFavorite = async (acct: any) => {
     const current = data();
     if (!current) return;
     const next = !acct.favorite;
-    const updated = current.accounts
-      .map((a: any) => (a.id === acct.id ? { ...a, favorite: next } : a))
-      .sort((a: any, b: any) => {
-        if (!!a.favorite !== !!b.favorite) return a.favorite ? -1 : 1;
-        return (a.name || '').localeCompare(b.name || '');
-      });
+    const updated = sortRows(current.accounts.map((a: any) => (a.id === acct.id ? { ...a, favorite: next } : a)));
     mutate({ ...current, accounts: updated });
     try {
       await api.patchAccount(acct.id, { favorite: next });
@@ -65,18 +67,11 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
     }
   };
 
-  // Clear the review flag once an auto-created account has been eyeballed.
-  // Optimistic: drop the badge immediately, revert on error.
-  const verify = async (acct: any) => {
+  const markReviewed = (acct: any) => {
     const current = data();
     if (!current) return;
-    const updated = current.accounts.map((a: any) => (a.id === acct.id ? { ...a, needs_review: false } : a));
+    const updated = sortRows(current.accounts.map((a: any) => (a.id === acct.id ? { ...a, ...acct } : a)));
     mutate({ ...current, accounts: updated });
-    try {
-      await api.patchAccount(acct.id, { needs_review: false });
-    } catch {
-      mutate(current);
-    }
   };
 
   return (
@@ -119,7 +114,7 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
                 Favorites
               </div>
               <For each={favorites()}>
-                {(acct) => <AccountRow acct={acct} onToggleFavorite={toggleFavorite} onVerify={verify} />}
+                {(acct) => <AccountRow acct={acct} onToggleFavorite={toggleFavorite} onReview={setReviewAccount} />}
               </For>
             </Show>
             <Show when={favorites().length && regulars().length}>
@@ -128,7 +123,7 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
               </div>
             </Show>
             <For each={regulars()}>
-              {(acct) => <AccountRow acct={acct} onToggleFavorite={toggleFavorite} onVerify={verify} />}
+              {(acct) => <AccountRow acct={acct} onToggleFavorite={toggleFavorite} onReview={setReviewAccount} />}
             </For>
           </Show>
         </Show>
@@ -142,11 +137,17 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
           navigate(`/accounts/${acct.slug}`);
         }}
       />
+      <AccountReviewModal
+        open={!!reviewAccount()}
+        account={reviewAccount()}
+        onClose={() => setReviewAccount(null)}
+        onSaved={markReviewed}
+      />
     </div>
   );
 }
 
-function AccountRow(props: { acct: any; onToggleFavorite: (acct: any) => void; onVerify: (acct: any) => void }) {
+function AccountRow(props: { acct: any; onToggleFavorite: (acct: any) => void; onReview: (acct: any) => void }) {
   return (
     <div class="flex items-stretch border-b border-base-700 last:border-b-0">
       <button
@@ -172,11 +173,11 @@ function AccountRow(props: { acct: any; onToggleFavorite: (acct: any) => void; o
       <Show when={props.acct.needs_review}>
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); props.onVerify(props.acct); }}
+          onClick={(e) => { e.stopPropagation(); props.onReview(props.acct); }}
           class="shrink-0 px-3 flex items-center text-[11px] uppercase tracking-wider font-bold text-amber-300 hover:text-surf-300 transition-colors"
-          title="Mark as reviewed — clears the flag"
+          title="Review account name and domains"
         >
-          Verify
+          Review
         </button>
       </Show>
     </div>

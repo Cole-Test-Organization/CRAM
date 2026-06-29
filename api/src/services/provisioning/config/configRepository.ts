@@ -280,7 +280,7 @@ function inferInputs(steps: DeploymentStepConfig[]): DeploymentInput[] {
 }
 
 function enablesValue(equals: string | number | boolean | null | undefined): boolean | string | number {
-  // `when` without `equals` means "param is truthy" — mirrors shouldRunDeploymentStep.
+  // `when` without `equals` means the param must be exactly true.
   if (equals === undefined || equals === null) return true;
   return equals;
 }

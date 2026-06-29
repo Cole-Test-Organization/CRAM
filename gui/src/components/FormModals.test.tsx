@@ -17,6 +17,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import {
   MeetingFormModal,
   AccountFormModal,
+  AccountReviewModal,
   ContactFormModal,
   OpportunityFormModal,
   ProductFormModal,
@@ -215,6 +216,57 @@ describe('AccountFormModal', () => {
     );
     await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(onSaved).toHaveBeenCalled();
+  });
+});
+
+describe('AccountReviewModal', () => {
+  it('shows domains and confirms with the edited account name', async () => {
+    const onSaved = vi.fn();
+    const onClose = vi.fn();
+    render(() => (
+      <AccountReviewModal
+        open
+        account={{ id: 7, name: 'Acme', domains: ['acme.com', 'acme.io'], needs_review: true }}
+        onSaved={onSaved}
+        onClose={onClose}
+      />
+    ));
+    await flush();
+
+    expect(screen.getByText('acme.com')).toBeTruthy();
+    expect(screen.getByText('acme.io')).toBeTruthy();
+
+    const name = screen.getByDisplayValue('Acme') as HTMLInputElement;
+    fireEvent.input(name, { target: { value: 'Acme Corporation' } });
+    fireEvent.click(screen.getByRole('button', { name: /save and confirm/i }));
+
+    await vi.waitFor(() =>
+      expect(apiMock.patchAccount).toHaveBeenCalledWith(7, {
+        name: 'Acme Corporation',
+        needs_review: false,
+      }),
+    );
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(onSaved).toHaveBeenCalled();
+  });
+
+  it('requires a name before confirming', async () => {
+    const onClose = vi.fn();
+    render(() => (
+      <AccountReviewModal
+        open
+        account={{ id: 8, name: 'Placeholder', domains: ['placeholder.example'], needs_review: true }}
+        onClose={onClose}
+      />
+    ));
+    await flush();
+
+    fireEvent.input(screen.getByDisplayValue('Placeholder'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /save and confirm/i }));
+
+    expect(screen.getByText('Name is required')).toBeTruthy();
+    expect(apiMock.patchAccount).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 });
 

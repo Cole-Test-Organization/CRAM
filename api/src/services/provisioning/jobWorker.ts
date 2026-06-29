@@ -19,7 +19,7 @@ const logger = rootLogger.child({ component: "provisioning-worker" });
 export interface ProvisioningJobWorkerOptions {
     userId: number;
     broker: ResourceBroker;
-    store: PostgresStateRepository;
+    postgresStateRepository: PostgresStateRepository;
     secretResolver: SecretResolver;
     pollMs?: number;
     cancelPollMs?: number;
@@ -35,7 +35,7 @@ export interface ProvisioningJobWorkerOptions {
 export class ProvisioningJobWorker {
     private readonly userId: number;
     private readonly broker: ResourceBroker;
-    private readonly store: PostgresStateRepository;
+    private readonly postgresStateRepository: PostgresStateRepository;
     private readonly secretResolver: SecretResolver;
     private readonly pollMs: number;
     private readonly cancelPollMs: number;
@@ -47,7 +47,7 @@ export class ProvisioningJobWorker {
     constructor(options: ProvisioningJobWorkerOptions) {
         this.userId = options.userId;
         this.broker = options.broker;
-        this.store = options.store;
+        this.postgresStateRepository = options.postgresStateRepository;
         this.secretResolver = options.secretResolver;
         this.pollMs = options.pollMs ?? 1500;
         this.cancelPollMs = options.cancelPollMs ?? 2000;
@@ -96,7 +96,10 @@ export class ProvisioningJobWorker {
                 // runJob finalizes its own job inside a finally; reaching here means
                 // even that failed (e.g. the DB went away). Log and keep the claim
                 // loop alive rather than letting the worker die and stop claiming.
-                logger.error({ err: errMessage(err), jobId: row.id }, "runJob crashed");
+                logger.error(
+                    { err: errMessage(err), jobId: row.id },
+                    "runJob crashed",
+                );
             }
         }
     }
@@ -167,7 +170,7 @@ export class ProvisioningJobWorker {
         let writeChain: Promise<void> = Promise.resolve();
         const persist = (): Promise<void> => {
             writeChain = writeChain
-                .then(() => this.store.saveJob(job))
+                .then(() => this.postgresStateRepository.saveJob(job))
                 .catch((err) =>
                     logger.warn(
                         { err: errMessage(err), jobId: job.id },
@@ -181,7 +184,7 @@ export class ProvisioningJobWorker {
             void persist();
         };
         const publishProgress = (): void => {
-            this.store.events.publish({
+            this.postgresStateRepository.events.publish({
                 type: "job",
                 job: structuredClone(job),
             });
@@ -192,13 +195,8 @@ export class ProvisioningJobWorker {
         let cancelTimer: ReturnType<typeof setInterval> | null = null;
         let progressTimer: ReturnType<typeof setInterval> | null = null;
 
-        // Everything that can throw during setup — the active-job write and secret
-        // decryption (hydrateAll throws on a bad/rotated PROVISIONING_SECRETS_KEY) —
-        // runs INSIDE the try so a failure finalizes the job (→ failed) and clears the
-        // active-job guard in the finally, instead of leaving the row stuck 'running'
-        // and killing the claim loop.
         try {
-            await this.store.setActiveJob(job.id);
+            await this.postgresStateRepository.setActiveJob(job.id);
             publishProgress();
             installJobSignal(abort.signal);
             installSecretOverlay(await this.secretResolver.hydrateAll());
@@ -243,7 +241,7 @@ export class ProvisioningJobWorker {
             clearSecretOverlay();
             job.finishedAt = nowIso();
             await persist();
-            await this.store.setActiveJob(null);
+            await this.postgresStateRepository.setActiveJob(null);
             logger.info(
                 { jobId: job.id, status: job.status },
                 "provisioning job finished",

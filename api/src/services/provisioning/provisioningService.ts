@@ -58,7 +58,7 @@ export interface EnqueueJobInput {
 export interface ProvisioningServiceOptions {
     userId: number;
     broker: ResourceBroker;
-    store: PostgresStateRepository;
+    postgresStateRepository: PostgresStateRepository;
     config: PostgresConfigRepository;
     secrets: SecretsService;
     secretResolver: SecretResolver;
@@ -83,7 +83,7 @@ function httpError(statusCode: number, message: string): Error {
 export class ProvisioningService {
     readonly userId: number;
     readonly broker: ResourceBroker;
-    readonly store: PostgresStateRepository;
+    readonly postgresStateRepository: PostgresStateRepository;
     readonly config: PostgresConfigRepository;
     readonly secrets: SecretsService;
     readonly secretResolver: SecretResolver;
@@ -92,7 +92,7 @@ export class ProvisioningService {
     constructor(options: ProvisioningServiceOptions) {
         this.userId = options.userId;
         this.config = options.config;
-        this.store = options.store;
+        this.postgresStateRepository = options.postgresStateRepository;
         this.secrets = options.secrets;
         this.secretResolver = options.secretResolver;
         this.broker = options.broker;
@@ -120,7 +120,7 @@ export class ProvisioningService {
     }
 
     async getEventSnapshot(): Promise<ProvisioningEventSnapshot> {
-        const state = await this.store.getState();
+        const state = await this.postgresStateRepository.getState();
         return {
             activeJobId: state.activeJobId ?? null,
             resources: Object.values(state.resources ?? {}),
@@ -149,7 +149,9 @@ export class ProvisioningService {
         const insecure =
             insecureRaw === undefined
                 ? true
-                : ["1", "true", "yes", "on"].includes(insecureRaw.toLowerCase());
+                : ["1", "true", "yes", "on"].includes(
+                      insecureRaw.toLowerCase(),
+                  );
         return runProxmoxDiscovery({ endpoint, apiToken, insecure });
     }
 
@@ -217,7 +219,7 @@ export class ProvisioningService {
         return this.closeTunnel(idOrResource);
     }
 
-    // ── secrets (encrypted at rest; only allowlisted values are returned) ─────────
+    // ── secrets (encrypted at rest; plaintext only for allowlisted values) ────────
     async listSecrets(): Promise<ListedSecretSummary[]> {
         return this.secrets.listSecrets(this.userId);
     }
@@ -283,7 +285,6 @@ export class ProvisioningService {
         });
     }
 
-    // ── jobs (enqueue → worker executes; poll + cancel) ─────────────────────────
     async enqueueJob(input: EnqueueJobInput): Promise<JobView> {
         const kind = input.kind;
         if (!JOB_KINDS.has(kind)) {
@@ -428,7 +429,7 @@ export class ProvisioningService {
     }
 
     private async assertIdle(): Promise<void> {
-        const state = await this.store.getState();
+        const state = await this.postgresStateRepository.getState();
         if (state.activeJobId) {
             throw httpError(
                 409,

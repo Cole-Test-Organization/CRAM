@@ -35,10 +35,12 @@ describe('Provisioning readable secret summaries', () => {
       { name: 'PANW_NGFW_AUTH_CODE', description: null, updatedAt: '2026-06-24T00:00:00.000Z' },
       { name: 'PANW_DEVICE_CERT_PIN_VALUE', description: null, updatedAt: '2026-06-24T00:00:00.000Z' },
       { name: 'PANW_PANORAMA_SERIAL', description: null, updatedAt: '2026-06-24T00:00:00.000Z' },
+      { name: 'PANOS_ADMIN_PASSWORD', description: null, updatedAt: '2026-06-24T00:00:00.000Z' },
     ], {
       PANW_NGFW_AUTH_CODE: 'readable-auth-code',
       PANW_DEVICE_CERT_PIN_VALUE: 'hidden-pin-value',
       PANW_PANORAMA_SERIAL: 'readable-serial',
+      PANOS_ADMIN_PASSWORD: '1234',
     });
 
     const service = new SecretsService(repo);
@@ -52,6 +54,17 @@ describe('Provisioning readable secret summaries', () => {
 
     assert.equal(byName.PANW_DEVICE_CERT_PIN_VALUE.readable, false);
     assert.equal('value' in byName.PANW_DEVICE_CERT_PIN_VALUE, false);
-    assert.deepEqual(repo.getCalls, ['PANW_NGFW_AUTH_CODE', 'PANW_PANORAMA_SERIAL']);
+    assert.equal(byName.PANW_DEVICE_CERT_PIN_VALUE.valueSuffix, 'alue');
+
+    assert.equal(byName.PANOS_ADMIN_PASSWORD.readable, false);
+    assert.equal('value' in byName.PANOS_ADMIN_PASSWORD, false);
+    assert.equal(byName.PANOS_ADMIN_PASSWORD.valueSuffix, null);
+
+    assert.deepEqual(repo.getCalls, [
+      'PANW_NGFW_AUTH_CODE',
+      'PANW_DEVICE_CERT_PIN_VALUE',
+      'PANW_PANORAMA_SERIAL',
+      'PANOS_ADMIN_PASSWORD',
+    ]);
   });
 });

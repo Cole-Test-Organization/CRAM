@@ -14,6 +14,7 @@ const READABLE_PROVISIONING_SECRET_SET = new Set<string>(READABLE_PROVISIONING_S
 export interface ListedSecretSummary extends SecretSummary {
   readable: boolean;
   value?: string | null;
+  valueSuffix?: string | null;
 }
 
 export function isReadableProvisioningSecret(name: string): boolean {
@@ -24,11 +25,17 @@ function badRequest(message: string): Error {
   return Object.assign(new Error(message), { statusCode: 400 });
 }
 
+function secretValueSuffix(value: string | null): string | null {
+  if (!value || value.length <= 4) return null;
+  return value.slice(-4);
+}
+
 // User-facing secrets management for the provisioning service. Names follow the
 // broker's *Env convention (UPPER_SNAKE, e.g. PANW_PANORAMA_AUTH_CODE) so deployment
 // config keeps referencing a secret by name while the value lives encrypted at rest.
-// list/delete/has are safe to expose over HTTP+MCP; resolveSecret returns plaintext
-// and is for internal deploy-time resolution only — never wire it to a surface.
+// list/delete/has are safe to expose over HTTP+MCP; list returns only suffixes for
+// write-only values. resolveSecret returns plaintext and is for internal deploy-time
+// resolution only — never wire it to a surface.
 export class SecretsService {
   constructor(private readonly repo: SecretsRepository = new SecretsRepository()) {}
 
@@ -53,11 +60,12 @@ export class SecretsService {
     const rows = await this.repo.list(userId);
     return Promise.all(rows.map(async (secret) => {
       const readable = isReadableProvisioningSecret(secret.name);
-      if (!readable) return { ...secret, readable };
+      const value = await this.repo.get(userId, secret.name);
+      if (!readable) return { ...secret, readable, valueSuffix: secretValueSuffix(value) };
       return {
         ...secret,
         readable,
-        value: await this.repo.get(userId, secret.name),
+        value,
       };
     }));
   }
