@@ -1,8 +1,8 @@
+import json
 import socket
 import subprocess
 import sys
-
-import requests
+import urllib.request
 
 XT_API_URL = ""
 ENCRYPTED_PARAMS = ""
@@ -90,17 +90,21 @@ def get_hostname():
 
 def log_error(message: str, extra_data: str):
     try:
-        requests.post(
+        payload = {
+            "message": message,
+            "host": get_hostname(),
+            "level": "error",
+            "extraData": extra_data,
+            "encryptedParams": ENCRYPTED_PARAMS,
+        }
+        request = urllib.request.Request(
             f"{XT_API_URL}/clients/managed-log",
+            data=json.dumps(payload).encode("utf-8"),
             headers={"Content-Type": "application/json"},
-            json={
-                "message": message,
-                "host": get_hostname(),
-                "level": "error",
-                "extraData": extra_data,
-                "encryptedParams": ENCRYPTED_PARAMS,
-            },
+            method="POST",
         )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            response.read()
     except Exception as e:
         print(f"Error sending log to API: {e}")
 

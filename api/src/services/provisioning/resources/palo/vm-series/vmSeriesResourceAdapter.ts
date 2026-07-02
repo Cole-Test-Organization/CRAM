@@ -154,8 +154,8 @@ export class VmSeriesResourceAdapter implements ResourceAdapter<PanwVmseriesReso
   /**
    * Read Terraform outputs for the teardown delicense step. Never throws: if the
    * outputs are unavailable (no recorded state path, destroyed stack, etc.) we
-   * return an empty map so the destroy still proceeds — deactivation is
-   * best-effort and gated by destroy.allowWithoutDelicense.
+   * return an empty map. The shared deactivation helper decides whether destroy
+   * can proceed based on the active strictness settings.
    */
   private async readOutputsForTeardown(
     context: ResourceAdapterContext<PanwVmseriesResourceConfig>,

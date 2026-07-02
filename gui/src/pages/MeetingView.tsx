@@ -22,23 +22,64 @@ type EnrichmentJob = {
   completedAt: string | null;
 };
 
+function meetingReviewCopy(reason: string | null, hasAccount: boolean) {
+  switch (reason) {
+    case 'account_ambiguous':
+      return {
+        title: "Account match is ambiguous.",
+        body: "The importer found similar accounts and parked this note instead of guessing. Assign the right account, or keep it internal.",
+      };
+    case 'account_unassigned':
+      return {
+        title: "This note is not assigned to an account.",
+        body: "The importer could not place it confidently. Assign the account it belongs to, or keep it internal.",
+      };
+    case 'krisp_no_match':
+      return {
+        title: "Krisp notes need a meeting match.",
+        body: "Krisp could not find one calendar meeting at the same start time, so this note was parked for review.",
+      };
+    case 'krisp_multiple_matches':
+      return {
+        title: "Krisp matched multiple meetings.",
+        body: hasAccount
+          ? "Krisp appended notes to the best time match, but more than one meeting was close enough. Confirm this is the right meeting, or move it."
+          : "Krisp found multiple close meetings and parked this note instead of choosing one.",
+      };
+    case 'krisp_match_legacy':
+      return {
+        title: "Krisp match needs review.",
+        body: "This was flagged by the older Krisp verification behavior. Confirm the notes belong here, or move them.",
+      };
+    case 'account_auto_created':
+      return {
+        title: "Account-created review.",
+        body: "This is a legacy meeting review from an account auto-create path. The account review flag is tracked separately.",
+      };
+    default:
+      return {
+        title: hasAccount ? "This meeting needs review." : "This note needs review.",
+        body: hasAccount
+          ? "Confirm this meeting is on the right account, or move it."
+          : "Assign the account it belongs to, or keep it internal.",
+      };
+  }
+}
+
 export default function MeetingView() {
   const params = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [meeting, { refetch }] = createResource(() => Number(params.id), (id) => api.getMeeting(id));
   const [editOpen, setEditOpen] = createSignal(false);
 
-  // Triage panel state (needs_review). The panel takes one of two shapes
-  // depending on whether the note already has an account:
-  //   • account-less (agent-parked note): pick an account to assign, or confirm
-  //     it's internal — assignTarget/assignAccount drive this.
-  //   • already on an auto-created account (calendar import flagged it for
-  //     confirmation): confirm that account or move it. assign-account would 409
-  //     here since the note is already linked, so we never offer it.
-  // assigning/assignError are shared by both shapes (busy state + error line).
+  // Meeting-review panel state. `meetings.needs_review` now means the meeting
+  // itself needs placement/match review, and `review_reason` explains why.
+  // Account review is rendered separately from `account_needs_review`.
   const [assignTarget, setAssignTarget] = createSignal<{ id: number; name: string; slug: string } | null>(null);
   const [assigning, setAssigning] = createSignal(false);
   const [assignError, setAssignError] = createSignal('');
+  const [accountReviewing, setAccountReviewing] = createSignal(false);
+  const [accountReviewError, setAccountReviewError] = createSignal('');
 
   // Move/reassign panel state — for a meeting that's ALREADY on an account (or
   // internal) but landed on the wrong one (bad import): move it to another
@@ -66,9 +107,7 @@ export default function MeetingView() {
     }
   };
 
-  // Dismiss the needs_review flag without changing the account or internal
-  // state. Used both to confirm an auto-created account is correct and to keep
-  // an account-less note as internal — both just settle the triage question.
+  // Dismiss the meeting review flag without changing account/internal state.
   const clearReview = async () => {
     const m = meeting();
     if (!m) return;
@@ -81,6 +120,21 @@ export default function MeetingView() {
       setAssignError(err?.message || 'Failed to update note');
     } finally {
       setAssigning(false);
+    }
+  };
+
+  const clearAccountReview = async () => {
+    const m = meeting();
+    if (!m?.account_id) return;
+    setAccountReviewing(true);
+    setAccountReviewError('');
+    try {
+      await api.patchAccount(m.account_id, { needs_review: false });
+      refetch();
+    } catch (err: any) {
+      setAccountReviewError(err?.message || 'Failed to update account');
+    } finally {
+      setAccountReviewing(false);
     }
   };
 
@@ -207,6 +261,31 @@ export default function MeetingView() {
               </div>
             </div>
 
+            <Show when={m().account_id && m().account_needs_review}>
+              <div class="panel p-5 mb-4 border-2 border-amber-300 bg-amber-300/5">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">Account review</span>
+                </div>
+                <h3 class="text-[14px] font-bold text-base-50 mb-1">
+                  Auto-created account: <span class="text-amber-300">{m().account_name}</span>
+                </h3>
+                <p class="text-base-300 text-[12px] mb-3">
+                  This account row is flagged for cleanup. The meeting can still be correctly assigned to this account.
+                </p>
+                <div class="flex flex-col gap-2 md:flex-row md:items-center">
+                  <Button variant="primary" size="sm" disabled={accountReviewing()} onClick={clearAccountReview}>
+                    {accountReviewing() ? 'Confirming...' : 'Confirm account'}
+                  </Button>
+                  <Button variant="ghost" size="sm" href={`/accounts/${m().account_slug}`}>
+                    Open account
+                  </Button>
+                </div>
+                <Show when={accountReviewError()}>
+                  <div class="text-[11px] text-scarlet-400 mt-2 font-semibold">{accountReviewError()}</div>
+                </Show>
+              </div>
+            </Show>
+
             <Show when={m().needs_review}>
               <div class="panel p-5 mb-4 border-2 border-amber-300 bg-amber-300/5">
                 <div class="flex items-center gap-2 mb-2">
@@ -216,12 +295,10 @@ export default function MeetingView() {
                 <Show
                   when={m().account_id}
                   fallback={
-                    // Account-less parked note: genuinely unassigned, so assigning
-                    // is the right action (the importer/agent couldn't place it).
                     <>
-                      <h3 class="text-[14px] font-bold text-base-50 mb-1">This note isn't assigned to an account.</h3>
+                      <h3 class="text-[14px] font-bold text-base-50 mb-1">{meetingReviewCopy(m().review_reason, false).title}</h3>
                       <p class="text-base-300 text-[12px] mb-3">
-                        The importer couldn't confidently place it. Assign the account it belongs to, or confirm it's an internal note and dismiss the flag.
+                        {meetingReviewCopy(m().review_reason, false).body}
                       </p>
                       <div class="flex flex-col gap-2 md:flex-row md:items-center">
                         <div class="flex-1 min-w-0">
@@ -237,18 +314,13 @@ export default function MeetingView() {
                     </>
                   }
                 >
-                  {/* Already linked to an auto-created account (calendar import). It's
-                      NOT unassigned — offer Confirm (clear the flag) or Move (reassign),
-                      never Assign, which would 409 against an already-linked note. */}
-                  <h3 class="text-[14px] font-bold text-base-50 mb-1">
-                    Auto-created account: <span class="text-amber-300">{m().account_name}</span>
-                  </h3>
+                  <h3 class="text-[14px] font-bold text-base-50 mb-1">{meetingReviewCopy(m().review_reason, true).title}</h3>
                   <p class="text-base-300 text-[12px] mb-3">
-                    The importer created this account from the attendees' email domain and linked the note to it. Confirm it's the right account, or move it to a different one.
+                    {meetingReviewCopy(m().review_reason, true).body}
                   </p>
                   <div class="flex flex-col gap-2 md:flex-row md:items-center">
                     <Button variant="primary" size="sm" disabled={assigning()} onClick={clearReview}>
-                      {assigning() ? 'Confirming…' : 'Confirm account'}
+                      {assigning() ? 'Confirming...' : 'Confirm meeting'}
                     </Button>
                     <Button variant="ghost" size="sm" disabled={assigning()} onClick={() => { setMoveOpen(true); setMoveError(''); }}>
                       Move to a different account

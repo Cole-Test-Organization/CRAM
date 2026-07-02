@@ -200,7 +200,19 @@ export interface MeetingSummary {
   filename: string;
   attendees: string | null;
   internal: boolean;
+  needs_review: boolean;
+  review_reason: MeetingReviewReason | null;
+  account_needs_review?: boolean;
 }
+
+export type MeetingReviewReason =
+  | 'manual'
+  | 'account_unassigned'
+  | 'account_ambiguous'
+  | 'account_auto_created'
+  | 'krisp_no_match'
+  | 'krisp_multiple_matches'
+  | 'krisp_match_legacy';
 
 // Per-meeting RSVP / attendance, recorded on the meeting↔contact join row.
 // null when unknown (notes-import rows, legacy events, contacts attached
@@ -245,6 +257,7 @@ export interface ContactMeeting {
   title: string | null;
   internal: boolean;
   needs_review: boolean;
+  review_reason: MeetingReviewReason | null;
   account_id: number | null;
   account_slug: string | null;
   account_name: string | null;

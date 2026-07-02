@@ -3,19 +3,19 @@ import type { LogFn } from "../../../types/logging.js";
 import { PanwBootstrapService } from "./bootstrapService.js";
 
 /**
- * Best-effort VM-Series license deactivation before a destroy.
+ * VM-Series license deactivation before a destroy.
  *
  * Releases Flex/VM-Series credits via the firewall's own PAN-OS API
  * (`request license deactivate VM-Series mode auto`) so a later cold boot does
  * not fail with `NOV-021 Insufficient credits`. The firewall API is still up at
  * this point in teardown.
  *
- * Failure handling honors the deployment's `destroy.allowWithoutDelicense`
- * switch: when true (lab default), a failed/skipped deactivation logs a warning
- * and lets the destroy continue; when false, an inability to deactivate is a
- * hard error so credits are never silently orphaned.
+ * A failed/skipped deactivation is a hard error by default so credits are never
+ * silently orphaned. The deployment's `destroy.allowWithoutDelicense` switch is
+ * honored only when PANW_ALLOW_DESTROY_WITHOUT_DELICENSE=true is also set.
  *
- * Returns true only when the firewall actually deactivated its license.
+ * Returns true when it is safe to continue because the firewall deactivated its
+ * license or reported that no active VM-Series license remained.
  */
 export async function deactivateLicenseIfPossible(
   config: PanwVmseriesResourceConfig,
@@ -24,7 +24,9 @@ export async function deactivateLicenseIfPossible(
   log: LogFn,
   bootstrap: PanwBootstrapService = new PanwBootstrapService(),
 ): Promise<boolean> {
-  const allowWithout = config.destroy?.allowWithoutDelicense ?? false;
+  const allowWithout =
+    config.destroy?.allowWithoutDelicense === true &&
+    process.env.PANW_ALLOW_DESTROY_WITHOUT_DELICENSE === "true";
 
   if (!record.authCode) {
     const message = "no auth code is recorded for this firewall";
@@ -41,6 +43,14 @@ export async function deactivateLicenseIfPossible(
   const result = await bootstrap.deactivateFirewallLicense(config, outputs, log);
   if (result.deactivated) {
     log(`VM-Series license deactivated for ${config.hostname}${result.serial ? ` (serial ${result.serial})` : ""}.`);
+    return true;
+  }
+
+  if (result.alreadyUnlicensed) {
+    log(
+      `VM-Series license already inactive for ${config.hostname}` +
+        `${result.serial ? ` (serial ${result.serial})` : ""}; continuing destroy.`,
+    );
     return true;
   }
 

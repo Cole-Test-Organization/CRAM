@@ -312,8 +312,9 @@ export class PanosApiClient {
             const progress = firstLeafXmlText(body, "progress");
             if (status === "FIN") {
                 if (!result || result === "OK") return;
+                const details = panosJobFailureDetails(body);
                 throw new PanosApiError(
-                    `PAN-OS ${what} finished with result ${result}`,
+                    `PAN-OS ${what} finished with result ${result}${details ? `: ${details}` : ""}`,
                     body,
                 );
             }
@@ -498,6 +499,41 @@ function firstLeafXmlText(body: string, tagName: string): string | null {
     return value ? xmlUnescape(stripXml(value).trim()) : null;
 }
 
+function panosJobFailureDetails(body: string): string | null {
+    const candidates = [
+        xmlText(body, "details"),
+        xmlText(body, "warnings"),
+        ...leafXmlTexts(body, "line"),
+        xmlText(body, "msg"),
+    ]
+        .map((value) => normalizePanosText(value ?? ""))
+        .filter(Boolean);
+
+    const unique: string[] = [];
+    for (const candidate of candidates) {
+        if (unique.includes(candidate)) continue;
+        unique.push(candidate);
+    }
+
+    if (!unique.length) return null;
+    const details = unique.join("; ");
+    return details.length > 1_500 ? `${details.slice(0, 1_497)}...` : details;
+}
+
+function leafXmlTexts(body: string, tagName: string): string[] {
+    const escaped = tagName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return [
+        ...body.matchAll(
+            new RegExp(
+                `<${escaped}(?:\\s+[^>]*)?>([^<>]*)<\\/${escaped}>`,
+                "gi",
+            ),
+        ),
+    ]
+        .map((match) => xmlUnescape(stripXml(match[1] ?? "").trim()))
+        .filter(Boolean);
+}
+
 export function xmlEscape(value: string): string {
     return value
         .replace(/&/g, "&amp;")
@@ -523,6 +559,10 @@ function textMatch(body: string, pattern: RegExp): string | null {
 
 function stripXml(value: string): string {
     return value.replace(/<[^>]+>/g, " ");
+}
+
+function normalizePanosText(value: string): string {
+    return value.replace(/\s+/g, " ").trim();
 }
 
 async function sleep(ms: number): Promise<void> {

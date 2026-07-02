@@ -4,7 +4,7 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-06-23T13:46:28.008Z
+- **Generated:** 2026-06-30T02:27:07.343Z
 - **Tables:** 35
 - **Enums:** 0
 - **Views:** 0
@@ -542,6 +542,7 @@
 | `location` | `text` | YES | — |  |
 | `krisp_meeting_id` | `text` | YES | — |  |
 | `deleted_at` | `timestamp with time zone` | YES | — |  |
+| `review_reason` | `text` | YES | — |  |
 
 **Primary key:** `id`
 
@@ -550,6 +551,10 @@
 - `account_id` → `public.accounts`(`id`) — ON DELETE CASCADE
 - `user_id` → `public.users`(`id`) — ON DELETE CASCADE
 
+**Check constraints:**
+
+- `meetings_review_reason_check`: `CHECK ((((needs_review = false) AND (review_reason IS NULL)) OR ((needs_review = true) AND (review_reason = ANY (ARRAY['manual'::text, 'account_unassigned'::text, 'account_ambiguous'::text, 'account_auto_created'::text, 'krisp_no_match'::text, 'krisp_multiple_matches'::text, 'krisp_match_legacy'::text])))))`
+
 **Indexes:**
 
 - `idx_meetings_account` — `CREATE INDEX idx_meetings_account ON public.meetings USING btree (account_id)`
@@ -557,6 +562,7 @@
 - `idx_meetings_internal` — `CREATE INDEX idx_meetings_internal ON public.meetings USING btree (internal) WHERE (internal = true)`
 - `idx_meetings_needs_review` — `CREATE INDEX idx_meetings_needs_review ON public.meetings USING btree (needs_review) WHERE (needs_review = true)`
 - `idx_meetings_not_deleted` — `CREATE INDEX idx_meetings_not_deleted ON public.meetings USING btree (id) WHERE (deleted_at IS NULL)`
+- `idx_meetings_review_reason` — `CREATE INDEX idx_meetings_review_reason ON public.meetings USING btree (review_reason) WHERE (needs_review = true)`
 - `idx_meetings_search` — `CREATE INDEX idx_meetings_search ON public.meetings USING gin (search_vector)`
 - `idx_meetings_starts_at` — `CREATE INDEX idx_meetings_starts_at ON public.meetings USING btree (starts_at) WHERE (starts_at IS NOT NULL)`
 - `idx_meetings_user` — `CREATE INDEX idx_meetings_user ON public.meetings USING btree (user_id)`

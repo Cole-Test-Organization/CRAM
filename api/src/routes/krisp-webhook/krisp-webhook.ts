@@ -30,7 +30,7 @@ export default async function krispWebhookRoutes(fastify: FastifyInstance, { kri
   fastify.post<{ Body: unknown }>('/krisp-webhook', {
     bodyLimit: BODY_LIMIT,
     schema: {
-      description: 'Receive a Krisp webhook delivery (notes / transcript / outline generated) and import the notes into the CRM. First matches the meeting that already exists by time proximity (±KRISP_MATCH_WINDOW_MIN, default 10 min, of the meeting start; overlap breaks ties) and appends the notes (flagging needs_review to verify). The stored Krisp meeting id is only a fallback for retries/follow-up events after a prior delivery linked or parked a row. With no confident match it parks a new meeting for review. Send the token as the Authorization or x-krisp-webhook-token header if KRISP_WEBHOOK_TOKEN is set.',
+      description: 'Receive a Krisp webhook delivery (notes / transcript / outline generated) and import the notes into the CRM. First matches the meeting that already exists by time proximity (±KRISP_MATCH_WINDOW_MIN, default 10 min, of the meeting start). A single time match appends cleanly. Multiple time candidates append to the best candidate when there is a clear winner and flag review_reason=krisp_multiple_matches; with no clear winner, or no time match at all, the webhook parks a new internal meeting for review. The stored Krisp meeting id is only a fallback for retries/follow-up events after a prior delivery linked or parked a row. Send the token as the Authorization or x-krisp-webhook-token header if KRISP_WEBHOOK_TOKEN is set.',
       tags: ['krisp-webhook'],
       body: { type: 'object', additionalProperties: true },
     },

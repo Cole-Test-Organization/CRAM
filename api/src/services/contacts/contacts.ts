@@ -331,7 +331,7 @@ export class ContactsService {
   // null account fields; RLS scopes this to the current user's meetings.
   async _fetchMeetings(client: PoolClient, contactId: number) {
     return (await client.query(`
-      SELECT m.id, m.date, m.title, m.internal, m.needs_review,
+      SELECT m.id, m.date, m.title, m.internal, m.needs_review, m.review_reason,
              m.account_id, a.slug AS account_slug, a.name AS account_name,
              ma.status
       FROM meeting_attendees ma

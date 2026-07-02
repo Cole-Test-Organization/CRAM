@@ -1,0 +1,93 @@
+# Provisioning Run Notes - 2026-06-29
+
+- 15:08Z: AWS CLI auth refreshed and `sts get-caller-identity` succeeds for account `386510763073`.
+- GP retry 02 reached Panorama, both VM-Series firewalls, onboarding, and config push; failed at egress-route Terraform because AWS STS token expired.
+- Broker teardown also failed from expired AWS token after delicensing `gp-fw-2`.
+- Broker still records GP lab live: VPC `vpc-05f30e097663ab7a7`, Panorama `i-014e97755691a9533`, `gp-fw-1` `i-00c5d102fe5177885` serial `007955000877663`, `gp-fw-2` `i-0d9894155a2041e32` serial `007955000877664`.
+- 15:09Z: AWS confirms those three instances and VPC are still running; app container AWS auth also succeeds.
+- 15:10Z: Broker deprovision requeued with refreshed credentials.
+- 15:14Z: `gp-fw-2` already-unlicensed path accepted; Terraform destroyed instance `i-0d9894155a2041e32` and related ENIs/EIPs/SG/key.
+- 15:16Z: `gp-fw-1` deactivation succeeded on attempt 2 after one support-account token error; Terraform started destroying `i-00c5d102fe5177885`.
+- 15:20Z: `gp-fw-1` Terraform destroy completed; broker moved to Panorama teardown.
+- 15:25Z: Panorama `i-014e97755691a9533` destroyed; network `vpc-05f30e097663ab7a7` destroyed; broker deprovision job succeeded.
+- 15:29Z: AWS shows no live/stopped GP lab EC2 instances or VPC; broker resource list has no GP lab external IDs.
+- 15:28Z: GP retry 03 started; pre-clean skipped because broker found no live resources; network apply created VPC `vpc-0a3b94e221e5cab91`.
+- 15:29Z: Retry 03 Panorama created as `i-057d64d11574a5375`, management IP `44.255.222.22`.
+- 15:36Z: Panorama SSH bootstrap probes timed out; broker categorized this as not ready yet and kept waiting.
+- 15:40Z: Panorama SSH is reachable but bootstrap auth is not accepted yet; broker is still retrying readiness.
+- 15:45Z: Retry 03 still loops on Panorama API-not-ready plus SSH auth rejection; no broker failure yet.
+- 15:47Z: Panorama private-key SSH connected; broker set initial admin password and entered configuration mode.
+- 15:52Z: Panorama first-login completed on second private-key flow; admin password committed; broker began serial/API setup.
+- 15:53Z: Panorama setup completed and VM auth key generated; broker started VM-Series firewall provisioning.
+- 15:54Z: Retry 03 firewalls created: `gp-fw-1` `i-095daa61f24176127`, `gp-fw-2` `i-0e8f1007873a4273b`; broker started firewall bootstrap.
+- 16:00Z: `gp-fw-1` bootstrap probes hit SSH timeout then `ECONNREFUSED`; broker marked firewall not ready and continued retrying.
+- 16:07Z: `gp-fw-1` private-key SSH bootstrap succeeded after one timed-out password flow; admin password commit started.
+- 16:08Z: `gp-fw-1` bootstrap completed and license fetched; `gp-fw-2` private-key SSH bootstrap connected.
+- 16:10Z: `gp-fw-2` bootstrap completed; Panorama onboarded serials `007955000877709` and `007955000877710`; onboarding commit job `7` started.
+- 16:14Z: Panorama config push completed; both trust egress routes created; broker started Windows endpoint stage.
+- 16:14Z: Windows endpoint `win-user-a` created as `i-0e984a5b890c61ce7`; Koi SSM bootstrap association started.
+- 16:17Z: Windows endpoint reached rename/reboot-before-Koi phase.
+- 16:19Z: GP retry 03 failed after reboot in Windows app phase: `nodejs-lts` installer returned HTTP 404; broker teardown queued.
+- 16:20Z: Windows endpoint and egress routes destroyed; `gp-fw-2` serial `007955000877710` delicensed on attempt 1; firewall Terraform destroy running.
+- 16:25Z: `gp-fw-2` destroyed; `gp-fw-1` serial `007955000877709` delicensed on attempt 1; firewall Terraform destroy running.
+- 16:35Z: `gp-fw-1`, Panorama `i-057d64d11574a5375`, and network `vpc-0a3b94e221e5cab91` destroyed; retry 03 teardown succeeded.
+- 16:42Z: AWS CLI auth succeeds for account `386510763073`; no live/stopped GP lab EC2 instances or tagged GP lab VPC remain.
+- Root cause: `nodejs-lts` pinned a specific MSI filename under a moving `latest-v24.x` alias, so the URL went stale and returned 404.
+- 16:37Z: Patched `nodejs-lts` to resolve the current LTS Windows x64 MSI from Node's release index; `npm --prefix api run typecheck` passes.
+- 16:39Z: Prod rebuild completed, health endpoint is OK, app container AWS STS succeeds, and broker catalog reseeded.
+- 16:39Z: GP retry 04 started through broker; pre-clean found no live resources; network apply created VPC `vpc-0f1362410469e5f9c`.
+- 16:40Z: Retry 04 Panorama created as `i-049566f5c4403b3ce`, management IP `34.218.168.25`.
+- 16:41Z: Panorama API password auth not ready; broker entered first-login SSH bootstrap path.
+- 16:43Z: First Panorama SSH bootstrap attempt timed out on port 22; broker kept retrying readiness.
+- 16:45Z: Panorama private-key SSH bootstrap also timed out on port 22; broker still retrying.
+- 16:48Z: Panorama ssh-agent path also timed out; broker recorded first-login not ready yet and continued.
+- 16:49Z: Panorama SSH changed to `ECONNREFUSED`; broker still treats it as not-ready and keeps retrying.
+- 16:50Z: Panorama SSH became reachable but rejected configured auth methods; broker still retrying first-login.
+- 16:55Z: Panorama still rejects first-login auth; broker has not failed and continues retrying.
+- 16:58Z: Panorama private-key SSH connected; broker started initial admin password setup.
+- 17:02Z: First private-key password flow reached shell but timed out before prompt; broker continued retrying.
+- 17:03Z: Panorama private-key flow succeeded; admin password accepted and configuration commit returned to prompt.
+- 17:04Z: Panorama setup completed; license fetched and VM auth key generated; broker started firewall provisioning.
+- 17:05Z: Firewall creation completed; `gp-fw-2` is `i-06f5cecf81b276455`; broker started firewall bootstrap.
+- 17:08Z: `gp-fw-1` first SSH bootstrap attempt timed out on `100.22.179.115:22`; broker kept retrying.
+- 17:13Z: `gp-fw-1` password/private-key/agent SSH attempts timed out; broker still retrying first-login.
+- 17:14Z: `gp-fw-1` private-key SSH connected; broker started initial admin password setup.
+- 17:18Z: `gp-fw-1` first private-key password flow timed out before prompt; broker continued retrying.
+- 17:19Z: `gp-fw-1` second private-key flow reached prompt; admin password accepted and commit started.
+- 17:20Z: `gp-fw-1` bootstrap completed and license fetched; broker started `gp-fw-2` bootstrap.
+- 17:20Z: `gp-fw-2` private-key SSH connected; admin password accepted and commit started.
+- 17:21Z: `gp-fw-2` bootstrap completed and license fetched; Panorama verified connected firewalls and started onboarding.
+- 17:22Z: Panorama onboarding assigned serials `007955000877731` and `007955000877730`; onboarding commit job `9` reached 99%.
+- 17:23Z: Onboarding commit finished; GP internet config add-on loaded and template-stack push job `11` started to both firewalls.
+- 17:25Z: Device-group push finished, both trust egress routes were created, and Windows endpoint stage started.
+- 17:26Z: Windows endpoint `win-user-a` created as `i-0cb9b7fbf9dde2932`; broker is waiting for rename/reboot/apps/Koi bootstrap markers.
+- 17:28Z: Windows endpoint reached rename/reboot-before-Koi checkpoint.
+- 17:29Z: Windows returned from reboot with hostname `win-user-a`; app install/Koi phase is in progress.
+- 17:35Z: Retry 04 failed in Windows app phase after Node fix: `claude-code` failed because npm reported `allow-scripts 1 package has install scripts not yet covered by allowScripts`.
+- 17:35Z: Broker teardown queued; Windows endpoint `i-0cb9b7fbf9dde2932` is being destroyed first.
+- 17:36Z: Windows endpoint and both trust egress routes destroyed; `gp-fw-1` instance id confirmed as `i-0ad7703faf5d08944`; broker started `gp-fw-2` deactivation for serial `007955000877730`.
+- 17:37Z: `gp-fw-2` serial `007955000877730` deactivated successfully; instance `i-06f5cecf81b276455` destroying.
+- 17:41Z: `gp-fw-2` destroyed; `gp-fw-1` serial `007955000877731` deactivation attempt 1 hit invalid/missing token/support-account error; broker is retrying.
+- 17:43Z: `gp-fw-1` serial `007955000877731` deactivated successfully on retry 2; instance `i-0ad7703faf5d08944` destroying.
+- 17:52Z: Broker teardown for retry 04 completed; Panorama `i-049566f5c4403b3ce` and network `vpc-0f1362410469e5f9c` destroyed.
+- Root cause: npm 11 prints the Claude Code postinstall warning on stderr unless the package is listed in `--allow-scripts`; PowerShell treats that as terminating under `ErrorActionPreference=Stop`.
+- 17:58Z: Patched Windows `claude-code` install to pass `--include=optional --ignore-scripts=false --allow-scripts=@anthropic-ai/claude-code`.
+- 17:57Z: Typecheck passed; prod rebuild completed; health OK; app container AWS STS succeeds; broker catalog reseeded.
+- 17:57Z: GP retry 05 started through broker; pre-clean found no live resources.
+- 17:58Z: Retry 05 network apply created VPC `vpc-05e7e2e8131a2664b`.
+- 17:58Z: Retry 05 Panorama created as `i-0a0b41db9c8d6d46c`, management IP `35.82.219.153`.
+- 18:02Z: Panorama first SSH password bootstrap attempt timed out on port 22; broker is still retrying readiness.
+- 18:04Z: Panorama private-key SSH bootstrap attempt also timed out on port 22.
+- 18:06Z: Panorama ssh-agent attempt timed out; broker classified first-login as not ready and continues retrying.
+- 18:09Z: Panorama SSH is reachable but rejects configured auth methods; broker still retries first-login.
+- 18:16Z: Panorama private-key SSH connected; first password flow reached CLI prompt but timed out before finishing.
+- 18:21Z: Panorama second private-key flow accepted admin password and started commit.
+- 18:22Z: Panorama setup completed; license fetched and VM auth key generated.
+- 18:23Z: Retry 05 firewalls created: `gp-fw-1` `i-04cdb7bf7f37d9af4`, `gp-fw-2` `i-0985ef86d35efd39a`.
+- 18:27Z: `gp-fw-1` first SSH bootstrap attempt timed out on `34.214.16.99:22`; broker continues retrying.
+- 18:39Z: `gp-fw-1` bootstrap completed and license fetched.
+- 18:40Z: `gp-fw-2` bootstrap completed and license fetched.
+- 18:41Z: Panorama verified connected firewalls and onboarded serials `007955000877776` and `007955000877777`.
+- 18:44Z: Panorama config add-on push completed; broker started trust egress routes.
+- 18:45Z: Trust egress routes completed; Windows endpoint `win-user-a` created as `i-054295b5028c3e10c`, private IP `10.100.20.44`.
+- Next action: continue monitoring retry 05 without intervening.

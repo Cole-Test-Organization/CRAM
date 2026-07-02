@@ -65,9 +65,6 @@ const deployment = {
           }
         ]
       },
-      "destroy": {
-        "allowWithoutDelicense": true
-      }
     },
     {
       "kind": "panw-vmseries",
@@ -120,9 +117,6 @@ const deployment = {
           }
         ]
       },
-      "destroy": {
-        "allowWithoutDelicense": true
-      }
     }
   ]
 } satisfies DeploymentModule;

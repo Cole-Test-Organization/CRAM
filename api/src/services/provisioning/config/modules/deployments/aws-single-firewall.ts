@@ -109,9 +109,6 @@ const deployment = {
       "configProfiles": [
         "internet-egress"
       ],
-      "destroy": {
-        "allowWithoutDelicense": true
-      },
       "placement": {
         "provider": "aws",
         "role": "gateway",

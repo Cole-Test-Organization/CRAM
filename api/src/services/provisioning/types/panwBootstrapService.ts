@@ -56,6 +56,7 @@ export interface FirewallBootstrapResult {
 
 export interface FirewallDeactivationResult {
   deactivated: boolean;
+  alreadyUnlicensed?: boolean;
   serial?: string | null;
   reason?: string;
 }

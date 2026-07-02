@@ -31,8 +31,8 @@
 //
 // Account resolution honours the "separate creation from assignment" model the
 // import-triage refactor built: an unknown customer domain auto-creates an
-// account flagged needs_review (the meeting inherits needs_review only when its
-// winning account was just minted — confident/existing matches import clean).
+// account flagged needs_review. The meeting itself still imports cleanly because
+// account cleanup is tracked on the account row, not the meeting row.
 //
 // Re-import is idempotent: the meeting filename is derived from the calendar
 // event id (stable across daily runs, including recurring-instance ids), and
@@ -674,7 +674,7 @@ export class CalendarImportService {
         const isAccountMeeting = !!winner;
         const accountId = isAccountMeeting ? winner!.accountId : null;
         const internal = !isAccountMeeting;
-        const needsReview = isAccountMeeting ? !!winner!.created : false;
+        const needsReview = false;
 
         // Body: calendar description (HTML → markdown) at the top for review. body
         // is NOT NULL, so fall back to a placeholder when there's no description.
