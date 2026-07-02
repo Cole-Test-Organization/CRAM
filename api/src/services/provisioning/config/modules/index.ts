@@ -26,6 +26,7 @@ import dep_aws_panorama_lan from "./deployments/aws-panorama-lan.js";
 import dep_aws_s3_bootstrap from "./deployments/aws-s3-bootstrap.js";
 import dep_aws_single_firewall from "./deployments/aws-single-firewall.js";
 import dep_aws_ubuntu_behind_firewall from "./deployments/aws-ubuntu-behind-firewall.js";
+import dep_aws_ubuntu_koi_endpoint from "./deployments/aws-ubuntu-koi-endpoint.js";
 import dep_aws_ubuntu_server from "./deployments/aws-ubuntu-server.js";
 import dep_aws_windows_endpoint from "./deployments/aws-windows-endpoint.js";
 import dep_proxmox_fw_lab from "./deployments/proxmox-fw-lab.js";
@@ -57,6 +58,7 @@ export const deployments: DeploymentModule[] = [
   dep_aws_s3_bootstrap,
   dep_aws_single_firewall,
   dep_aws_ubuntu_behind_firewall,
+  dep_aws_ubuntu_koi_endpoint,
   dep_aws_ubuntu_server,
   dep_aws_windows_endpoint,
   dep_proxmox_fw_lab,

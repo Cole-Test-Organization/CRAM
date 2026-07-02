@@ -104,3 +104,35 @@ variable "bootstrap_commands" {
   type        = list(string)
   default     = []
 }
+
+variable "koi_script_inline" {
+  description = "Inline Koi enrollment script body. The broker derives this from resource.koi.scriptPath."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "koi_script_sha256" {
+  description = "Optional expected SHA-256 hash for the Koi enrollment script."
+  type        = string
+  default     = ""
+}
+
+variable "koi_interpreter" {
+  description = "Interpreter used to run the Koi script (for example bash or python3)."
+  type        = string
+  default     = "bash"
+}
+
+variable "koi_arguments" {
+  description = "Arguments passed to the Koi enrollment script during first-boot bootstrap."
+  type        = list(string)
+  default     = []
+}
+
+variable "koi_environment" {
+  description = "Environment variables exposed only to the Koi script process. Avoid secrets because bootstrap content is stored in Terraform state."
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+}

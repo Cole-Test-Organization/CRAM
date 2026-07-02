@@ -29,4 +29,57 @@ curl -fsSL --max-time 20 https://checkip.amazonaws.com/ | tee /var/lib/panw-brok
 codex --version | tee /var/lib/panw-broker/codex-version.txt
 claude --version | tee /var/lib/panw-broker/claude-version.txt || true
 
+# Koi enrollment (optional). The broker inlines the artifact from resource.koi.scriptPath as
+# base64. It runs once here, after the CLIs are installed and egress is confirmed, and writes a
+# koi.success/koi.failed marker the broker polls over SSM. A Koi failure aborts the bootstrap
+# before bootstrap.success is written, so the deploy surfaces the real reason instead of a timeout.
+KOI_SCRIPT_B64='${koi_script_inline_b64}'
+if [ -n "$KOI_SCRIPT_B64" ]; then
+  KOI_ROOT=/var/lib/panw-broker
+  KOI_SCRIPT="$KOI_ROOT/koi-script"
+  KOI_LOG="$KOI_ROOT/koi.log"
+  rm -f "$KOI_ROOT/koi.success" "$KOI_ROOT/koi.failed"
+
+  koi_fail() {
+    printf '%s\n' "$1" > "$KOI_ROOT/koi.failed"
+    echo "Koi enrollment failed: $1"
+  }
+
+  printf '%s' "$KOI_SCRIPT_B64" | base64 -d > "$KOI_SCRIPT"
+
+  KOI_SHA256='${koi_script_sha256}'
+  if [ -n "$KOI_SHA256" ]; then
+    ACTUAL_SHA="$(sha256sum "$KOI_SCRIPT" | awk '{print $1}')"
+    if [ "$ACTUAL_SHA" != "$KOI_SHA256" ]; then
+      koi_fail "Koi script SHA-256 mismatch: expected $KOI_SHA256 got $ACTUAL_SHA"
+      exit 1
+    fi
+  fi
+
+  # Export the Koi process environment (map<string,string>, passed base64 so any value survives).
+  KOI_ENV_JSON="$(printf '%s' '${koi_environment_b64}' | base64 -d)"
+  while IFS=$'\t' read -r koi_k koi_v; do
+    if [ -n "$koi_k" ]; then export "$koi_k=$koi_v"; fi
+  done < <(printf '%s' "$KOI_ENV_JSON" | jq -r 'to_entries[] | [.key, .value] | @tsv')
+
+  # Build the argument array (list<string>, passed base64).
+  KOI_ARGS_JSON="$(printf '%s' '${koi_arguments_b64}' | base64 -d)"
+  KOI_ARGS=()
+  while IFS= read -r koi_arg; do
+    KOI_ARGS+=("$koi_arg")
+  done < <(printf '%s' "$KOI_ARGS_JSON" | jq -r '.[]')
+
+  echo "Running Koi enrollment with ${koi_interpreter} under hostname $(hostname)"
+  if ${koi_interpreter} "$KOI_SCRIPT" "$${KOI_ARGS[@]}" > "$KOI_LOG" 2>&1; then
+    tail -n 40 "$KOI_LOG" 2>/dev/null || true
+    date -u +"%Y-%m-%dT%H:%M:%SZ" > "$KOI_ROOT/koi.success"
+    echo "Koi enrollment completed successfully."
+  else
+    koi_rc=$?
+    tail -n 120 "$KOI_LOG" 2>/dev/null || true
+    koi_fail "Koi enrollment exited with code $koi_rc. See $KOI_LOG"
+    exit $koi_rc
+  fi
+fi
+
 date -u +"%Y-%m-%dT%H:%M:%SZ" > /var/lib/panw-broker/bootstrap.success

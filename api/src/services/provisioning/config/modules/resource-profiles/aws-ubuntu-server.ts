@@ -151,6 +151,26 @@ const resourceProfile = {
       "bootstrap_commands": {
         "path": "resource.bootstrap.commands",
         "default": []
+      },
+      "koi_script_inline": {
+        "path": "resource.koi.scriptInline",
+        "default": ""
+      },
+      "koi_script_sha256": {
+        "path": "resource.koi.scriptSha256",
+        "default": ""
+      },
+      "koi_interpreter": {
+        "path": "resource.koi.interpreter",
+        "default": "bash"
+      },
+      "koi_arguments": {
+        "path": "resource.koi.arguments",
+        "default": []
+      },
+      "koi_environment": {
+        "path": "resource.koi.environment",
+        "default": {}
       }
     }
   }

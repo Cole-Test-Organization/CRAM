@@ -37,10 +37,16 @@ locals {
   subnet_cidr          = var.subnet_cidr == null ? cidrsubnet(var.vpc_cidr, 8, 40) : var.subnet_cidr
   vpc_id               = local.use_existing_network ? var.vpc_id : aws_vpc.main[0].id
   subnet_id            = local.use_existing_network ? var.subnet_id : aws_subnet.server[0].id
+  koi_interpreter      = (var.koi_interpreter == null || var.koi_interpreter == "") ? "bash" : var.koi_interpreter
   bootstrap_script = templatefile("${path.module}/user-data.sh.tftpl", {
-    hostname      = var.hostname
-    packages_json = jsonencode(var.bootstrap_packages)
-    commands_json = jsonencode(var.bootstrap_commands)
+    hostname              = var.hostname
+    packages_json         = jsonencode(var.bootstrap_packages)
+    commands_json         = jsonencode(var.bootstrap_commands)
+    koi_script_inline_b64 = base64encode(var.koi_script_inline == null ? "" : var.koi_script_inline)
+    koi_script_sha256     = var.koi_script_sha256 == null ? "" : var.koi_script_sha256
+    koi_interpreter       = local.koi_interpreter
+    koi_arguments_b64     = base64encode(jsonencode(var.koi_arguments))
+    koi_environment_b64   = base64encode(jsonencode(var.koi_environment))
   })
 }
 
