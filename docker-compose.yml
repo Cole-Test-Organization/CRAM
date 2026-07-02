@@ -93,9 +93,10 @@ services:
       # shared credentials/config files using this profile.
       - AWS_PROFILE=${AWS_PROFILE:-default}
       - AWS_SDK_LOAD_CONFIG=${AWS_SDK_LOAD_CONFIG:-1}
-      # PAN-OS first-login bootstrap uses the host SSH agent. Terraform still
-      # publishes this public key so the same host identity can log in.
-      - PANOS_SSH_PUBLIC_KEY_FILE=/root/.ssh/id_rsa.pub
+      # PAN-OS first-login bootstrap uses the matching private key directly in
+      # prod; Terraform publishes the public key for EC2/PAN-OS login.
+      - PANOS_SSH_PUBLIC_KEY_FILE=/root/.ssh/panw-broker-bootstrap.pub
+      - PANOS_SSH_PRIVATE_KEY=/root/.ssh/panw-broker-bootstrap
       - SSH_AUTH_SOCK=/ssh-agent
     # Makes host.docker.internal resolve to the Docker host on Linux. No-op on
     # Mac/Windows Docker Desktop (host.docker.internal works there natively).
@@ -117,12 +118,12 @@ services:
       # Shared AWS credentials/config for provisioning. Read-only; selected by
       # AWS_PROFILE above.
       - ${HOME}/.aws:/root/.aws:ro
-      # Host SSH agent + public key for provisioning. The private key stays on
-      # the host and can remain encrypted/Keychain-backed. Docker Desktop exposes
+      # Host SSH agent plus the prod PAN-OS bootstrap key. Docker Desktop exposes
       # the host agent at /run/host-services/ssh-auth.sock; set
       # PROVISIONING_SSH_AUTH_SOCK to override on other hosts.
       - ${PROVISIONING_SSH_AUTH_SOCK:-/run/host-services/ssh-auth.sock}:/ssh-agent
-      - ${HOME}/.ssh/id_rsa.pub:/root/.ssh/id_rsa.pub:ro
+      - ${HOME}/.ssh/panw-broker-bootstrap:/root/.ssh/panw-broker-bootstrap:ro
+      - ${HOME}/.ssh/panw-broker-bootstrap.pub:/root/.ssh/panw-broker-bootstrap.pub:ro
     ports:
       # BIND_ADDRESS = host interface to bind to. 127.0.0.1 (default) keeps the
       # app on this machine only; 0.0.0.0 exposes it on the LAN. Set in .env.

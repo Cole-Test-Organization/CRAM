@@ -3,7 +3,63 @@ import { withUser } from '../../db/connection.js';
 import { deriveFilename } from '../_shared/_slug.js';
 import { badRequest, notFound, conflict } from '../../lib/http-error.js';
 
-const MEETING_COLS = 'id, account_id, date, starts_at, ends_at, location, title, filename, body, internal, needs_review, krisp_meeting_id, created_at, updated_at';
+export const MEETING_REVIEW_REASONS = [
+  'manual',
+  'account_unassigned',
+  'account_ambiguous',
+  'account_auto_created',
+  'krisp_no_match',
+  'krisp_multiple_matches',
+  'krisp_match_legacy',
+] as const;
+
+type MeetingReviewReason = typeof MEETING_REVIEW_REASONS[number];
+
+const REVIEW_REASON_SET = new Set<string>(MEETING_REVIEW_REASONS);
+const MEETING_COLS = 'id, account_id, date, starts_at, ends_at, location, title, filename, body, internal, needs_review, review_reason, krisp_meeting_id, created_at, updated_at';
+
+function normalizeReviewReason(reason: unknown, fallback: MeetingReviewReason = 'manual'): MeetingReviewReason {
+  if (typeof reason !== 'string' || !reason.trim()) return fallback;
+  const value = reason.trim();
+  if (!REVIEW_REASON_SET.has(value)) {
+    throw badRequest(`Unknown meeting review_reason "${value}". Expected one of: ${MEETING_REVIEW_REASONS.join(', ')}.`);
+  }
+  return value as MeetingReviewReason;
+}
+
+function nextReviewState(data: any, existing?: { needs_review?: boolean; review_reason?: string | null } | null) {
+  const hasNeedsReview = Object.prototype.hasOwnProperty.call(data || {}, 'needs_review');
+  const hasReviewReason = Object.prototype.hasOwnProperty.call(data || {}, 'review_reason');
+
+  if (hasNeedsReview && data.needs_review === false) {
+    if (data.review_reason) {
+      throw badRequest('review_reason cannot be set when needs_review=false.');
+    }
+    return { needsReview: false, reviewReason: null };
+  }
+
+  if (hasNeedsReview && data.needs_review === true) {
+    const fallbackReason = existing?.review_reason
+      ? normalizeReviewReason(existing.review_reason)
+      : 'manual';
+    return {
+      needsReview: true,
+      reviewReason: normalizeReviewReason(data.review_reason, fallbackReason),
+    };
+  }
+
+  if (hasReviewReason) {
+    if (data.review_reason === null || data.review_reason === '') {
+      return { needsReview: false, reviewReason: null };
+    }
+    return { needsReview: true, reviewReason: normalizeReviewReason(data.review_reason) };
+  }
+
+  return {
+    needsReview: !!existing?.needs_review,
+    reviewReason: existing?.needs_review ? normalizeReviewReason(existing.review_reason, 'manual') : null,
+  };
+}
 
 export class MeetingsService {
   // Cross-service deps, wired loosely by the service bags (mcp/server.js,
@@ -33,8 +89,9 @@ export class MeetingsService {
       params.push(limit, offset);
       const meetings = (await client.query(`
         SELECT m.id, m.account_id, m.date, m.starts_at, m.ends_at, m.location, m.title, m.filename, m.internal, m.needs_review,
+               m.review_reason,
                m.created_at, m.updated_at,
-               a.slug AS account_slug, a.name AS account_name
+               a.slug AS account_slug, a.name AS account_name, a.needs_review AS account_needs_review
         FROM meetings m
         LEFT JOIN accounts a ON a.id = m.account_id
         ${whereSql}
@@ -112,7 +169,7 @@ export class MeetingsService {
     if (!filename) return null;
     return withUser(userId, async (client) => {
       const res = await client.query(
-        'SELECT id, account_id, internal, needs_review FROM meetings WHERE filename = $1 AND deleted_at IS NULL LIMIT 1',
+        'SELECT id, account_id, internal, needs_review, review_reason FROM meetings WHERE filename = $1 AND deleted_at IS NULL LIMIT 1',
         [filename]
       );
       return res.rows[0] || null;
@@ -184,13 +241,14 @@ export class MeetingsService {
     let account = null;
     if (meeting.account_id) {
       account = (await client.query(
-        'SELECT slug, name FROM accounts WHERE id = $1',
+        'SELECT slug, name, needs_review FROM accounts WHERE id = $1',
         [meeting.account_id]
       )).rows[0];
     }
 
     meeting.account_slug = account?.slug || null;
     meeting.account_name = account?.name || null;
+    meeting.account_needs_review = !!account?.needs_review;
     await this._attachAttendees(client, meeting);
     return meeting;
   }
@@ -207,6 +265,7 @@ export class MeetingsService {
     return withUser(userId, async (client) => {
       const filename = deriveFilename(data.date, data.title, data.filename);
       const contactIds = data.contact_ids || [];
+      const review = nextReviewState(data);
 
       if (contactIds.length > 0) {
         const found = await client.query(
@@ -221,8 +280,8 @@ export class MeetingsService {
       }
 
       const res = await client.query(
-        `INSERT INTO meetings (user_id, account_id, date, starts_at, ends_at, location, title, filename, body, internal, needs_review, krisp_meeting_id)
-         VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `INSERT INTO meetings (user_id, account_id, date, starts_at, ends_at, location, title, filename, body, internal, needs_review, review_reason, krisp_meeting_id)
+         VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING id`,
         [
           internal ? null : accountId,
@@ -234,7 +293,8 @@ export class MeetingsService {
           filename,
           data.body,
           internal,
-          !!data.needs_review,
+          review.needsReview,
+          review.reviewReason,
           data.krisp_meeting_id || null,
         ]
       );
@@ -272,7 +332,7 @@ export class MeetingsService {
       const nextFilename = data.filename
         ? deriveFilename(nextDate, nextTitle, data.filename)
         : existing.filename;
-      const nextNeedsReview = data.needs_review !== undefined ? !!data.needs_review : existing.needs_review;
+      const review = nextReviewState(data, existing);
       // starts_at/ends_at: undefined = leave as-is; null = explicitly clear; a
       // value = set. Lets the meeting form both set and unset a time of day
       // without disturbing the other fields.
@@ -284,7 +344,7 @@ export class MeetingsService {
       await client.query(
         `UPDATE meetings SET
            date = $2, starts_at = $3, ends_at = $4, location = $5, title = $6, filename = $7,
-           body = $8, needs_review = $9, krisp_meeting_id = $10
+           body = $8, needs_review = $9, review_reason = $10, krisp_meeting_id = $11
          WHERE id = $1`,
         [
           id,
@@ -295,7 +355,8 @@ export class MeetingsService {
           nextTitle,
           nextFilename,
           data.body || existing.body,
-          nextNeedsReview,
+          review.needsReview,
+          review.reviewReason,
           nextKrispMeetingId,
         ]
       );
@@ -438,7 +499,7 @@ export class MeetingsService {
         throw notFound(`Account not found: id=${accountId}.`);
       }
       await client.query(
-        'UPDATE meetings SET account_id = $2, internal = false, needs_review = false WHERE id = $1',
+        'UPDATE meetings SET account_id = $2, internal = false, needs_review = false, review_reason = NULL WHERE id = $1',
         [id, accountId]
       );
       return this._fetchFull(client, id);
@@ -475,7 +536,7 @@ export class MeetingsService {
       }
       try {
         await client.query(
-          'UPDATE meetings SET account_id = $2, internal = $3, needs_review = false WHERE id = $1',
+          'UPDATE meetings SET account_id = $2, internal = $3, needs_review = false, review_reason = NULL WHERE id = $1',
           [id, toInternal ? null : accountId, toInternal]
         );
       } catch (err) {

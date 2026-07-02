@@ -369,21 +369,37 @@ function Install-Application {
   }
 
   Write-Host "Preparing application $($App.id)"
-  if (Test-AppInstalled -App $App) {
-    Write-Host "Application $($App.id) is already installed; skipping."
-    return
-  }
+  try {
+    if (Test-AppInstalled -App $App) {
+      Write-Host "Application $($App.id) is already installed; skipping."
+      return
+    }
 
-  switch ([string] $App.method) {
-    "chocolatey" { Install-ChocolateyApp -App $App }
-    "exe" { Install-DownloadedApp -App $App }
-    "msi" { Install-DownloadedApp -App $App }
-    "powershell" { Install-PowerShellApp -App $App }
-    default { throw "Unsupported application install method $($App.method) for $($App.id)" }
-  }
+    switch ([string] $App.method) {
+      "chocolatey" { Install-ChocolateyApp -App $App }
+      "exe" { Install-DownloadedApp -App $App }
+      "msi" { Install-DownloadedApp -App $App }
+      "powershell" { Install-PowerShellApp -App $App }
+      default { throw "Unsupported application install method $($App.method) for $($App.id)" }
+    }
 
-  if (-not (Test-AppInstalled -App $App)) {
-    throw "Application $($App.id) verification failed after install."
+    if (-not (Test-AppInstalled -App $App)) {
+      throw "Application $($App.id) verification failed after install."
+    }
+  } catch {
+    $Details = "Application $($App.id) failed: $($_.Exception.Message)"
+    $AppLogPath = Get-AppLogPath -App $App
+    if (Test-Path $AppLogPath) {
+      try {
+        $AppTail = Get-Content -Path $AppLogPath -Tail 80 -ErrorAction SilentlyContinue | Out-String
+        if ($AppTail) {
+          $Details = @($Details, "Application log tail ($AppLogPath):", $AppTail.TrimEnd()) -join [Environment]::NewLine
+        }
+      } catch {
+        # Keep the original application failure if the diagnostic log cannot be read.
+      }
+    }
+    throw $Details
   }
   Write-Host "Application $($App.id) installed and verified."
 }
@@ -535,7 +551,18 @@ ${koi_arguments_json}
   }
   Write-Host "Windows endpoint bootstrap completed."
 } catch {
-  Write-Marker -Path $FailureMarker -Message $_.Exception.Message
+  $FailureDetails = $_.Exception.Message
+  if (Test-Path $KoiLog) {
+    try {
+      $KoiTail = Get-Content -Path $KoiLog -Tail 80 -ErrorAction SilentlyContinue | Out-String
+      if ($KoiTail) {
+        $FailureDetails = @($FailureDetails, "Koi log tail:", $KoiTail.TrimEnd()) -join [Environment]::NewLine
+      }
+    } catch {
+      # Keep the original failure if the diagnostic log cannot be read.
+    }
+  }
+  Write-Marker -Path $FailureMarker -Message $FailureDetails
   Write-Error $_
   throw
 } finally {

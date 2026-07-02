@@ -5,7 +5,8 @@ const deployment = {
   "providerProfile": "aws-lab",
   "provider": {
     "projectName": "gp-lab-trusted-users",
-    "panosVersionMajor": "11.2"
+    "panosVersionMajor": "11.2",
+    "panoramaPanosVersionMajor": "11.2.11"
   },
   "steps": [
     {
@@ -205,9 +206,6 @@ const deployment = {
         "adminPasswordEnv": "PANOS_ADMIN_PASSWORD",
         "readinessTimeoutSeconds": 2400
       },
-      "destroy": {
-        "allowWithoutDelicense": true
-      },
       "placement": {
         "provider": "aws",
         "role": "portal+gateway",
@@ -285,9 +283,6 @@ const deployment = {
       "bootstrap": {
         "adminPasswordEnv": "PANOS_ADMIN_PASSWORD",
         "readinessTimeoutSeconds": 2400
-      },
-      "destroy": {
-        "allowWithoutDelicense": true
       },
       "placement": {
         "provider": "aws",

@@ -44,6 +44,7 @@ describe('Krisp webhook — end-to-end over HTTP with the real captured payload'
     const meeting = (await get(`/meetings/${res.body.meeting_id}`)).body;
     assert.equal(meeting.internal, true);
     assert.equal(meeting.needs_review, true);
+    assert.equal(meeting.review_reason, 'krisp_no_match');
     assert.equal(meeting.account_id, null, 'no account resolved from participant emails');
     assert.equal(meeting.krisp_meeting_id, meetingId);
     assert.match(meeting.body, /## Action Items/);
@@ -95,6 +96,7 @@ describe('Krisp webhook — end-to-end over HTTP with the real captured payload'
     assert.match(merged.body, /Original agenda\./, 'existing notes kept');
     assert.match(merged.body, /## Action Items/, 'krisp notes appended');
     assert.equal(merged.krisp_meeting_id, kid, 'krisp id linked onto the matched meeting');
-    assert.equal(merged.needs_review, true, 'flagged for the user to verify the match');
+    assert.equal(merged.needs_review, false, 'single time-match appends cleanly');
+    assert.equal(merged.review_reason, null);
   });
 });

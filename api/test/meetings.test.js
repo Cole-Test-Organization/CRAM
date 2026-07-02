@@ -34,6 +34,26 @@ describe('Meetings — CRUD + required-field rules', () => {
     assert.match(upd.body.body, /updated/);
   });
 
+  it('tracks review_reason separately from the review boolean', async (t) => {
+    const created = await post('/meetings', {
+      internal: true,
+      date: today(),
+      title: 'zzz-review-reason',
+      body: '# review',
+      review_reason: 'account_unassigned',
+    });
+    assert.equal(created.status, 201);
+    const id = created.body.id;
+    deleteAfter(t, `/meetings/${id}`);
+    assert.equal(created.body.needs_review, true, 'setting a reason enters the review queue');
+    assert.equal(created.body.review_reason, 'account_unassigned');
+
+    const cleared = await put(`/meetings/${id}`, { needs_review: false });
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.body.needs_review, false);
+    assert.equal(cleared.body.review_reason, null);
+  });
+
   it('GET a nonexistent meeting → 404', async () => {
     assert.equal((await get('/meetings/99999999')).status, 404);
   });

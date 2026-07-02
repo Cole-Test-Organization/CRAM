@@ -104,11 +104,13 @@ describe('Krisp webhook — import (park / dedupe / append / time-match)', () =>
     const first = await svc.ingest(userId, krispNote({ id: kid, content: 'Note body one.' }));
     assert.equal(first.outcome, 'created', JSON.stringify(first));
     assert.equal(first.needs_review, true);
+    assert.equal(first.review_reason, 'krisp_no_match');
     assert.ok(first.meeting_id);
     createdMeetingIds.add(first.meeting_id);
 
     const parked = await meetingsService.getById(userId, first.meeting_id);
     assert.equal(parked.internal, true);
+    assert.equal(parked.review_reason, 'krisp_no_match');
     assert.equal(parked.krisp_meeting_id, kid);
     assert.match(parked.body, /Note body one\./);
 
@@ -130,7 +132,7 @@ describe('Krisp webhook — import (park / dedupe / append / time-match)', () =>
     assert.match(after.body, /<!-- krisp:transcript -->/);
   });
 
-  it('appends to an existing meeting whose start time is within the window, and links it', async () => {
+  it('appends cleanly to the only existing meeting whose start time is within the window, and links it', async () => {
     // A meeting that already exists in the CRM (stand-in for a calendar import),
     // far in the future so no seeded meeting is nearby. Internal so we need no account.
     const base = await meetingsService.create(userId, null, {
@@ -161,7 +163,8 @@ describe('Krisp webhook — import (park / dedupe / append / time-match)', () =>
     assert.match(after.body, /Pre-existing meeting notes\./);
     assert.match(after.body, /Krisp notes for the existing meeting\./);
     assert.equal(after.krisp_meeting_id, kid, 'krisp id linked onto the matched meeting');
-    assert.equal(after.needs_review, true, 'flagged for the user to verify the match');
+    assert.equal(after.needs_review, false, 'single time-match appends cleanly');
+    assert.equal(after.review_reason, null);
 
     // A follow-up event for that Krisp id still resolves by time first; the stored
     // id is fallback only.
@@ -169,5 +172,89 @@ describe('Krisp webhook — import (park / dedupe / append / time-match)', () =>
     assert.equal(followup.meeting_id, base.id, JSON.stringify(followup));
     const after2 = await meetingsService.getById(userId, base.id);
     assert.match(after2.body, /Outline bullets\./);
+    assert.equal(after2.needs_review, false, 'follow-up event remains clean');
+    assert.equal(after2.review_reason, null);
+  });
+
+  it('flags review when multiple meetings are within the time-match window', async () => {
+    const base = await meetingsService.create(userId, null, {
+      date: '2030-04-01',
+      starts_at: '2030-04-01T15:00:00.000Z',
+      ends_at: '2030-04-01T16:00:00.000Z',
+      title: 'ZZZ Primary Candidate',
+      filename: `zzz-primary-${Date.now()}`,
+      body: 'Primary candidate notes.',
+      internal: true,
+    });
+    const other = await meetingsService.create(userId, null, {
+      date: '2030-04-01',
+      starts_at: '2030-04-01T15:04:00.000Z',
+      ends_at: '2030-04-01T15:20:00.000Z',
+      title: 'ZZZ Nearby Candidate',
+      filename: `zzz-nearby-${Date.now()}`,
+      body: 'Nearby candidate notes.',
+      internal: true,
+    });
+    createdMeetingIds.add(base.id);
+    createdMeetingIds.add(other.id);
+
+    const kid = `zzz_krisp_multi_${Date.now()}`;
+    const res = await svc.ingest(userId, krispNote({
+      id: kid,
+      start: '2030-04-01T15:00:00.000Z',
+      end: '2030-04-01T15:55:00.000Z',
+      content: 'Krisp notes with more than one candidate.',
+    }));
+    assert.equal(res.outcome, 'matched', JSON.stringify(res));
+    assert.equal(res.meeting_id, base.id, 'best candidate won by overlap');
+    assert.equal(res.needs_review, true);
+    assert.equal(res.review_reason, 'krisp_multiple_matches');
+
+    const after = await meetingsService.getById(userId, base.id);
+    assert.match(after.body, /Krisp notes with more than one candidate\./);
+    assert.equal(after.needs_review, true);
+    assert.equal(after.review_reason, 'krisp_multiple_matches');
+  });
+
+  it('keeps multiple-match review when an ambiguous follow-up falls back to Krisp id', async () => {
+    const kid = `zzz_krisp_ambiguous_fallback_${Date.now()}`;
+    const base = await meetingsService.create(userId, null, {
+      date: '2030-05-01',
+      starts_at: '2030-05-01T15:00:00.000Z',
+      ends_at: '2030-05-01T16:00:00.000Z',
+      title: 'ZZZ Already Linked Candidate',
+      filename: `zzz-linked-${Date.now()}`,
+      body: 'Already linked candidate notes.',
+      internal: true,
+      krisp_meeting_id: kid,
+    });
+    const other = await meetingsService.create(userId, null, {
+      date: '2030-05-01',
+      starts_at: '2030-05-01T15:00:00.000Z',
+      ends_at: '2030-05-01T16:00:00.000Z',
+      title: 'ZZZ Equal Candidate',
+      filename: `zzz-equal-${Date.now()}`,
+      body: 'Equal candidate notes.',
+      internal: true,
+    });
+    createdMeetingIds.add(base.id);
+    createdMeetingIds.add(other.id);
+
+    const res = await svc.ingest(userId, krispNote({
+      id: kid,
+      event: 'transcript_generated',
+      start: '2030-05-01T15:00:00.000Z',
+      end: '2030-05-01T16:00:00.000Z',
+      content: 'Follow-up transcript on an ambiguous time match.',
+    }));
+    assert.equal(res.outcome, 'updated', JSON.stringify(res));
+    assert.equal(res.meeting_id, base.id, 'stored Krisp id chooses the row after time match is ambiguous');
+    assert.equal(res.needs_review, true);
+    assert.equal(res.review_reason, 'krisp_multiple_matches');
+
+    const after = await meetingsService.getById(userId, base.id);
+    assert.match(after.body, /Follow-up transcript on an ambiguous time match\./);
+    assert.equal(after.needs_review, true);
+    assert.equal(after.review_reason, 'krisp_multiple_matches');
   });
 });

@@ -208,10 +208,10 @@
         <ip-netmask>10.125.26.0/24</ip-netmask>
       </entry>
       <entry name="corp-dns-resolvers">
-        <ip-netmask>10.125.24.10-10.125.24.11</ip-netmask>
+        <ip-range>10.125.24.10-10.125.24.11</ip-range>
       </entry>
       <entry name="corp-domain-controllers">
-        <ip-netmask>10.125.24.20-10.125.24.21</ip-netmask>
+        <ip-range>10.125.24.20-10.125.24.21</ip-range>
       </entry>
       <entry name="patch-management">
         <ip-netmask>10.125.24.30</ip-netmask>
@@ -252,6 +252,27 @@
           </tcp>
         </protocol>
       </entry>
+      <entry name="tcp-3306">
+        <protocol>
+          <tcp>
+            <port>3306</port>
+          </tcp>
+        </protocol>
+      </entry>
+      <entry name="tcp-5432">
+        <protocol>
+          <tcp>
+            <port>5432</port>
+          </tcp>
+        </protocol>
+      </entry>
+      <entry name="tcp-22">
+        <protocol>
+          <tcp>
+            <port>22</port>
+          </tcp>
+        </protocol>
+      </entry>
       <entry name="tcp-3389">
         <protocol>
           <tcp>
@@ -268,8 +289,16 @@
       </entry>
     </service>
     <service-group>
+      <entry name="database-services">
+        <members>
+          <member>tcp-1433</member>
+          <member>tcp-3306</member>
+          <member>tcp-5432</member>
+        </members>
+      </entry>
       <entry name="windows-admin-services">
         <members>
+          <member>tcp-22</member>
           <member>tcp-3389</member>
           <member>tcp-5985-5986</member>
           <member>service-https</member>
@@ -331,7 +360,12 @@
               <member>critical</member>
               <member>high</member>
             </severity>
-            <cve>any</cve>
+            <cve>
+              <member>any</member>
+            </cve>
+            <vendor-id>
+              <member>any</member>
+            </vendor-id>
             <threat-name>any</threat-name>
             <host>any</host>
             <category>any</category>
@@ -344,7 +378,12 @@
             <severity>
               <member>medium</member>
             </severity>
-            <cve>any</cve>
+            <cve>
+              <member>any</member>
+            </cve>
+            <vendor-id>
+              <member>any</member>
+            </vendor-id>
             <threat-name>any</threat-name>
             <host>any</host>
             <category>any</category>
@@ -422,6 +461,7 @@
           <mode>
             <disabled/>
           </mode>
+          <log-severity>medium</log-severity>
         </credential-enforcement>
         <block>
           <member>malware</member>
@@ -467,7 +507,7 @@
 
   <set xpath="/config/devices/entry[@name='localhost.localdomain']/vsys/entry[@name='${vsys}']">
     <profile-group>
-      <entry name="enterprise-security-profile-group">
+      <entry name="enterprise-sec-profile-group">
         <virus>
           <member>enterprise-antivirus</member>
         </virus>
@@ -558,7 +598,7 @@
           </service>
           <profile-setting>
             <group>
-              <member>enterprise-security-profile-group</member>
+              <member>enterprise-sec-profile-group</member>
             </group>
           </profile-setting>
           <action>allow</action>
@@ -595,7 +635,7 @@
           </service>
           <profile-setting>
             <group>
-              <member>enterprise-security-profile-group</member>
+              <member>enterprise-sec-profile-group</member>
             </group>
           </profile-setting>
           <action>allow</action>
@@ -623,17 +663,14 @@
             <member>any</member>
           </category>
           <application>
-            <member>mssql-db</member>
-            <member>mysql</member>
-            <member>postgresql</member>
+            <member>any</member>
           </application>
           <service>
-            <member>application-default</member>
-            <member>tcp-1433</member>
+            <member>database-services</member>
           </service>
           <profile-setting>
             <group>
-              <member>enterprise-security-profile-group</member>
+              <member>enterprise-sec-profile-group</member>
             </group>
           </profile-setting>
           <action>allow</action>
@@ -663,18 +700,14 @@
             <member>any</member>
           </category>
           <application>
-            <member>ssh</member>
-            <member>ms-rdp</member>
-            <member>winrm</member>
-            <member>ssl</member>
+            <member>any</member>
           </application>
           <service>
-            <member>application-default</member>
             <member>windows-admin-services</member>
           </service>
           <profile-setting>
             <group>
-              <member>enterprise-security-profile-group</member>
+              <member>enterprise-sec-profile-group</member>
             </group>
           </profile-setting>
           <action>allow</action>
@@ -713,7 +746,7 @@
           </service>
           <profile-setting>
             <group>
-              <member>enterprise-security-profile-group</member>
+              <member>enterprise-sec-profile-group</member>
             </group>
           </profile-setting>
           <action>allow</action>
@@ -755,7 +788,7 @@
           </service>
           <profile-setting>
             <group>
-              <member>enterprise-security-profile-group</member>
+              <member>enterprise-sec-profile-group</member>
             </group>
           </profile-setting>
           <action>allow</action>
@@ -792,7 +825,7 @@
           </service>
           <profile-setting>
             <group>
-              <member>enterprise-security-profile-group</member>
+              <member>enterprise-sec-profile-group</member>
             </group>
           </profile-setting>
           <action>allow</action>

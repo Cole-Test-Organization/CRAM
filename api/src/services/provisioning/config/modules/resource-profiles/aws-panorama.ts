@@ -85,8 +85,17 @@ const resourceProfile = {
       },
       "ssh_public_key": { "resolver": "localSshPublicKey" },
       "panos_version_major": {
-        "path": "provider.panosVersionMajor",
-        "default": "11.2"
+        "first": [
+          {
+            "path": "provider.panoramaPanosVersionMajor"
+          },
+          {
+            "path": "provider.panosVersionMajor"
+          },
+          {
+            "value": "11.2"
+          }
+        ]
       },
       "instance_type": {
         "first": [

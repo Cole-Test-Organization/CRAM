@@ -24,6 +24,9 @@ import { optionalEnv, requireEnv } from "../../../utils/index.js";
 import { PanosApiClient } from "./client.js";
 import { setInitialAdminPassword } from "./ssh.js";
 
+const LICENSE_DEACTIVATION_ATTEMPTS = 4;
+const LICENSE_DEACTIVATION_RETRY_DELAY_MS = 60_000;
+
 export class PanwBootstrapService {
   async bootstrapPanorama(
     deployment: DeploymentConfig,
@@ -417,7 +420,12 @@ export class PanwBootstrapService {
       serial = info.serial ?? null;
       const vmLicense = info.vmLicense?.trim().toLowerCase() ?? null;
       if (!vmLicense || ["none", "unknown", ""].includes(vmLicense)) {
-        return { deactivated: false, serial, reason: "firewall reports no active VM-Series license" };
+        return {
+          deactivated: false,
+          alreadyUnlicensed: true,
+          serial,
+          reason: "firewall reports no active VM-Series license",
+        };
       }
     } catch (error) {
       // Proceed to attempt deactivation anyway; the deactivate call is the
@@ -425,17 +433,47 @@ export class PanwBootstrapService {
       log(`Could not read firewall license state before deactivation: ${errorMessage(error)}`);
     }
 
-    try {
-      log(
-        `Deactivating VM-Series license for ${resource.hostname}` +
-          (serial ? ` (serial ${serial})` : ""),
-      );
-      await client.setLicenseDeactivationApiKey(deactivationApiKey);
-      await client.deactivateVmSeriesLicense(300_000);
-      return { deactivated: true, serial };
-    } catch (error) {
-      return { deactivated: false, serial, reason: errorMessage(error) };
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= LICENSE_DEACTIVATION_ATTEMPTS; attempt += 1) {
+      try {
+        log(
+          `Deactivating VM-Series license for ${resource.hostname}` +
+            (serial ? ` (serial ${serial})` : "") +
+            ` (attempt ${attempt}/${LICENSE_DEACTIVATION_ATTEMPTS})`,
+        );
+        try {
+          await client.setLicenseDeactivationApiKey(deactivationApiKey);
+        } catch (error) {
+          if (isSameLicenseDeactivationKeyError(error)) {
+            log("PAN-OS license deactivation API key is already set; continuing to deactivate");
+          } else {
+            throw error;
+          }
+        }
+        await client.deactivateVmSeriesLicense(300_000);
+        return { deactivated: true, serial };
+      } catch (error) {
+        lastError = error;
+        if (
+          attempt === LICENSE_DEACTIVATION_ATTEMPTS ||
+          !shouldRetryLicenseDeactivationError(error)
+        ) {
+          return { deactivated: false, serial, reason: errorMessage(error) };
+        }
+        log(
+          `License deactivation attempt ${attempt}/${LICENSE_DEACTIVATION_ATTEMPTS} failed for ` +
+            `${resource.hostname}: ${errorMessage(error)}. Retrying in ` +
+            `${LICENSE_DEACTIVATION_RETRY_DELAY_MS / 1000}s before destroy.`,
+        );
+        await sleep(LICENSE_DEACTIVATION_RETRY_DELAY_MS);
+      }
     }
+
+    return {
+      deactivated: false,
+      serial,
+      reason: lastError ? errorMessage(lastError) : "deactivation did not complete",
+    };
   }
 }
 
@@ -825,6 +863,29 @@ function envValue(name?: string | null): string | null {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function shouldRetryLicenseDeactivationError(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase();
+  return (
+    message.includes("deactivation token") ||
+    message.includes("api key is same as old") ||
+    message.includes("doesn't belong to this support account") ||
+    message.includes("does not belong to this support account") ||
+    message.includes("support account") ||
+    message.includes("update server") ||
+    message.includes("manual deactivation") ||
+    message.includes("error in contacting") ||
+    message.includes("license server") ||
+    message.includes("timed out") ||
+    message.includes("timeout") ||
+    message.includes("econnreset") ||
+    message.includes("socket hang up")
+  );
+}
+
+function isSameLicenseDeactivationKeyError(error: unknown): boolean {
+  return errorMessage(error).toLowerCase().includes("api key is same as old");
 }
 
 function xmlUnescape(value: string): string {

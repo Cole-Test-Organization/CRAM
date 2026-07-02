@@ -3,11 +3,13 @@ import type { MeetingsService } from '../../services/meetings/meetings.js';
 import type { AccountsService } from '../../services/accounts/accounts.js';
 import type { ContactEnrichmentService } from '../../services/contacts/contact-enrichment.js';
 
+const REVIEW_REASON_ENUM = ['manual', 'account_unassigned', 'account_ambiguous', 'account_auto_created', 'krisp_no_match', 'krisp_multiple_matches', 'krisp_match_legacy'];
+
 export default async function meetingRoutes(fastify: FastifyInstance, { meetingsService, accountsService, contactEnrichmentService }: { meetingsService: MeetingsService; accountsService: AccountsService; contactEnrichmentService: ContactEnrichmentService }) {
   // List all meetings across all accounts (including internal meetings).
   fastify.get<{ Querystring: { limit?: number; offset?: number; internal?: boolean; needs_review?: boolean } }>('/meetings', {
     schema: {
-      description: 'List all meetings across all accounts, sorted by date descending. Includes internal meetings (internal=true). Pass internal=true/false to filter. Pass needs_review=true to list only parked notes awaiting triage (account-less and/or imported notes flagged for review).',
+      description: 'List all meetings across all accounts, sorted by date descending. Includes internal meetings (internal=true). Pass internal=true/false to filter. Pass needs_review=true to list only meetings/notes needing placement or match review; review_reason explains why.',
       tags: ['meetings'],
       querystring: {
         type: 'object',
@@ -15,7 +17,7 @@ export default async function meetingRoutes(fastify: FastifyInstance, { meetings
           limit: { type: 'integer', default: 50 },
           offset: { type: 'integer', default: 0 },
           internal: { type: 'boolean', description: 'Filter by internal flag. Omit to include both.' },
-          needs_review: { type: 'boolean', description: 'Filter by the review flag. true = only notes parked for triage; false = only settled notes; omit for both.' },
+          needs_review: { type: 'boolean', description: 'Filter by the meeting review flag. true = only meetings/notes needing placement or match review; false = only settled notes; omit for both.' },
         },
       },
     },
@@ -51,7 +53,7 @@ export default async function meetingRoutes(fastify: FastifyInstance, { meetings
   });
 
   // Create meeting (unified — external or internal).
-  fastify.post<{ Body: { account_id?: number; internal?: boolean; needs_review?: boolean; date: string; starts_at?: string | null; ends_at?: string | null; location?: string | null; title?: string; attendees?: string; unlinked_attendees?: { display_name?: string; email?: string }[]; contact_ids?: number[]; body: string } }>('/meetings', {
+  fastify.post<{ Body: { account_id?: number; internal?: boolean; needs_review?: boolean; review_reason?: string | null; date: string; starts_at?: string | null; ends_at?: string | null; location?: string | null; title?: string; attendees?: string; unlinked_attendees?: { display_name?: string; email?: string }[]; contact_ids?: number[]; body: string } }>('/meetings', {
     schema: {
       description: 'Create a meeting note. Pass account_id for an account or partner meeting; pass internal=true (and omit account_id) for an internal-only note. contact_ids is required for non-internal meetings. Attendees come in two forms: contact_ids links existing contacts; attendees (free text) and/or unlinked_attendees record people who are NOT yet CRM contacts as unlinked attendee rows (visible on the meeting, linkable later via the link-attendee endpoint) — names already covered by a linked contact are skipped.',
       tags: ['meetings'],
@@ -61,7 +63,8 @@ export default async function meetingRoutes(fastify: FastifyInstance, { meetings
         properties: {
           account_id: { type: 'integer', description: 'Account this meeting is tied to. Omit when internal=true.' },
           internal: { type: 'boolean', default: false, description: 'true for internal-only notes (no account). Default false.' },
-          needs_review: { type: 'boolean', default: false, description: 'Park this note for triage. Set true for imported/uncertain notes you could not confidently assign; surfaced by GET /api/meetings?needs_review=true and cleared by the assign-account endpoint.' },
+          needs_review: { type: 'boolean', description: 'Park this meeting/note for triage. Set true for uncertain meeting placement or Krisp matching; surfaced by GET /api/meetings?needs_review=true and cleared by the assign-account/reassign-account/update paths.' },
+          review_reason: { type: ['string', 'null'], enum: [...REVIEW_REASON_ENUM, null], description: 'Typed reason when needs_review=true. Examples: account_unassigned, account_ambiguous, krisp_no_match, krisp_multiple_matches. Omit for manual review; null clears only when needs_review=false.' },
           date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'Meeting date (YYYY-MM-DD)' },
           starts_at: { type: ['string', 'null'], format: 'date-time', description: 'Optional precise start as an ISO 8601 timestamp (e.g. "2026-05-31T13:30:00Z"). Powers the GUI Today timeline and time-of-day ordering; the calendar import sets it from the event start. Distinct from `date` (the calendar day). null/omit = no start time.' },
           ends_at: { type: ['string', 'null'], format: 'date-time', description: 'Optional precise end as an ISO 8601 timestamp. Companion to starts_at; used to detect the meeting happening right now. null/omit = no end time.' },
@@ -108,7 +111,7 @@ export default async function meetingRoutes(fastify: FastifyInstance, { meetings
   });
 
   // Update meeting
-  fastify.put<{ Params: { id: number }; Body: { date?: string; starts_at?: string | null; ends_at?: string | null; location?: string | null; title?: string; needs_review?: boolean; attendees?: string; unlinked_attendees?: { display_name?: string; email?: string }[]; contact_ids?: number[]; body?: string } }>('/meetings/:id', {
+  fastify.put<{ Params: { id: number }; Body: { date?: string; starts_at?: string | null; ends_at?: string | null; location?: string | null; title?: string; needs_review?: boolean; review_reason?: string | null; attendees?: string; unlinked_attendees?: { display_name?: string; email?: string }[]; contact_ids?: number[]; body?: string } }>('/meetings/:id', {
     schema: {
       description: 'Update a meeting note. Linked and unlinked attendees are managed independently: contact_ids (when provided) fully replaces the LINKED set; attendees text and/or unlinked_attendees (when provided) fully replaces the UNLINKED set. Passing one does not disturb the other. The internal flag and account_id cannot be changed after creation — use the assign-account endpoint to attach a parked note to an account.',
       tags: ['meetings'],
@@ -121,7 +124,8 @@ export default async function meetingRoutes(fastify: FastifyInstance, { meetings
           ends_at: { type: ['string', 'null'], format: 'date-time', description: 'Precise end as an ISO 8601 timestamp. Omit to leave unchanged; null clears it.' },
           location: { type: ['string', 'null'], description: 'Location / conferencing URL. Omit to leave unchanged; null clears it.' },
           title: { type: 'string' },
-          needs_review: { type: 'boolean', description: 'Set/clear the triage flag.' },
+          needs_review: { type: 'boolean', description: 'Set/clear the meeting triage flag. Clearing it also clears review_reason.' },
+          review_reason: { type: ['string', 'null'], enum: [...REVIEW_REASON_ENUM, null], description: 'Typed reason when this meeting is in review. Setting a non-null reason also sets needs_review=true; null clears review.' },
           attendees: { type: 'string', description: 'Free-text attendees (comma/semicolon separated). When present, replaces the unlinked attendee rows (names already covered by a linked contact are skipped).' },
           unlinked_attendees: { type: 'array', items: { type: 'object', properties: { display_name: { type: 'string' }, email: { type: 'string' } } }, description: 'Structured unlinked attendees [{display_name, email?}]. When present, replaces the unlinked attendee set.' },
           contact_ids: { type: 'array', items: { type: 'integer' }, description: 'Replace the LINKED attendee set with these contact IDs.' },
@@ -146,10 +150,10 @@ export default async function meetingRoutes(fastify: FastifyInstance, { meetings
 
   // Triage: attach a parked (account-less) note to an account. The one path
   // allowed to set account_id after creation — flips internal→false and clears
-  // needs_review. 409 if the meeting is already assigned to an account.
+  // needs_review/review_reason. 409 if the meeting is already assigned to an account.
   fastify.post<{ Params: { id: number }; Body: { account_id: number } }>('/meetings/:id/assign-account', {
     schema: {
-      description: 'Assign a parked, account-less note to an account (triage). Sets account_id, flips internal=false, and clears needs_review. Only applies to currently-unassigned meetings — returns 409 if the meeting is already linked to an account. Pair with GET /api/meetings?needs_review=true to find parked notes, and POST /api/accounts/find-or-create to pick the target account.',
+      description: 'Assign a parked, account-less note to an account (triage). Sets account_id, flips internal=false, and clears needs_review/review_reason. Only applies to currently-unassigned meetings — returns 409 if the meeting is already linked to an account. Pair with GET /api/meetings?needs_review=true to find parked notes, and POST /api/accounts/find-or-create to pick the target account.',
       tags: ['meetings'],
       params: { type: 'object', properties: { id: { type: 'integer' } } },
       body: {
@@ -179,7 +183,7 @@ export default async function meetingRoutes(fastify: FastifyInstance, { meetings
   // already has an account.
   fastify.post<{ Params: { id: number }; Body: { account_id?: number; internal?: boolean } }>('/meetings/:id/reassign-account', {
     schema: {
-      description: 'Move a meeting to a different account, or convert it to an internal note (fix a bad import). Unlike POST /meetings/:id/assign-account (triage — account-less notes only, 409 if already assigned), this works on a meeting that ALREADY has an account. Pass account_id to move it to that account (sets internal=false); pass internal=true (and omit account_id) to strip the account and make it an account-less internal note. Clears needs_review either way. Attendees are left untouched. Returns 409 if the destination already has a meeting with the same filename.',
+      description: 'Move a meeting to a different account, or convert it to an internal note (fix a bad import). Unlike POST /meetings/:id/assign-account (triage — account-less notes only, 409 if already assigned), this works on a meeting that ALREADY has an account. Pass account_id to move it to that account (sets internal=false); pass internal=true (and omit account_id) to strip the account and make it an account-less internal note. Clears needs_review/review_reason either way. Attendees are left untouched. Returns 409 if the destination already has a meeting with the same filename.',
       tags: ['meetings'],
       params: { type: 'object', properties: { id: { type: 'integer' } } },
       body: {

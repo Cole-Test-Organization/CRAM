@@ -4,8 +4,9 @@ import path from "node:path";
 
 const API_BASE = process.env.PROVISIONING_API_BASE ?? "http://127.0.0.1:3200/api";
 const POLL_MS = Number(process.env.PROVISIONING_POLL_MS ?? "15000");
-const REPORT = path.resolve("work/provisioning-run-report-2026-06-26.jsonl");
-const FINAL = path.resolve("work/provisioning-run-summary-2026-06-26.md");
+const RUN_LABEL = process.env.PROVISIONING_RUN_LABEL ?? new Date().toISOString().slice(0, 10);
+const REPORT = path.resolve(process.env.PROVISIONING_REPORT ?? `work/provisioning-run-report-${RUN_LABEL}.jsonl`);
+const FINAL = path.resolve(process.env.PROVISIONING_SUMMARY ?? `work/provisioning-run-summary-${RUN_LABEL}.md`);
 const DEACTIVATION_SECRET = "PANW_LICENSE_DEACTIVATION_API_KEY";
 
 const args = parseArgs(process.argv.slice(2));
@@ -14,13 +15,17 @@ const results = [];
 writeFileSync(REPORT, "");
 
 function parseArgs(argv) {
-  const out = { deployments: null, skip: new Set() };
+  const out = { deployments: null, skip: new Set(), autoRetry: true, stopOnFailure: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--deployments") {
       out.deployments = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     } else if (arg === "--skip") {
       out.skip = new Set((argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+    } else if (arg === "--no-auto-retry") {
+      out.autoRetry = false;
+    } else if (arg === "--stop-on-failure") {
+      out.stopOnFailure = true;
     } else {
       throw new Error(`Unknown argument ${arg}`);
     }
@@ -189,6 +194,7 @@ async function runDeployment(detail) {
       result.error = deploy.error ?? `deploy ended with ${deploy.status}`;
       emit("deploy-failed", { deployment: detail.id, message: result.error });
       await ensureTornDown(detail.id, "after failed deploy");
+      if (!args.autoRetry) return result;
 
       emit("deploy-retry-start", { deployment: detail.id, message: "retrying once after teardown" });
       deploy = await runJob(detail.id, "deploy", params);
@@ -251,6 +257,10 @@ async function main() {
     const result = await runDeployment(detail);
     results.push(result);
     emit("deployment-complete", { deployment: detail.id, status: result.error ? "failed" : "succeeded", message: result.error ?? "ok" });
+    if (result.error && args.stopOnFailure) {
+      emit("stop-on-failure", { deployment: detail.id, message: "stopping after failed deployment" });
+      break;
+    }
   }
 
   writeSummary(results);
@@ -260,7 +270,7 @@ async function main() {
 
 function writeSummary(items) {
   const lines = [
-    "# Provisioning Run Summary - 2026-06-26",
+    `# Provisioning Run Summary - ${RUN_LABEL}`,
     "",
     `API: ${API_BASE}`,
     "",

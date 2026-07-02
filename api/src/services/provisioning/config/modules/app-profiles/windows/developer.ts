@@ -25,8 +25,35 @@ const appProfile = {
     {
       "id": "nodejs-lts",
       "name": "Node.js LTS",
-      "method": "msi",
-      "url": "https://nodejs.org/dist/latest-v24.x/node-v24.17.0-x64.msi",
+      "method": "powershell",
+      "command": `$InstallerDir = 'C:\\ProgramData\\panw-broker\\installers'
+New-Item -ItemType Directory -Force -Path $InstallerDir | Out-Null
+$IndexUri = 'https://nodejs.org/dist/index.json'
+$Releases = Invoke-RestMethod -UseBasicParsing -Uri $IndexUri
+$Release = $Releases | Where-Object { $_.lts -and ($_.files -contains 'win-x64-msi') } | Select-Object -First 1
+if (-not $Release) {
+  throw "Could not find a Node.js LTS win-x64 MSI release in $IndexUri."
+}
+
+$Version = [string] $Release.version
+$InstallerPath = Join-Path $InstallerDir "node-$Version-x64.msi"
+$DownloadUri = "https://nodejs.org/dist/$Version/node-$Version-x64.msi"
+Write-Host "Installing Node.js $Version from $DownloadUri"
+Invoke-WebRequest -UseBasicParsing -Uri $DownloadUri -OutFile $InstallerPath -ErrorAction Stop
+
+$MsiArgs = @('/i', ('"' + $InstallerPath + '"'), '/qn', '/norestart')
+$Process = Start-Process -FilePath 'msiexec.exe' -ArgumentList $MsiArgs -Wait -PassThru
+Write-Host "Node.js installer exit code: $($Process.ExitCode)"
+if (@(0, 3010) -notcontains $Process.ExitCode) {
+  throw "Node.js installer exited with code $($Process.ExitCode)."
+}
+
+$MachinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+$UserPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+$env:Path = "$MachinePath;$UserPath"
+node --version
+npm --version
+`,
       "verify": {
         "command": "if (Get-Command node.exe -ErrorAction SilentlyContinue) { node --version; exit 0 } else { exit 1 }"
       }
@@ -110,7 +137,49 @@ const appProfile = {
       "id": "openai-codex-desktop",
       "name": "OpenAI Codex Desktop Installer",
       "method": "powershell",
-      "command": "$InstallerDir = 'C:\\ProgramData\\panw-broker\\installers'\nNew-Item -ItemType Directory -Force -Path $InstallerDir | Out-Null\n$InstallerPath = Join-Path $InstallerDir 'Codex Installer.exe'\nInvoke-WebRequest -UseBasicParsing -Uri 'https://get.microsoft.com/installer/download/9PLM9XGG6VKS?cid=website_cta_psi' -OutFile $InstallerPath\n$Process = Start-Process -FilePath $InstallerPath -ArgumentList @('/Silent', '/AllUsers') -Wait -PassThru\nWrite-Host \"Codex desktop installer exit code: $($Process.ExitCode)\"\n$Package = Get-AppxPackage -AllUsers | Where-Object { $_.Name -like '*Codex*' -or $_.PackageFullName -like '*Codex*' } | Select-Object -First 1\nif ($Package) {\n  Write-Host \"Codex desktop package detected: $($Package.PackageFullName)\"\n} else {\n  $LauncherPath = 'C:\\Users\\Public\\Desktop\\Install OpenAI Codex Desktop.cmd'\n  $LauncherContent = '@echo off' + [Environment]::NewLine + '\"' + $InstallerPath + '\"'\n  $LauncherContent | Set-Content -Path $LauncherPath -Encoding ASCII\n  Write-Host \"Codex desktop package was not visible after silent install; staged installer at $InstallerPath and launcher at $LauncherPath.\"\n}\n",
+      "command": `$InstallerDir = 'C:\\ProgramData\\panw-broker\\installers'
+New-Item -ItemType Directory -Force -Path $InstallerDir | Out-Null
+$InstallerPath = Join-Path $InstallerDir 'Codex Installer.exe'
+$LauncherPath = 'C:\\Users\\Public\\Desktop\\Install OpenAI Codex Desktop.cmd'
+$DownloadUri = 'https://get.microsoft.com/installer/download/9PLM9XGG6VKS?cid=website_cta_psi'
+$DownloadSucceeded = $false
+
+try {
+  Invoke-WebRequest -UseBasicParsing -Uri $DownloadUri -OutFile $InstallerPath -ErrorAction Stop
+  $DownloadSucceeded = $true
+} catch {
+  Write-Warning "Codex desktop installer download failed: $($_.Exception.Message). The Codex CLI remains installed; staging a desktop installer retry launcher."
+}
+
+if ($DownloadSucceeded -and (Test-Path $InstallerPath)) {
+  $Process = Start-Process -FilePath $InstallerPath -ArgumentList @('/Silent', '/AllUsers') -Wait -PassThru
+  Write-Host "Codex desktop installer exit code: $($Process.ExitCode)"
+  if ($Process.ExitCode -ne 0) {
+    Write-Warning "Codex desktop installer exited with $($Process.ExitCode); staging retry launcher."
+  }
+}
+
+$Package = Get-AppxPackage -AllUsers | Where-Object { $_.Name -like '*Codex*' -or $_.PackageFullName -like '*Codex*' } | Select-Object -First 1
+if ($Package) {
+  Write-Host "Codex desktop package detected: $($Package.PackageFullName)"
+} else {
+  $LauncherContent = @'
+@echo off
+set INSTALLER=C:\\ProgramData\\panw-broker\\installers\\Codex Installer.exe
+if exist "%INSTALLER%" (
+  "%INSTALLER%"
+) else (
+  echo Codex Desktop installer was not downloaded during bootstrap.
+  echo The OpenAI Codex CLI is installed and available as: codex
+  echo Retrying the Microsoft installer download URL in your browser...
+  start "" "https://get.microsoft.com/installer/download/9PLM9XGG6VKS?cid=website_cta_psi"
+  pause
+)
+'@
+  $LauncherContent | Set-Content -Path $LauncherPath -Encoding ASCII
+  Write-Host "Codex desktop package was not visible after bootstrap; staged launcher at $LauncherPath."
+}
+`,
       "verify": {
         "command": "if ((Get-AppxPackage -AllUsers | Where-Object { $_.Name -like '*Codex*' -or $_.PackageFullName -like '*Codex*' }) -or (Test-Path 'C:\\Users\\Public\\Desktop\\Install OpenAI Codex Desktop.cmd')) { exit 0 } else { exit 1 }"
       }
@@ -119,7 +188,7 @@ const appProfile = {
       "id": "claude-code",
       "name": "Claude Code",
       "method": "powershell",
-      "command": "New-Item -ItemType Directory -Force -Path 'C:\\ProgramData\\npm' | Out-Null\nnpm config set prefix 'C:\\ProgramData\\npm'\n$MachinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')\nif ($MachinePath -notlike '*C:\\ProgramData\\npm*') {\n  [Environment]::SetEnvironmentVariable('Path', ($MachinePath + ';C:\\ProgramData\\npm'), 'Machine')\n}\n$env:Path = ([Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User'))\nnpm install -g @anthropic-ai/claude-code@latest\n",
+      "command": "New-Item -ItemType Directory -Force -Path 'C:\\ProgramData\\npm' | Out-Null\nnpm config set prefix 'C:\\ProgramData\\npm'\n$MachinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')\nif ($MachinePath -notlike '*C:\\ProgramData\\npm*') {\n  [Environment]::SetEnvironmentVariable('Path', ($MachinePath + ';C:\\ProgramData\\npm'), 'Machine')\n}\n$env:Path = ([Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User'))\nnpm install -g @anthropic-ai/claude-code@latest --include=optional --ignore-scripts=false --allow-scripts=@anthropic-ai/claude-code\n",
       "verify": {
         "command": "if (Get-Command claude -ErrorAction SilentlyContinue) { claude --version; exit 0 } else { exit 1 }"
       }

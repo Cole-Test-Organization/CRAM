@@ -444,6 +444,9 @@ Return ONLY the JSON object specified in the system prompt.`;
           body,
           internal: !linked,
           needs_review: !linked, // parked notes go in the meetings review queue; linked ones are clean (auto-created accounts carry their own flag)
+          review_reason: !linked
+            ? (decision.reason === 'ambiguous' ? 'account_ambiguous' : 'account_unassigned')
+            : null,
           unlinked_attendees: unlinked,
         },
       );

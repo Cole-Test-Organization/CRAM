@@ -55,7 +55,7 @@ export default function MeetingsList(props: Props = {}) {
         );
     };
 
-    // Parked notes awaiting triage (account-less / imported, flagged needs_review).
+    // Meetings/notes awaiting placement or match review.
     const reviewCount = () =>
         (meetings() || []).filter((m: any) => m.needs_review).length;
 
@@ -189,6 +189,11 @@ export default function MeetingsList(props: Props = {}) {
                             <Show when={m.needs_review}>
                                 <span class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">
                                     Review
+                                </span>
+                            </Show>
+                            <Show when={m.account_needs_review}>
+                                <span class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">
+                                    Account review
                                 </span>
                             </Show>
                             <Show when={m.internal}>

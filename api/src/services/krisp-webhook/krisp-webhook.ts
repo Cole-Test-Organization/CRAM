@@ -6,15 +6,18 @@
 // Google Calendar — so this does NOT resolve an account from emails (a Krisp
 // payload carries none we can trust; Krisp isn't wired to the calendar). Instead:
 //
-//   1. time-proximity match         — find the existing meeting whose start is
-//                                      within ±window of Krisp's start (overlap
-//                                      breaks ties). Append the notes to it and
-//                                      flag needs_review so the user verifies.
-//   2. prior Krisp import fallback  — if time is absent/ambiguous but a previous
+//   1. single time-proximity match  — find the one existing meeting whose start
+//                                      is within ±window of Krisp's start. Append
+//                                      the notes cleanly.
+//   2. multiple time matches        — append to the best candidate when there is
+//                                      a clear winner, but flag needs_review so
+//                                      the user verifies; if there is no clear
+//                                      winner, park a new review row.
+//   3. prior Krisp import fallback  — if time is absent/ambiguous but a previous
 //                                      Krisp delivery already parked this meeting,
 //                                      append to that row so retries/follow-ups
 //                                      don't duplicate.
-//   3. no confident match           → create a new meeting flagged needs_review
+//   4. no match                     → create a new meeting flagged needs_review
 //                                      (the user can later merge it onto the real
 //                                      meeting via the generic merge).
 //
@@ -55,6 +58,7 @@ interface IngestResult {
   outcome: 'created' | 'matched' | 'updated' | 'noop';
   meeting_id: number | null;
   needs_review: boolean;
+  review_reason: string | null;
   note?: string;
 }
 
@@ -158,17 +162,30 @@ export class KrispWebhookService {
     const p = parseKrisp(raw);
     const fragment = `<!-- krisp:${p.eventType} -->\n${p.content.trim()}\n`;
 
+    let parkedReviewReason = 'krisp_no_match';
+
     // 1. Time-proximity match against an existing (e.g. calendar-imported) meeting.
     // A Krisp id cannot exist on that row until this webhook has already landed
     // once, so time is the primary association signal.
     if (p.startsAt) {
       const candidates = await this.meetings.findTimeMatchCandidates(userId, p.startsAt, this.windowMs);
-      const match = pickMatch(candidates, new Date(p.startsAt).getTime(), p.endsAt ? new Date(p.endsAt).getTime() : null);
-      if (match) {
-        const full = await this.meetings.getById(userId, match.id);
+      if (candidates.length === 1) {
+        const full = await this.meetings.getById(userId, candidates[0].id);
         if (full) {
           const linkKrispId = full.krisp_meeting_id ? null : p.krispMeetingId;
-          return this._append(userId, full, p, fragment, linkKrispId);
+          return this._append(userId, full, p, fragment, { linkKrispId });
+        }
+      } else if (candidates.length > 1) {
+        parkedReviewReason = 'krisp_multiple_matches';
+        const match = pickMatch(candidates, new Date(p.startsAt).getTime(), p.endsAt ? new Date(p.endsAt).getTime() : null);
+        if (!match) {
+          logger.warn({ event: 'krisp_webhook.ambiguous_time_match', krispEvent: p.eventType, candidateIds: candidates.map((c) => c.id) }, 'krisp time match ambiguous — parking for review');
+        } else {
+          const full = await this.meetings.getById(userId, match.id);
+          if (full) {
+            const linkKrispId = full.krisp_meeting_id ? null : p.krispMeetingId;
+            return this._append(userId, full, p, fragment, { linkKrispId, reviewReason: 'krisp_multiple_matches' });
+          }
         }
       }
     }
@@ -178,28 +195,39 @@ export class KrispWebhookService {
     // is not how the first delivery finds the calendar-created meeting.
     if (p.krispMeetingId) {
       const existing = await this.meetings.findByKrispMeetingId(userId, p.krispMeetingId);
-      if (existing) return this._append(userId, existing, p, fragment);
+      if (existing) {
+        const reviewReason = parkedReviewReason === 'krisp_multiple_matches' ? parkedReviewReason : null;
+        return this._append(userId, existing, p, fragment, { reviewReason });
+      }
     }
 
     // 3. No confident match → park a new meeting for review (mergeable later).
-    return this._createParked(userId, p, fragment);
+    return this._createParked(userId, p, fragment, parkedReviewReason);
   }
 
   // Append this event's marker-wrapped content onto an existing meeting.
   // Marker-guarded: a re-delivered event is a no-op. Backfills start/end when
-  // missing; flags needs_review so the user verifies. `linkKrispId` is set only
-  // when a fresh time-match needs to remember the Krisp id for retry/follow-up
-  // fallback.
-  async _append(userId: number, existing: any, p: ParsedKrisp, fragment: string, linkKrispId?: string | null): Promise<IngestResult> {
+  // missing. A clean single time-match stays settled; only ambiguous/multiple
+  // matches set a review reason. `linkKrispId` is set only when a fresh
+  // time-match needs to remember the Krisp id for retry/follow-up fallback.
+  async _append(
+    userId: number,
+    existing: any,
+    p: ParsedKrisp,
+    fragment: string,
+    { linkKrispId = null, reviewReason = null }: { linkKrispId?: string | null; reviewReason?: string | null } = {},
+  ): Promise<IngestResult> {
     const marker = `<!-- krisp:${p.eventType} -->`;
     const body = existing.body || '';
     if (body.includes(marker)) {
       logger.info({ event: 'krisp_webhook.noop', meeting_id: existing.id, krispEvent: p.eventType }, 'krisp event already imported — no-op');
-      return { ok: true, event: p.eventType, krisp_meeting_id: p.krispMeetingId, outcome: 'noop', meeting_id: existing.id, needs_review: !!existing.needs_review, note: 'This event was already imported — left as-is.' };
+      return { ok: true, event: p.eventType, krisp_meeting_id: p.krispMeetingId, outcome: 'noop', meeting_id: existing.id, needs_review: !!existing.needs_review, review_reason: existing.review_reason || null, note: 'This event was already imported — left as-is.' };
     }
+    const needsReview = !!reviewReason || !!existing.needs_review;
     const data: Record<string, unknown> = {
       body: `${body.trimEnd()}\n\n${fragment}`.trim(),
-      needs_review: true,
+      needs_review: needsReview,
+      review_reason: needsReview ? (reviewReason || existing.review_reason || 'manual') : null,
     };
     if (linkKrispId && !existing.krisp_meeting_id) data.krisp_meeting_id = linkKrispId;
     if (!existing.starts_at && p.startsAt) data.starts_at = p.startsAt;
@@ -207,10 +235,10 @@ export class KrispWebhookService {
     await this.meetings.update(userId, existing.id, data);
     const outcome = linkKrispId ? 'matched' : 'updated';
     logger.info({ event: 'krisp_webhook.appended', meeting_id: existing.id, krispEvent: p.eventType, outcome }, `krisp ${p.eventType} appended to meeting ${existing.id}`);
-    return { ok: true, event: p.eventType, krisp_meeting_id: p.krispMeetingId, outcome, meeting_id: existing.id, needs_review: true };
+    return { ok: true, event: p.eventType, krisp_meeting_id: p.krispMeetingId, outcome, meeting_id: existing.id, needs_review: needsReview, review_reason: data.review_reason as string | null };
   }
 
-  async _createParked(userId: number, p: ParsedKrisp, fragment: string): Promise<IngestResult> {
+  async _createParked(userId: number, p: ParsedKrisp, fragment: string, reviewReason = 'krisp_no_match'): Promise<IngestResult> {
     const date = (p.startsAt ? p.startsAt.slice(0, 10) : new Date().toISOString().slice(0, 10));
     const key = p.krispMeetingId || slugify(`${date}-${p.title || 'krisp'}`) || `note-${date}`;
     const row = await this.meetings.create(userId, null, {
@@ -222,9 +250,10 @@ export class KrispWebhookService {
       body: fragment.trim() || '_Krisp note — no content provided._',
       internal: true,
       needs_review: true,
+      review_reason: reviewReason,
       krisp_meeting_id: p.krispMeetingId || null,
     });
     logger.info({ event: 'krisp_webhook.parked', meeting_id: row.id, krispEvent: p.eventType }, `krisp ${p.eventType} parked as new meeting ${row.id}`);
-    return { ok: true, event: p.eventType, krisp_meeting_id: p.krispMeetingId, outcome: 'created', meeting_id: row.id, needs_review: true };
+    return { ok: true, event: p.eventType, krisp_meeting_id: p.krispMeetingId, outcome: 'created', meeting_id: row.id, needs_review: true, review_reason: reviewReason };
   }
 }

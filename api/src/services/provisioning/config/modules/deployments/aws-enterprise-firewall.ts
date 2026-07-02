@@ -105,9 +105,6 @@ const deployment = {
       "configProfiles": [
         "enterprise-rule-stack"
       ],
-      "destroy": {
-        "allowWithoutDelicense": true
-      },
       "placement": {
         "provider": "aws",
         "role": "gateway",

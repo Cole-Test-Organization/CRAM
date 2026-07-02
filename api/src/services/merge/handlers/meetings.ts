@@ -13,7 +13,7 @@ import { badRequest, notFound, conflict } from '../../../lib/http-error.js';
 import type { PoolClient } from 'pg';
 import type { MergeHandler, MergePlan, MergeChoices } from '../merge.js';
 
-const COLS = 'id, account_id, date, starts_at, ends_at, location, title, filename, body, internal, needs_review, krisp_meeting_id';
+const COLS = 'id, account_id, date, starts_at, ends_at, location, title, filename, body, internal, needs_review, review_reason, krisp_meeting_id';
 
 function isoOrNull(v: unknown): string | null {
   if (!v) return null;
@@ -129,12 +129,13 @@ export class MeetingMergeHandler implements MergeHandler {
       // a still-live source.
       await client.query('UPDATE meetings SET deleted_at = NOW(), krisp_meeting_id = NULL WHERE id = $1', [sourceId]);
 
-      // Update the survivor. needs_review cleared — a deliberate merge settles it.
+      // Update the survivor. needs_review/review_reason cleared — a deliberate
+      // merge settles the placement/match question.
       try {
         await client.query(
           `UPDATE meetings
               SET title = $2, date = $3, starts_at = $4, ends_at = $5, location = $6,
-                  account_id = $7, internal = $8, body = $9, needs_review = false, krisp_meeting_id = $10
+                  account_id = $7, internal = $8, body = $9, needs_review = false, review_reason = NULL, krisp_meeting_id = $10
             WHERE id = $1`,
           [baseId, nextTitle, nextDate, nextStartsAt, nextEndsAt, nextLocation, nextInternal ? null : nextAccountId, nextInternal, nextBody, nextKrisp]
         );
