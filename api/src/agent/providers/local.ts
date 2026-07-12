@@ -49,6 +49,11 @@ export interface StreamTurnArgs {
   onBlock?: (block: ContentBlock) => void;
   providerConfig?: { baseUrl?: string | null } | null;
   timeoutMs?: number;
+  // Whether to let a thinking-capable model reason before answering. Defaults to
+  // true (the interactive agent wants it). Pass false for latency-sensitive,
+  // mechanical structured-output calls (e.g. ranking) where a long reasoning
+  // trace is pure overhead — it can turn a sub-second answer into minutes.
+  think?: boolean;
 }
 
 let insecureDispatcher: Agent | null = null;
@@ -118,6 +123,49 @@ export async function listModels(baseUrl: string): Promise<string[]> {
   }
   modelsCache.set(root, { at: Date.now(), models });
   return models;
+}
+
+// Non-streaming structured completion via Ollama's NATIVE /api/chat. Unlike the
+// OpenAI-compat /v1/chat/completions endpoint (streamTurn), this one actually
+// honors `think:false` to DISABLE a reasoning model's chain-of-thought — on /v1
+// the flag is ignored, so a thinking model burns minutes reasoning about a simple
+// task. Use for latency-sensitive, no-tool, JSON-shaped calls (e.g. news ranking).
+// Returns the assistant text, or null when the backend has no /api/chat (i.e. not
+// Ollama) so the caller can fall back to streamTurn. Throws on transport/HTTP error.
+export async function ollamaChat({
+  model,
+  system,
+  messages,
+  providerConfig,
+  think = false,
+  timeoutMs,
+}: {
+  model: string;
+  system?: string;
+  messages: { role: string; content: string }[];
+  providerConfig?: { baseUrl?: string | null } | null;
+  think?: boolean;
+  timeoutMs?: number;
+}): Promise<string | null> {
+  const baseUrl = providerConfig?.baseUrl || process.env.LOCAL_BASE_URL;
+  if (!baseUrl) throw new Error('No local LLM base URL — set LOCAL_BASE_URL or pass providerConfig.baseUrl');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (process.env.LOCAL_API_KEY) headers['Authorization'] = `Bearer ${process.env.LOCAL_API_KEY}`;
+  const msgs = system ? [{ role: 'system', content: system }, ...messages] : messages;
+  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/chat`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ model, messages: msgs, think, stream: false }),
+    dispatcher: getInsecureDispatcher(),
+    signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
+  });
+  if (res.status === 404) return null; // no native endpoint → not an Ollama server
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Ollama /api/chat error ${res.status}: ${text.slice(0, 300)}`);
+  }
+  const json: any = await res.json();
+  return typeof json?.message?.content === 'string' ? json.message.content.trim() : '';
 }
 
 async function probeLlamaCpp(baseUrl: string, headers: Record<string, string>): Promise<number | null> {
@@ -348,7 +396,7 @@ export async function streamTurn(args: StreamTurnArgs): Promise<StreamTurnResult
   }
 }
 
-async function streamTurnOnce({ model, system, messages, mcpTools, onBlock, providerConfig, timeoutMs }: StreamTurnArgs): Promise<StreamTurnResult> {
+async function streamTurnOnce({ model, system, messages, mcpTools, onBlock, providerConfig, timeoutMs, think }: StreamTurnArgs): Promise<StreamTurnResult> {
   // Per-request override (set from the GUI Settings panel) takes precedence
   // over the env var so users can point at their own LAN box without restart.
   const baseUrl = providerConfig?.baseUrl || process.env.LOCAL_BASE_URL;
@@ -373,10 +421,11 @@ async function streamTurnOnce({ model, system, messages, mcpTools, onBlock, prov
     stream_options: { include_usage: true },
     // Ollama-specific: thinking-capable models strip <think>…</think> from the
     // /v1/chat/completions response by default. Set think:true to receive it
-    // in delta.reasoning_content (which the parser below already handles).
-    // Non-Ollama servers (vLLM, LM Studio, llama.cpp) ignore unknown fields,
-    // so this is safe to leave on for everyone.
-    think: true,
+    // in delta.reasoning_content (which the parser below already handles); pass
+    // think:false to disable reasoning entirely for latency-sensitive structured
+    // calls. Non-Ollama servers (vLLM, LM Studio, llama.cpp) ignore unknown
+    // fields, so this is safe to send to everyone.
+    think: think ?? true,
   };
   if (tools.length > 0) body.tools = tools;
 

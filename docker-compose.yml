@@ -79,7 +79,7 @@ services:
       - NEWS_REFRESH_MINUTE=${NEWS_REFRESH_MINUTE:-0}
       - NEWS_REFRESH_TZ=${NEWS_REFRESH_TZ:-America/New_York}
       - NEWS_MAX_ARTICLES=${NEWS_MAX_ARTICLES:-40}
-      - NEWS_RANK_LLM_TIMEOUT_MS=${NEWS_RANK_LLM_TIMEOUT_MS:-120000}
+      - NEWS_RANK_LLM_TIMEOUT_MS=${NEWS_RANK_LLM_TIMEOUT_MS:-}
       # In-container path the scheduled pg_dump writes to. Must live under the
       # /backups bind mount below — the host source of that mount is BACKUP_HOST_DIR.
       - BACKUP_DIR=${BACKUP_DIR:-/backups}
@@ -175,7 +175,7 @@ services:
       - NEWS_REFRESH_MINUTE=${NEWS_REFRESH_MINUTE:-0}
       - NEWS_REFRESH_TZ=${NEWS_REFRESH_TZ:-America/New_York}
       - NEWS_MAX_ARTICLES=${NEWS_MAX_ARTICLES:-40}
-      - NEWS_RANK_LLM_TIMEOUT_MS=${NEWS_RANK_LLM_TIMEOUT_MS:-120000}
+      - NEWS_RANK_LLM_TIMEOUT_MS=${NEWS_RANK_LLM_TIMEOUT_MS:-}
       - BACKUP_DIR=${BACKUP_DIR:-/backups}
       # Provisioning broker — AES master key that decrypts the provisioning_secrets
       # table at deploy time. The secrets themselves live in Postgres, not here; set

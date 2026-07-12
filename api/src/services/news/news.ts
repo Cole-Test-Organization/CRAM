@@ -24,9 +24,15 @@ import type { AgentSettingsService } from '../agent/agent-settings.js';
 
 const logger = rootLogger.child({ component: 'news' });
 
-// Bound the local-LLM ranking call (a slow/loading box shouldn't hang a refresh
-// forever) and cap how many headlines we fetch/rank/store. All env-overridable.
-const LLM_TIMEOUT_MS = Number(process.env.NEWS_RANK_LLM_TIMEOUT_MS) || 120_000;
+// Ranking runs UNTIMED by default: a legitimately slow local model should get to
+// finish rather than have good work thrown away for feed order (the interactive
+// agent loop is untimed for the same reason). undici still breaks a genuine stall
+// via its own header/body timeouts, and a dead endpoint fails fast on connect. Set
+// NEWS_RANK_LLM_TIMEOUT_MS only if you deliberately want a hard wall-clock cap.
+const LLM_TIMEOUT_MS = process.env.NEWS_RANK_LLM_TIMEOUT_MS
+  ? Number(process.env.NEWS_RANK_LLM_TIMEOUT_MS)
+  : undefined;
+// The RSS GET is a plain HTTP fetch (not the model) — a short cap is fine here.
 const RSS_TIMEOUT_MS = Number(process.env.NEWS_RSS_TIMEOUT_MS) || 15_000;
 const MAX_ARTICLES = Number(process.env.NEWS_MAX_ARTICLES) || 40;
 // Gap between accounts when the scheduler refreshes every favorite, so a user
@@ -380,19 +386,7 @@ export class NewsService {
     const userPrompt = `Headlines (JSON):\n${JSON.stringify(payload)}\n\nReturn ONLY {"ranked": [ids best-to-worst]}.`;
 
     try {
-      const turn = await localProvider.streamTurn({
-        model,
-        system,
-        messages: [{ role: 'user', content: userPrompt }],
-        mcpTools: [], // no tool-calling — a one-shot completion
-        providerConfig: { baseUrl },
-        timeoutMs: LLM_TIMEOUT_MS,
-      });
-      const text = (turn?.content || [])
-        .filter((b: { type?: string }) => b?.type === 'text')
-        .map((b: { text?: string }) => b.text || '')
-        .join('')
-        .trim();
+      const text = await this.rankCompletion(model, baseUrl, system, userPrompt);
       const parsed = parseLooseJson<{ ranked?: unknown }>(text);
       const order = Array.isArray(parsed?.ranked) ? parsed!.ranked : null;
       if (!order) {
@@ -404,6 +398,44 @@ export class NewsService {
       logger.warn({ accountId, err: errMessage(err) }, 'ranking call failed; using feed order');
       return articles;
     }
+  }
+
+  // One-shot ranking completion. Prefer Ollama's native /api/chat with
+  // think:false — it actually disables the model's chain-of-thought (the /v1
+  // endpoint ignores `think`, so a reasoning model spends minutes on a simple
+  // reorder). Fall back to the /v1 streamTurn path only for non-Ollama backends
+  // that have no native endpoint. Ranking is mechanical — reasoning is pure latency.
+  private async rankCompletion(
+    model: string,
+    baseUrl: string,
+    system: string,
+    userPrompt: string,
+  ): Promise<string> {
+    const messages = [{ role: 'user', content: userPrompt }];
+    const native = await localProvider.ollamaChat({
+      model,
+      system,
+      messages,
+      think: false,
+      providerConfig: { baseUrl },
+      timeoutMs: LLM_TIMEOUT_MS,
+    });
+    if (native != null) return native; // Ollama answered (native endpoint present)
+    // Non-Ollama backend: OpenAI-compat streaming path (reasoning can't be disabled there).
+    const turn = await localProvider.streamTurn({
+      model,
+      system,
+      messages,
+      mcpTools: [],
+      think: false,
+      providerConfig: { baseUrl },
+      timeoutMs: LLM_TIMEOUT_MS,
+    });
+    return (turn?.content || [])
+      .filter((b: { type?: string }) => b?.type === 'text')
+      .map((b: { text?: string }) => b.text || '')
+      .join('')
+      .trim();
   }
 
   // account override → global (per-user) → built-in default.
