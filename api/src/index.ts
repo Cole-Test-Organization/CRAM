@@ -27,6 +27,7 @@ import { VendorsService } from './services/vendors/vendors.js';
 import { VendorProductsService } from './services/vendors/vendor-products.js';
 import { AccountDetailsService } from './services/accounts/account-details.js';
 import { VendorHeatmapService } from './services/accounts/vendor-heatmap.js';
+import { OrgChartService } from './services/accounts/org-chart.js';
 import { ImportExportService } from './services/import-export/import-export.js';
 import { NotesImportService } from './services/notes/notes-import.js';
 import { CalendarImportService } from './services/calendar-import/calendar-import.js';
@@ -41,6 +42,8 @@ import { AgentSettingsService } from './services/agent/agent-settings.js';
 import { ThemesService } from './services/themes/themes.js';
 import { MemoriesService } from './services/memories/memories.js';
 import { ThreadsService } from './services/threads/threads.js';
+import { NewsService } from './services/news/news.js';
+import { Scheduler } from './services/scheduler/scheduler.js';
 import { createProvisioningRuntime, createProvisioningWorker } from './services/provisioning/index.js';
 
 // Routes
@@ -60,6 +63,7 @@ import productCategoryRoutes from './routes/products/product-categories.js';
 import vendorRoutes from './routes/vendors/vendors.js';
 import vendorProductRoutes from './routes/vendors/vendor-products.js';
 import accountDetailsRoutes from './routes/accounts/account-details.js';
+import orgChartRoutes from './routes/accounts/org-chart.js';
 import importExportRoutes from './routes/import-export/import-export.js';
 import notesImportRoutes from './routes/notes/notes-import.js';
 import calendarImportRoutes from './routes/calendar-import/calendar-import.js';
@@ -71,6 +75,7 @@ import internalDomainRoutes from './routes/internal-domains/internal-domains.js'
 import themeRoutes from './routes/themes/themes.js';
 import memoryRoutes from './routes/memories/memories.js';
 import threadRoutes from './routes/threads/threads.js';
+import newsRoutes from './routes/news/news.js';
 import provisioningRoutes from './routes/provisioning/provisioning.js';
 
 const config = getConfig();
@@ -122,6 +127,7 @@ const vendorsService = new VendorsService();
 const vendorProductsService = new VendorProductsService({ vendorsService });
 const accountDetailsService = new AccountDetailsService();
 const vendorHeatmapService = new VendorHeatmapService();
+const orgChartService = new OrgChartService();
 const importExportService = new ImportExportService({ contactsService, accountsService });
 const notesImportService = new NotesImportService({ meetingsService, accountsService, agentSettingsService });
 const calendarImportService = new CalendarImportService({ meetingsService, accountsService, contactsService, internalDomainsService });
@@ -132,12 +138,30 @@ const backupService = new BackupService();
 const themesService = new ThemesService();
 const memoriesService = new MemoriesService();
 const threadsService = new ThreadsService();
+const newsService = new NewsService({ accountsService, agentSettingsService });
 // Provisioning (homelab broker). The runtime factory makes the shared broker,
 // Postgres repos, and secrets resolver explicit. This API process also owns the
 // single DB-claim worker; MCP processes build a runtime for reads/enqueue only.
 const provisioningRuntime = createProvisioningRuntime({ userId: defaultUserId });
 const provisioningService = provisioningRuntime.service;
 const provisioningWorker = createProvisioningWorker(provisioningRuntime);
+
+// Recurring background tasks (starred-account news refresh, etc.). Durable and
+// multi-replica-safe via a Postgres claim table; only the API process runs it,
+// mirroring the provisioning worker. Register additional tasks here as needed.
+const scheduler = new Scheduler();
+scheduler.register({
+  name: 'account-news-refresh',
+  schedule: {
+    kind: 'daily',
+    hour: Number(process.env.NEWS_REFRESH_HOUR ?? 9),
+    minute: Number(process.env.NEWS_REFRESH_MINUTE ?? 0),
+    tz: process.env.NEWS_REFRESH_TZ || 'America/New_York',
+  },
+  handler: async () => {
+    await newsService.refreshAllFavorites();
+  },
+});
 
 fastify.decorate('searchService', searchService);
 
@@ -165,7 +189,9 @@ await fastify.register(swagger, {
       { name: 'vendors', description: 'Global catalog of vendors (Cisco, Palo Alto, …)' },
       { name: 'vendor-products', description: 'Global catalog of vendor products (firewalls, EDRs, SIEMs, …) used by account_details' },
       { name: 'account-details', description: 'Technical profile per account (firmographics + vendor products + notes)' },
+      { name: 'org-chart', description: 'Account-scoped reporting relationships between linked contacts' },
       { name: 'notes', description: 'Timestamped markdown notes attached to an account, contact, or opportunity' },
+      { name: 'news', description: 'Per-account news headlines (Google News RSS, ranked by the configured local LLM); manual refresh + a daily auto-refresh for starred (favorite) accounts' },
       { name: 'threads', description: 'Open workstreams per account, each with tasks (assignee + due date) and a contact pool' },
       { name: 'export', description: 'Markdown export' },
       { name: 'import-export', description: 'Portable JSON bundles for moving accounts between tenants' },
@@ -207,6 +233,7 @@ await fastify.register(async (api) => {
   await api.register(vendorRoutes, { vendorsService });
   await api.register(vendorProductRoutes, { vendorProductsService });
   await api.register(accountDetailsRoutes, { accountDetailsService, vendorHeatmapService });
+  await api.register(orgChartRoutes, { orgChartService });
   await api.register(importExportRoutes, { importExportService });
   await api.register(notesImportRoutes, { notesImportService });
   await api.register(calendarImportRoutes, { calendarImportService });
@@ -219,6 +246,7 @@ await fastify.register(async (api) => {
   await api.register(themeRoutes, { themesService });
   await api.register(memoryRoutes, { memoriesService });
   await api.register(threadRoutes, { threadsService });
+  await api.register(newsRoutes, { newsService });
   await api.register(healthRoutes);
   await api.register(agentRoutes, { agentSettingsService, memoriesService });
 }, { prefix: '/api' });
@@ -245,6 +273,7 @@ try {
 
 // Graceful shutdown
 async function shutdown() {
+  await scheduler.stop().catch(() => {});
   await provisioningWorker.stop().catch(() => {});
   await closeDb().catch(() => {});
   process.exit(0);
@@ -292,5 +321,11 @@ if (process.env.PROVISIONING_SEED_SECRETS_ON_BOOT !== 'false') {
 }
 
 await provisioningWorker.start();
+
+// Start the recurring-task scheduler (set SCHEDULER_ENABLED=false to disable,
+// e.g. in the API test harness so it never fires network/LLM work under test).
+if (process.env.SCHEDULER_ENABLED !== 'false') {
+  await scheduler.start();
+}
 
 await fastify.listen({ port: config.port, host: config.host });

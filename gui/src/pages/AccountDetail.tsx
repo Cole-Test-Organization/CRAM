@@ -7,8 +7,10 @@ import Button from '../components/Button';
 import SaveIndicator from '../components/SaveIndicator';
 import OverviewPanel from '../components/accounts/OverviewPanel';
 import TechnicalProfilePanel from '../components/accounts/TechnicalProfilePanel';
+import OrgChartPanel from '../components/accounts/OrgChartPanel';
 import NotesPanel from '../components/NotesPanel';
 import ThreadsPanel from '../components/accounts/ThreadsPanel';
+import NewsPanel from '../components/accounts/NewsPanel';
 import BackLink from '../components/BackLink';
 import MeetingsList from './MeetingsList';
 import ContactList from './ContactList';
@@ -140,6 +142,9 @@ export default function AccountDetail() {
                   <div class={tabClass(tab() === 'contacts')} onClick={() => setTab('contacts')}>
                     Contacts ({account().contacts?.length || 0})
                   </div>
+                  <div class={tabClass(tab() === 'org')} onClick={() => setTab('org')}>
+                    Org Chart
+                  </div>
                   <div class={tabClass(tab() === 'meetings')} onClick={() => setTab('meetings')}>
                     Meetings ({account().meetings?.length || 0})
                   </div>
@@ -150,6 +155,7 @@ export default function AccountDetail() {
                     Threads ({account().open_thread_count ?? 0})
                   </div>
                   <div class={tabClass(tab() === 'notes')} onClick={() => setTab('notes')}>Notes</div>
+                  <div class={tabClass(tab() === 'news')} onClick={() => setTab('news')}>News</div>
                 </div>
               </div>
 
@@ -179,6 +185,11 @@ export default function AccountDetail() {
                   onAfterCreate={() => refetch()}
                   onAfterDelete={() => refetch()}
                 />
+              </Show>
+
+              {/* === ORG CHART TAB === */}
+              <Show when={tab() === 'org'}>
+                <OrgChartPanel accountId={account().id} />
               </Show>
 
               {/* === MEETINGS TAB === */}
@@ -213,6 +224,11 @@ export default function AccountDetail() {
               {/* === NOTES TAB === */}
               <Show when={tab() === 'notes'}>
                 <NotesPanel target={{ account_id: account().id }} />
+              </Show>
+
+              {/* === NEWS TAB === */}
+              <Show when={tab() === 'news'}>
+                <NewsPanel accountId={account().id} />
               </Show>
 
             </>

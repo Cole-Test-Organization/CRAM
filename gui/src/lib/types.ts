@@ -183,6 +183,31 @@ export interface Contact {
   kind: 'account' | 'partner' | 'internal';
 }
 
+export interface OrgChartNode {
+  id: number;
+  full_name: string | null;
+  company: string | null;
+  title: string | null;
+  email: string | null;
+  phone: string | null;
+  linkedin: string | null;
+  kind: 'account' | 'partner' | 'internal';
+  reports_to_contact_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OrgChartEdge {
+  contact_id: number;
+  reports_to_contact_id: number;
+}
+
+export interface OrgChart {
+  account_id: number;
+  nodes: OrgChartNode[];
+  edges: OrgChartEdge[];
+}
+
 export interface MeetingSummary {
   id: number;
   account_id: number | null;
@@ -342,4 +367,31 @@ export interface SearchResults {
   };
   query: string;
   total: number;
+}
+
+export interface NewsArticle {
+  id: number;
+  title: string;
+  url: string;
+  source: string | null;
+  published_at: string | null;
+  rank: number;
+}
+
+export interface AccountNews {
+  account_id: number;
+  account_name: string;
+  favorite: boolean;
+  status: 'refreshing' | 'ok' | 'error' | null;
+  error: string | null;
+  last_fetched_at: string | null;
+  article_count: number;
+  ranking_prompt: string | null; // per-account override; null = use the global prompt
+  articles: NewsArticle[];
+}
+
+export interface NewsSettings {
+  ranking_prompt: string | null; // global override; null = built-in default applies
+  default_ranking_prompt: string;
+  updated_at: string | null;
 }

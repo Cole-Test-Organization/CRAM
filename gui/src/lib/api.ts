@@ -314,6 +314,17 @@ export const api = {
   getContacts: (accountId: number) =>
     get<any[]>(`/accounts/${accountId}/contacts`),
 
+  getOrgChart: (accountId: number) =>
+    get<import('./types').OrgChart>(`/accounts/${accountId}/org-chart`),
+
+  setOrgChartManager: (accountId: number, contactId: number, reportsToContactId: number | null) =>
+    patch<import('./types').OrgChart>(`/accounts/${accountId}/org-chart/contacts/${contactId}`, {
+      reports_to_contact_id: reportsToContactId,
+    }),
+
+  replaceOrgChart: (accountId: number, edges: import('./types').OrgChartEdge[]) =>
+    put<import('./types').OrgChart>(`/accounts/${accountId}/org-chart`, { edges }),
+
   createContact: (accountId: number, data: any) =>
     post<any>(`/accounts/${accountId}/contacts`, data),
 
@@ -791,6 +802,18 @@ export const api = {
     post<import('./types').Thread>(`/threads/${threadId}/contacts`, { contact_id: contactId }),
   unlinkThreadContact: (threadId: number, contactId: number) =>
     del<import('./types').Thread>(`/threads/${threadId}/contacts/${contactId}`),
+
+  // News (per-account Google News headlines, ranked by the configured local LLM)
+  getAccountNews: (accountId: number) =>
+    get<import('./types').AccountNews>(`/accounts/${accountId}/news`),
+  refreshAccountNews: (accountId: number) =>
+    post<{ account_id: number; status: string; already_running?: boolean }>(`/accounts/${accountId}/news/refresh`, {}),
+  patchAccountNewsPrompt: (accountId: number, ranking_prompt: string | null) =>
+    patch<import('./types').AccountNews>(`/accounts/${accountId}/news`, { ranking_prompt }),
+  getNewsSettings: () =>
+    get<import('./types').NewsSettings>('/news/settings'),
+  patchNewsSettings: (data: { ranking_prompt: string | null }) =>
+    patch<import('./types').NewsSettings>('/news/settings', data),
 
   // Agent provider config (per-user, server-persisted) — replaces the old
   // browser-localStorage state. Background workers read the same row so

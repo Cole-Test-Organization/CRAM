@@ -16,7 +16,7 @@ function stripTags(s: string): string {
   return String(s).replace(/<[^>]+>/g, '');
 }
 
-function decodeEntities(s: string): string {
+export function decodeEntities(s: string): string {
   return String(s)
     .replace(/&nbsp;|&#160;|&#xa0;/gi, ' ')
     .replace(/&amp;/gi, '&')

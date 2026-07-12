@@ -57,6 +57,10 @@ const serverEnv = {
   NODE_ENV: 'test',
   LOG_LEVEL: process.env.LOG_LEVEL || 'warn',
   TODOIST_ENABLED: 'false',
+  // No recurring background tasks under test — the scheduler would otherwise poll
+  // and could fire the daily news refresh (external Google News + local LLM).
+  // The scheduler is exercised directly in news.test.js instead.
+  SCHEDULER_ENABLED: 'false',
 };
 
 let apiProc = null;

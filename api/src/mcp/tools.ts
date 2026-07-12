@@ -17,6 +17,7 @@ import type { VendorsService } from '../services/vendors/vendors.js';
 import type { VendorProductsService } from '../services/vendors/vendor-products.js';
 import type { AccountDetailsService } from '../services/accounts/account-details.js';
 import type { VendorHeatmapService } from '../services/accounts/vendor-heatmap.js';
+import type { OrgChartService } from '../services/accounts/org-chart.js';
 import type { ImportExportService } from '../services/import-export/import-export.js';
 import type { NotesImportService } from '../services/notes/notes-import.js';
 import type { NotesService } from '../services/notes/notes.js';
@@ -26,6 +27,7 @@ import type { InternalDomainsService } from '../services/internal-domains/intern
 import type { AgentSettingsService } from '../services/agent/agent-settings.js';
 import type { MemoriesService } from '../services/memories/memories.js';
 import type { ThreadsService } from '../services/threads/threads.js';
+import type { NewsService } from '../services/news/news.js';
 import type { ProvisioningService } from '../services/provisioning/index.js';
 import type { MergeService } from '../services/merge/merge.js';
 
@@ -61,6 +63,7 @@ export interface Services {
   vendorProductsService: VendorProductsService;
   accountDetailsService: AccountDetailsService;
   vendorHeatmapService: VendorHeatmapService;
+  orgChartService: OrgChartService;
   importExportService: ImportExportService;
   notesImportService: NotesImportService;
   notesService: NotesService;
@@ -70,6 +73,7 @@ export interface Services {
   agentSettingsService: AgentSettingsService;
   memoriesService: MemoriesService;
   threadsService: ThreadsService;
+  newsService: NewsService;
   provisioningService: ProvisioningService;
   mergeService: MergeService;
 }
@@ -83,7 +87,7 @@ export type ResolveUserId = () => number | Promise<number>;
  * Until per-session auth lands it's a constant (the default user).
  */
 export function registerTools(server: McpServer, services: Services, resolveUserId: ResolveUserId) {
-  const { accountsService, contactsService, meetingsService, searchService, todoistService, exportService, outreachService, eventsService, opportunitiesService, productsService, productCategoriesService, vendorsService, vendorProductsService, accountDetailsService, vendorHeatmapService, importExportService, notesImportService, notesService, backupService, contactEnrichmentService, internalDomainsService, agentSettingsService, memoriesService, threadsService, provisioningService, mergeService } = services;
+  const { accountsService, contactsService, meetingsService, searchService, todoistService, exportService, outreachService, eventsService, opportunitiesService, productsService, productCategoriesService, vendorsService, vendorProductsService, accountDetailsService, vendorHeatmapService, orgChartService, importExportService, notesImportService, notesService, backupService, contactEnrichmentService, internalDomainsService, agentSettingsService, memoriesService, threadsService, newsService, provisioningService, mergeService } = services;
 
   const todoistDest = () => {
     const project = process.env.TODOIST_DEFAULT_PROJECT || 'Inbox';
@@ -417,6 +421,41 @@ export function registerTools(server: McpServer, services: Services, resolveUser
             return { jobs: contactEnrichmentService.listJobsForContacts([contact.id]) };
           }, { notFoundMsg: `Contact not found: id=${id}. Resolve via action="list" or "get_by_email" first.` });
         }
+        default:
+          return errorResponse(`Unknown action: ${action}`);
+      }
+    }
+  );
+
+  // ── org chart ────────────────────────────────────────────────────────
+
+  server.tool(
+    'org_chart',
+    'Manage account-scoped org charts. Contacts are global people and account links are many-to-many, so reporting relationships live on the account/contact membership, not the contact record. Actions: get (returns every external contact linked to the account as nodes plus reporting edges), set_manager (set one contact\'s manager, or pass reports_to_contact_id=null to make the contact a root), replace (replace the full edge set; contacts omitted from edges become roots). Only external account contacts participate; internal support-team contacts are excluded. Writes reject contacts not linked to the account, self-reports, duplicate managers, and cycles.',
+    {
+      action: z.enum(['get', 'set_manager', 'replace']),
+      account_id: z.number().describe('Account ID whose org chart is being managed.'),
+      contact_id: z.number().optional().describe('Contact ID to update for set_manager. Must be linked to account_id and not kind=internal.'),
+      reports_to_contact_id: z.number().nullable().optional().describe('Manager contact ID for set_manager; pass null to clear and make this contact a root.'),
+      edges: z.array(z.object({
+        contact_id: z.number(),
+        reports_to_contact_id: z.number(),
+      })).optional().describe('Full replacement edge set for replace. Contacts omitted from edges are roots.'),
+    },
+    async ({ action, account_id, contact_id, reports_to_contact_id, edges }) => {
+      const userId = await resolveUserId();
+      switch (action) {
+        case 'get':
+          if (!account_id) return errorResponse('get requires account_id. Resolve the account via the accounts tool first.');
+          return callService(() => orgChartService.getByAccountId(userId, account_id));
+        case 'set_manager':
+          if (!account_id || !contact_id) return errorResponse('set_manager requires account_id and contact_id.');
+          if (reports_to_contact_id === undefined) return errorResponse('set_manager requires reports_to_contact_id. Pass a contact id to set a manager, or null to make the contact a root.');
+          return callService(() => orgChartService.setManager(userId, account_id, contact_id, reports_to_contact_id));
+        case 'replace':
+          if (!account_id) return errorResponse('replace requires account_id.');
+          if (!Array.isArray(edges)) return errorResponse('replace requires edges: [{ contact_id, reports_to_contact_id }]. Pass [] to clear the chart.');
+          return callService(() => orgChartService.replace(userId, account_id, edges));
         default:
           return errorResponse(`Unknown action: ${action}`);
       }
@@ -1096,6 +1135,38 @@ export function registerTools(server: McpServer, services: Services, resolveUser
           return callService(() => accountDetailsService.delete(userId, account_id), { notFoundMsg: `No account_details row for account_id=${account_id} (already deleted, or never populated).` });
         case 'vendor_heatmap':
           return callService(() => vendorHeatmapService.getByAccountId(userId, account_id));
+        default:
+          return errorResponse(`Unknown action: ${action}`);
+      }
+    }
+  );
+
+  // ── news ──────────────────────────────────────────────────────────────
+
+  server.tool(
+    'news',
+    'Per-account news: Google News RSS headlines for the account\'s company name, ranked by the configured local LLM (order only — the model never rewrites content). Only headline + link + source + date are stored. Actions: get (stored ranked headlines + last-refresh status for an account_id), refresh (fetch + re-rank NOW — async; returns status "refreshing", then poll get until status is "ok"/"error"), get_settings (the global ranking prompt + built-in default), update_settings (set/clear the global ranking prompt), update_account_prompt (set/clear a per-account ranking-prompt override; null falls back to the global prompt). Refresh is manual; starred (favorite) accounts also auto-refresh once each morning.',
+    {
+      action: z.enum(['get', 'refresh', 'get_settings', 'update_settings', 'update_account_prompt']),
+      account_id: z.number().optional().describe('Account ID (required for get, refresh, update_account_prompt)'),
+      ranking_prompt: z.string().nullable().optional().describe('Ranking prompt text (for update_settings / update_account_prompt). Null or empty reverts to the fallback — the built-in default globally, or the global prompt for a per-account override.'),
+    },
+    async ({ action, account_id, ranking_prompt }) => {
+      const userId = await resolveUserId();
+      switch (action) {
+        case 'get':
+          if (!account_id) return errorResponse('get requires account_id.');
+          return callService(() => newsService.getNews(userId, account_id), { notFoundMsg: `Account not found: id=${account_id}.` });
+        case 'refresh':
+          if (!account_id) return errorResponse('refresh requires account_id.');
+          return callService(() => newsService.startRefresh(userId, account_id), { notFoundMsg: `Account not found: id=${account_id}.` });
+        case 'get_settings':
+          return callService(() => newsService.getSettings(userId));
+        case 'update_settings':
+          return callService(() => newsService.updateSettings(userId, { ranking_prompt }));
+        case 'update_account_prompt':
+          if (!account_id) return errorResponse('update_account_prompt requires account_id.');
+          return callService(() => newsService.updateAccountSettings(userId, account_id, { ranking_prompt }), { notFoundMsg: `Account not found: id=${account_id}.` });
         default:
           return errorResponse(`Unknown action: ${action}`);
       }

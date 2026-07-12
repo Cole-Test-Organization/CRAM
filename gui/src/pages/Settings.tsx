@@ -1,6 +1,7 @@
 import { createSignal, Show } from "solid-js";
 import AgentLLMSettings from "../components/settings/AgentLLMSettings";
 import SystemPromptSettings from "../components/settings/SystemPromptSettings";
+import NewsRankingSettings from "../components/settings/NewsRankingSettings";
 import InternalDomainsSettings from "../components/settings/InternalDomainsSettings";
 import BackupSettings from "../components/settings/BackupSettings";
 import ThemePicker from "../components/settings/ThemePicker";
@@ -42,6 +43,7 @@ export default function Settings() {
             <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
                 <AgentLLMSettings />
                 <SystemPromptSettings />
+                <NewsRankingSettings />
                 <MemoryManager />
                 <InternalDomainsSettings />
                 <BackupSettings flash={flash} />

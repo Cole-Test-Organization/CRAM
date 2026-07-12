@@ -70,6 +70,16 @@ services:
       # (Authorization / x-krisp-webhook-token) in the Krisp dashboard. Unset ⇒ the
       # endpoint accepts any caller (fine for ngrok testing). See krisp/README.md.
       - KRISP_WEBHOOK_TOKEN=${KRISP_WEBHOOK_TOKEN:-}
+      # News (per-account Google News headlines, LLM-ranked). Starred/favorite
+      # accounts auto-refresh daily at NEWS_REFRESH_HOUR:MINUTE in NEWS_REFRESH_TZ
+      # (defaults 09:00 America/New_York). SCHEDULER_ENABLED=false turns off ALL
+      # recurring background tasks; the remaining vars tune fetch/rank limits.
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
+      - NEWS_REFRESH_HOUR=${NEWS_REFRESH_HOUR:-9}
+      - NEWS_REFRESH_MINUTE=${NEWS_REFRESH_MINUTE:-0}
+      - NEWS_REFRESH_TZ=${NEWS_REFRESH_TZ:-America/New_York}
+      - NEWS_MAX_ARTICLES=${NEWS_MAX_ARTICLES:-40}
+      - NEWS_RANK_LLM_TIMEOUT_MS=${NEWS_RANK_LLM_TIMEOUT_MS:-120000}
       # In-container path the scheduled pg_dump writes to. Must live under the
       # /backups bind mount below — the host source of that mount is BACKUP_HOST_DIR.
       - BACKUP_DIR=${BACKUP_DIR:-/backups}
@@ -159,6 +169,13 @@ services:
       - TODOIST_DEFAULT_SECTION=${TODOIST_DEFAULT_SECTION:-}
       # Krisp webhook (optional). See app service above for semantics.
       - KRISP_WEBHOOK_TOKEN=${KRISP_WEBHOOK_TOKEN:-}
+      # News + scheduler (see app service above for semantics).
+      - SCHEDULER_ENABLED=${SCHEDULER_ENABLED:-true}
+      - NEWS_REFRESH_HOUR=${NEWS_REFRESH_HOUR:-9}
+      - NEWS_REFRESH_MINUTE=${NEWS_REFRESH_MINUTE:-0}
+      - NEWS_REFRESH_TZ=${NEWS_REFRESH_TZ:-America/New_York}
+      - NEWS_MAX_ARTICLES=${NEWS_MAX_ARTICLES:-40}
+      - NEWS_RANK_LLM_TIMEOUT_MS=${NEWS_RANK_LLM_TIMEOUT_MS:-120000}
       - BACKUP_DIR=${BACKUP_DIR:-/backups}
       # Provisioning broker — AES master key that decrypts the provisioning_secrets
       # table at deploy time. The secrets themselves live in Postgres, not here; set

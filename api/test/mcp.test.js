@@ -20,7 +20,7 @@ import { get } from './helpers.js';
 const EXPECTED_TOOLS = [
   'account_details', 'accounts', 'agent_settings', 'backup', 'contacts', 'events',
   'export_markdown', 'import_export', 'internal_domains', 'meetings', 'memories',
-  'merge', 'notes', 'notes_import', 'opportunities', 'outreach', 'product_categories',
+  'merge', 'news', 'notes', 'notes_import', 'opportunities', 'org_chart', 'outreach', 'product_categories',
   'products', 'provisioning', 'search', 'threads', 'vendor_products', 'vendors',
 ].sort();
 
@@ -66,6 +66,9 @@ describe('MCP — tool set + parity', () => {
     for (const a of ['list', 'create', 'update', 'delete', 'add_task', 'update_task', 'delete_task', 'link_contact', 'unlink_contact']) {
       assert.ok(actionsOf('threads').includes(a), `threads tool missing action "${a}"`);
     }
+    for (const a of ['get', 'set_manager', 'replace']) {
+      assert.ok(actionsOf('org_chart').includes(a), `org_chart tool missing action "${a}"`);
+    }
   });
 
   it('parity: the accounts status filter is reachable over MCP (5 partners)', async () => {
@@ -101,6 +104,7 @@ describe('MCP — wiring (every tool reaches its service)', () => {
       ['backup', { action: 'get_settings' }],
       ['notes', { action: 'list', account_id: ACME_ID }],
       ['account_details', { action: 'get', account_id: ACME_ID }],
+      ['org_chart', { action: 'get', account_id: ACME_ID }],
       ['threads', { action: 'list', account_id: ACME_ID }],
       ['provisioning', { action: 'list_deployments' }],
     ];

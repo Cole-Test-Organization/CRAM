@@ -20,9 +20,11 @@ import { VendorsService } from '../services/vendors/vendors.js';
 import { VendorProductsService } from '../services/vendors/vendor-products.js';
 import { AccountDetailsService } from '../services/accounts/account-details.js';
 import { VendorHeatmapService } from '../services/accounts/vendor-heatmap.js';
+import { OrgChartService } from '../services/accounts/org-chart.js';
 import { ImportExportService } from '../services/import-export/import-export.js';
 import { NotesImportService } from '../services/notes/notes-import.js';
 import { NotesService } from '../services/notes/notes.js';
+import { NewsService } from '../services/news/news.js';
 import { BackupService } from '../services/backup/backup.js';
 import { ContactEnrichmentService } from '../services/contacts/contact-enrichment.js';
 import { InternalDomainsService } from '../services/internal-domains/internal-domains.js';
@@ -90,6 +92,7 @@ const services: Services = {
   vendorProductsService: new VendorProductsService({ vendorsService }),
   accountDetailsService: new AccountDetailsService(),
   vendorHeatmapService: new VendorHeatmapService(),
+  orgChartService: new OrgChartService(),
   importExportService: new ImportExportService({ contactsService, accountsService }),
   notesImportService: new NotesImportService({ meetingsService, accountsService, agentSettingsService }),
   notesService: new NotesService(),
@@ -99,6 +102,7 @@ const services: Services = {
   agentSettingsService,
   memoriesService,
   threadsService: new ThreadsService(),
+  newsService: new NewsService({ accountsService, agentSettingsService }),
   // Enqueues/reads only — the api process (src/index.ts) runs the single job worker.
   provisioningService: provisioningRuntime.service,
   mergeService: new MergeService({ meetings: new MeetingMergeHandler({ meetingsService }) }),

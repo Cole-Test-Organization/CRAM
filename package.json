@@ -11,6 +11,7 @@
     "test:api": "bash dev/scripts/test/test-api.sh",
     "test:e2e": "bash dev/scripts/test/test-e2e.sh",
     "test:all": "npm test && npm run test:api",
+    "sync:provisioning-secrets": "bash scripts/sync-provisioning-secrets.sh",
     "prepare": "husky"
   },
   "devDependencies": {

@@ -4,8 +4,8 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-06-30T02:27:07.343Z
-- **Tables:** 35
+- **Generated:** 2026-07-12T20:47:53.502Z
+- **Tables:** 40
 - **Enums:** 0
 - **Views:** 0
 
@@ -15,8 +15,11 @@
 
 **Tables**
 
+- [`account_contact_reporting`](#account_contact_reporting)
 - [`account_contacts`](#account_contacts)
 - [`account_details`](#account_details)
+- [`account_news`](#account_news)
+- [`account_news_settings`](#account_news_settings)
 - [`account_partners`](#account_partners)
 - [`accounts`](#accounts)
 - [`agent_sessions`](#agent_sessions)
@@ -39,6 +42,7 @@
 - [`provisioning_jobs`](#provisioning_jobs)
 - [`provisioning_secrets`](#provisioning_secrets)
 - [`resource_profiles`](#resource_profiles)
+- [`scheduled_task_runs`](#scheduled_task_runs)
 - [`tasks`](#tasks)
 - [`themes`](#themes)
 - [`thread_contacts`](#thread_contacts)
@@ -46,6 +50,7 @@
 - [`user_agent_settings`](#user_agent_settings)
 - [`user_internal_domains`](#user_internal_domains)
 - [`user_memories`](#user_memories)
+- [`user_news_settings`](#user_news_settings)
 - [`user_theme_settings`](#user_theme_settings)
 - [`users`](#users)
 - [`vendor_products`](#vendor_products)
@@ -54,6 +59,39 @@
 ---
 
 ## Tables
+
+### `account_contact_reporting`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `account_id` | `bigint` | NO | — | **PK** |
+| `contact_id` | `bigint` | NO | — | **PK** |
+| `reports_to_contact_id` | `bigint` | NO | — |  |
+| `created_at` | `timestamp with time zone` | NO | `now()` |  |
+| `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `account_id`, `contact_id`
+
+**Foreign keys:**
+
+- `account_id`, `contact_id` → `public.account_contacts`(`account_id`, `contact_id`) — ON DELETE CASCADE
+- `account_id`, `reports_to_contact_id` → `public.account_contacts`(`account_id`, `contact_id`) — ON DELETE CASCADE
+
+**Check constraints:**
+
+- `account_contact_reporting_check`: `CHECK ((contact_id <> reports_to_contact_id))`
+
+**Indexes:**
+
+- `idx_acr_manager` — `CREATE INDEX idx_acr_manager ON public.account_contact_reporting USING btree (account_id, reports_to_contact_id)`
+
+**Row-Level Security:** enabled (forced)
+
+- `account_contact_reporting_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(EXISTS ( SELECT 1    FROM accounts a   WHERE (a.id = account_contact_reporting.account_id)))`
+  - WITH CHECK: `((EXISTS ( SELECT 1    FROM accounts a   WHERE (a.id = account_contact_reporting.account_id))) AND (EXISTS ( SELECT 1    FROM account_contacts ac   WHERE ((ac.account_id = account_contact_reporting.account_id) AND (ac.contact_id = account_contact_reporting.contact_id)))) AND (EXISTS ( SELECT 1    FROM account_contacts ac   WHERE ((ac.account_id = account_contact_reporting.account_id) AND (ac.contact_id = account_contact_reporting.reports_to_contact_id)))))`
+
+---
 
 ### `account_contacts`
 
@@ -160,6 +198,73 @@
 - `account_details_isolation` — ALL, PERMISSIVE, roles: public
   - USING: `(EXISTS ( SELECT 1    FROM accounts a   WHERE (a.id = account_details.account_id)))`
   - WITH CHECK: `(EXISTS ( SELECT 1    FROM accounts a   WHERE (a.id = account_details.account_id)))`
+
+---
+
+### `account_news`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `bigint` | NO | `nextval('account_news_id_seq'::regclass)` | **PK** |
+| `user_id` | `bigint` | NO | — |  |
+| `account_id` | `bigint` | NO | — |  |
+| `title` | `text` | NO | — |  |
+| `url` | `text` | NO | — |  |
+| `source` | `text` | YES | — |  |
+| `published_at` | `timestamp with time zone` | YES | — |  |
+| `rank` | `integer` | NO | — |  |
+| `created_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `id`
+
+**Foreign keys:**
+
+- `account_id` → `public.accounts`(`id`) — ON DELETE CASCADE
+- `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Indexes:**
+
+- `idx_account_news_feed` — `CREATE INDEX idx_account_news_feed ON public.account_news USING btree (account_id, rank)`
+- `idx_account_news_user` — `CREATE INDEX idx_account_news_user ON public.account_news USING btree (user_id)`
+
+**Row-Level Security:** enabled (forced)
+
+- `account_news_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+  - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+
+---
+
+### `account_news_settings`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `account_id` | `bigint` | NO | — | **PK** |
+| `user_id` | `bigint` | NO | — |  |
+| `ranking_prompt` | `text` | YES | — |  |
+| `last_status` | `text` | YES | — |  |
+| `last_error` | `text` | YES | — |  |
+| `last_fetched_at` | `timestamp with time zone` | YES | — |  |
+| `article_count` | `integer` | NO | `0` |  |
+| `created_at` | `timestamp with time zone` | NO | `now()` |  |
+| `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `account_id`
+
+**Foreign keys:**
+
+- `account_id` → `public.accounts`(`id`) — ON DELETE CASCADE
+- `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Indexes:**
+
+- `idx_account_news_settings_user` — `CREATE INDEX idx_account_news_settings_user ON public.account_news_settings USING btree (user_id)`
+
+**Row-Level Security:** enabled (forced)
+
+- `account_news_settings_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+  - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
 
 ---
 
@@ -992,6 +1097,32 @@
 
 ---
 
+### `scheduled_task_runs`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `bigint` | NO | `nextval('scheduled_task_runs_id_seq'::regclass)` | **PK** |
+| `task_name` | `text` | NO | — |  |
+| `period_key` | `text` | NO | — |  |
+| `status` | `text` | NO | `'running'::text` |  |
+| `started_at` | `timestamp with time zone` | NO | `now()` |  |
+| `finished_at` | `timestamp with time zone` | YES | — |  |
+| `error` | `text` | YES | — |  |
+| `detail` | `jsonb` | YES | — |  |
+
+**Primary key:** `id`
+
+**Unique constraints:**
+
+- `scheduled_task_runs_once`: (`task_name`, `period_key`)
+
+**Indexes:**
+
+- `idx_scheduled_task_runs_recent` — `CREATE INDEX idx_scheduled_task_runs_recent ON public.scheduled_task_runs USING btree (task_name, started_at DESC)`
+- `scheduled_task_runs_once` *(unique)* — `CREATE UNIQUE INDEX scheduled_task_runs_once ON public.scheduled_task_runs USING btree (task_name, period_key)`
+
+---
+
 ### `tasks`
 
 | Column | Type | Nullable | Default | Notes |
@@ -1214,6 +1345,28 @@
 **Row-Level Security:** enabled (forced)
 
 - `user_memories_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+  - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+
+---
+
+### `user_news_settings`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `user_id` | `bigint` | NO | — | **PK** |
+| `ranking_prompt` | `text` | YES | — |  |
+| `updated_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `user_id`
+
+**Foreign keys:**
+
+- `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Row-Level Security:** enabled (forced)
+
+- `user_news_settings_isolation` — ALL, PERMISSIVE, roles: public
   - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
   - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
 
