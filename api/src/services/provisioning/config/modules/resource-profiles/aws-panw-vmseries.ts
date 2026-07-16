@@ -206,6 +206,10 @@ const resourceProfile = {
           }
         ]
       },
+      "scm_folder": {
+        "path": "resource.managementServer.folder",
+        "default": ""
+      },
       "device_cert_pin_id": {
         "first": [
           {

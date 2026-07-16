@@ -138,7 +138,9 @@ export default function Layout(props: ParentProps) {
                     {link("/settings", "Settings")}
                 </nav>
             </aside>
-            <main class="flex-1 py-5 px-4 md:ml-sidebar md:py-8 md:px-10">
+            {/* min-w-0: let wide content (org chart canvas, tables) scroll inside
+                its own overflow container instead of stretching the page. */}
+            <main class="flex-1 min-w-0 py-5 px-4 md:ml-sidebar md:py-8 md:px-10">
                 {props.children}
             </main>
         </div>

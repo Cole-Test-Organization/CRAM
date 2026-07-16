@@ -44,6 +44,11 @@ locals {
     "vm-auth-key=${var.vm_auth_key}",
   ]) : []
 
+  scm_bootstrap_userdata = var.management_server_mode == "scm" ? compact([
+    "panorama-server=cloud",
+    "dgname=${var.scm_folder}",
+  ]) : []
+
   device_certificate_userdata = var.device_cert_pin_id == "" || var.device_cert_pin_value == "" ? [] : [
     "vm-series-auto-registration-pin-id=${var.device_cert_pin_id}",
     "vm-series-auto-registration-pin-value=${var.device_cert_pin_value}",
@@ -62,6 +67,7 @@ locals {
       "authcodes=${var.auth_code}",
     ],
     local.panorama_bootstrap_userdata,
+    local.scm_bootstrap_userdata,
     local.device_certificate_userdata,
   ))
 

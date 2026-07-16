@@ -422,6 +422,7 @@ export class ResourceBroker {
             configRef,
             options.params,
         );
+        const runParams = withDeploymentInputDefaults(deployment, options.params);
 
         await validateDeploymentReferences(deployment, this.config);
         if (!deployment.steps?.length) {
@@ -439,7 +440,7 @@ export class ResourceBroker {
                 await this.up(configRef, log, target, {
                     skipActiveJobCheck: true,
                     skipReferenceCheck: true,
-                    params: options.params,
+                    params: runParams,
                 });
             }
             return;
@@ -447,8 +448,8 @@ export class ResourceBroker {
 
         for (const step of deployment.steps) {
             const stepParams =
-                options.params || step.params
-                    ? { ...(options.params ?? {}), ...(step.params ?? {}) }
+                runParams || step.params
+                    ? { ...(runParams ?? {}), ...(step.params ?? {}) }
                     : undefined;
             const expected = step.when?.equals ?? true;
             const shouldRunStep =
@@ -1081,6 +1082,19 @@ function resourceMatchesTarget(
         targets.has(resource.hostname) ||
         Boolean(resource.name && targets.has(resource.name))
     );
+}
+
+/** Apply declared launch-input defaults for API/MCP callers that omit optional params. */
+function withDeploymentInputDefaults(
+    deployment: DeploymentConfig,
+    params?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+    const defaults: Record<string, unknown> = {};
+    for (const input of deployment.inputs ?? []) {
+        if (input.default !== undefined) defaults[input.name] = input.default;
+    }
+    if (!Object.keys(defaults).length && !params) return undefined;
+    return { ...defaults, ...(params ?? {}) };
 }
 
 function isProvisionStepAction(action: string): boolean {

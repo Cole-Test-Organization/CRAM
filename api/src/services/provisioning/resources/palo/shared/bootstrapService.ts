@@ -300,6 +300,12 @@ export class PanwBootstrapService {
       }
     }
     const vmLicense = await waitForLicensedFirewall(client, resource, settings, log);
+    const scmFolder = resource.managementServer.mode === "scm"
+      ? resource.managementServer.folder
+      : null;
+    if (scmFolder) {
+      await waitForScmEnrollment(client, resource.hostname, scmFolder, settings, log);
+    }
     let serial: string | null = null;
     try {
       serial = (await client.showSystemInfo()).serial ?? null;
@@ -307,7 +313,13 @@ export class PanwBootstrapService {
       // Serial is a convenience for delicense/reporting; failing to read it must
       // not fail bootstrap. Deactivation reads it live again at teardown.
     }
-    return { managementAddress, vmLicense, serial };
+    return {
+      managementAddress,
+      vmLicense,
+      serial,
+      scmFolder,
+      scmConnected: scmFolder ? true : null,
+    };
   }
 
   async applyFirewallConfigAddOns(
@@ -777,6 +789,38 @@ async function waitForLicensedFirewall(
   }
 
   throw new Error(`Timed out waiting for VM-Series license on ${resource.hostname}`);
+}
+
+async function waitForScmEnrollment(
+  client: PanosApiClient,
+  hostname: string,
+  folder: string,
+  settings: ResolvedBootstrapSettings,
+  log: LogFn,
+): Promise<void> {
+  const deadline = Date.now() + settings.readinessTimeoutMs;
+  let lastError: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      const status = await client.showPanoramaStatus();
+      if (status.connected) {
+        log(
+          `Strata Cloud Manager enrollment verified for ${hostname}` +
+            ` (folder ${folder}${status.server ? `, server ${status.server}` : ""})`,
+        );
+        return;
+      }
+      lastError = new Error("PAN-OS reports cloud management disconnected");
+      log(`Strata Cloud Manager enrollment for ${hostname} is still pending (folder ${folder})`);
+    } catch (error) {
+      lastError = error;
+      log(`Could not read Strata Cloud Manager enrollment status for ${hostname}: ${errorMessage(error)}`);
+    }
+    await sleep(30_000);
+  }
+  throw new Error(
+    `Timed out waiting for ${hostname} to enroll in Strata Cloud Manager folder ${folder}: ${errorMessage(lastError)}`,
+  );
 }
 
 function resolveBootstrapSettings(config: PanosBootstrapConfig | undefined): ResolvedBootstrapSettings {

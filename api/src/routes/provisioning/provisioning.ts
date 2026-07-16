@@ -301,7 +301,7 @@ export default async function provisioningRoutes(
   // (isolated Terraform workspaces + cloud names), then enqueue its deploy. Returns
   // the queued job whose `deployment` is the new instance slug.
   fastify.post<{ Params: { id: string }; Body: { name: string; params?: Record<string, unknown> } }>('/provisioning/deployments/:id/instances', {
-    schema: { description: 'Create and deploy a named instance of a template deployment. Body `name` is the operator label (slugified into a unique deployment id). Returns the queued deploy job; its `deployment` field is the new instance slug.', tags: [TAG], params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } }, body: { type: 'object', required: ['name'], properties: { name: { type: 'string', minLength: 1 }, params: { type: 'object', additionalProperties: true } } } },
+    schema: { description: 'Create and deploy a named instance of a template deployment. Body `name` is the operator label (slugified into a unique deployment id); `params` supplies the template’s declared launch inputs and is applied to the cloned resource configuration before deployment. Returns the queued deploy job; its `deployment` field is the new instance slug.', tags: [TAG], params: { type: 'object', required: ['id'], properties: { id: { type: 'string' } } }, body: { type: 'object', required: ['name'], properties: { name: { type: 'string', minLength: 1 }, params: { type: 'object', additionalProperties: true } } } },
   }, async (request, reply) => {
     try { reply.code(202); return await provisioningService.createInstance(request.params.id, { name: request.body.name, params: request.body?.params }); }
     catch (err) { return fail(reply, err); }

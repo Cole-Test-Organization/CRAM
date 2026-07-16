@@ -191,6 +191,8 @@ export class VmSeriesResourceAdapter implements ResourceAdapter<PanwVmseriesReso
         ...record.panos,
         managementAddress: result.managementAddress,
         vmLicense: result.vmLicense,
+        scmFolder: result.scmFolder,
+        scmConnected: result.scmConnected,
       },
     };
   }

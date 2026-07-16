@@ -76,10 +76,25 @@ export function renderInitCfg(config: PanwVmseriesConfig): string {
   if (config.management.dnsPrimary) lines.push(`dns-primary=${config.management.dnsPrimary}`);
   if (config.management.dnsSecondary) lines.push(`dns-secondary=${config.management.dnsSecondary}`);
 
+  const pinId = resolveOptionalSecret(
+    config.deviceCertificate?.pinId,
+    config.deviceCertificate?.pinIdEnv,
+  );
+  const pinValue = resolveOptionalSecret(
+    config.deviceCertificate?.pinValue,
+    config.deviceCertificate?.pinValueEnv,
+  );
+
   if (config.managementServer.mode === "none") {
     // No Panorama/SCM bootstrap for local-only bring-up and licensing tests.
   } else if (config.managementServer.mode === "scm") {
     lines.push("panorama-server=cloud");
+    lines.push(`dgname=${config.managementServer.folder}`);
+    if (!pinId || !pinValue) {
+      throw new Error(
+        "Strata Cloud Manager bootstrap requires both VM-Series device certificate registration PIN values.",
+      );
+    }
   } else {
     lines.push(`panorama-server=${resolvedBootstrapString(config.managementServer.panoramaServer, "panoramaServer")}`);
     if (config.managementServer.panoramaServer2) {
@@ -100,14 +115,6 @@ export function renderInitCfg(config: PanwVmseriesConfig): string {
     }
   }
 
-  const pinId = resolveOptionalSecret(
-    config.deviceCertificate?.pinId,
-    config.deviceCertificate?.pinIdEnv,
-  );
-  const pinValue = resolveOptionalSecret(
-    config.deviceCertificate?.pinValue,
-    config.deviceCertificate?.pinValueEnv,
-  );
   if (pinId && pinValue) {
     lines.push(`vm-series-auto-registration-pin-id=${pinId}`);
     lines.push(`vm-series-auto-registration-pin-value=${pinValue}`);

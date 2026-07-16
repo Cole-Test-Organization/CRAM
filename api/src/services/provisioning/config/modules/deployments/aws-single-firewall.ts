@@ -8,6 +8,26 @@ const deployment = {
     "vpcCidr": "10.120.0.0/16",
     "panosVersionMajor": "11.2"
   },
+  "inputs": [
+    {
+      "name": "managementMode",
+      "label": "Firewall management",
+      "description": "Direct leaves the firewall locally managed. Strata Cloud Manager enrolls it on first boot and waits for cloud connection.",
+      "type": "string",
+      "default": "direct",
+      "options": [
+        { "label": "Direct / standalone", "value": "direct" },
+        { "label": "Strata Cloud Manager", "value": "scm" }
+      ]
+    },
+    {
+      "name": "scmFolder",
+      "label": "Strata Cloud Manager folder",
+      "description": "Required only for Strata Cloud Manager. This is the Cloud Management folder where the firewall should enroll.",
+      "type": "string",
+      "default": ""
+    }
+  ],
   "steps": [
     {
       "name": "aws-network-up",
@@ -41,6 +61,10 @@ const deployment = {
       ],
       "params": {
         "addOn": "internet-egress"
+      },
+      "when": {
+        "param": "managementMode",
+        "equals": "direct"
       },
       "description": "VM-Series adapter applies the standalone trust-to-internet baseline XML."
     },

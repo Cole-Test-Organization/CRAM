@@ -40,10 +40,19 @@ interface TemplateRow {
   template_name: string | null;
 }
 
+interface TemplateResourceRow {
+  ordinal: number;
+  kind: string;
+  name: string | null;
+  hostname: string;
+  terraform_profile: string | null;
+  config: Record<string, unknown>;
+}
+
 export async function createDeploymentInstance(
   userId: number,
   templateSlug: string,
-  input: CreateInstanceInput,
+  input: CreateInstanceInput & { params?: Record<string, unknown> | null },
 ): Promise<CreateInstanceResult> {
   const displayName = input.name?.trim();
   if (!displayName) throw httpError(400, "instance name is required");
@@ -63,6 +72,17 @@ export async function createDeploymentInstance(
     // Record the *original* template even when cloning from another instance.
     const templateOrigin = templateDeployment.template_name ?? templateDeployment.name;
     const providerConfig = { ...(templateDeployment.provider_config ?? {}), projectName: slug };
+    const templateResources = await client.query<TemplateResourceRow>(
+      `SELECT ordinal, kind, name, hostname, terraform_profile, config
+         FROM deployment_resources WHERE deployment_id = $1 ORDER BY ordinal, id`,
+      [templateDeployment.id],
+    );
+    const resources = applyLaunchInputs(templateOrigin, templateResources.rows, input.params);
+    const instanceInputs = applyInstanceInputDefaults(
+      templateOrigin,
+      templateDeployment.inputs,
+      input.params,
+    );
 
     const insertedDeploymentResult = await client.query<{ id: number }>(
       `INSERT INTO deployments
@@ -75,7 +95,7 @@ export async function createDeploymentInstance(
         templateDeployment.provider_type,
         templateDeployment.provider_profile,
         JSON.stringify(providerConfig),
-        JSON.stringify(templateDeployment.inputs ?? []),
+        JSON.stringify(instanceInputs),
         JSON.stringify(templateDeployment.steps ?? []),
         templateOrigin,
         displayName,
@@ -83,15 +103,96 @@ export async function createDeploymentInstance(
     );
     const instanceDeploymentId = insertedDeploymentResult.rows[0].id;
 
-    await client.query(
-      `INSERT INTO deployment_resources (deployment_id, ordinal, kind, name, hostname, terraform_profile, config)
-       SELECT $1, ordinal, kind, name, hostname, terraform_profile, config
-         FROM deployment_resources WHERE deployment_id = $2`,
-      [instanceDeploymentId, templateDeployment.id],
-    );
+    for (const resource of resources) {
+      await client.query(
+        `INSERT INTO deployment_resources (deployment_id, ordinal, kind, name, hostname, terraform_profile, config)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+        [
+          instanceDeploymentId,
+          resource.ordinal,
+          resource.kind,
+          resource.name,
+          resource.hostname,
+          resource.terraform_profile,
+          JSON.stringify(resource.config),
+        ],
+      );
+    }
 
     return { slug, displayName, templateName: templateOrigin };
   });
+}
+
+/**
+ * Launch inputs describe the desired instance, not just an optional workflow step.
+ * Keep the template immutable and apply the selected management target to its cloned
+ * VM-Series resource before the deploy job is queued.
+ */
+function applyLaunchInputs(
+  templateName: string,
+  resources: TemplateResourceRow[],
+  params: Record<string, unknown> | null | undefined,
+): TemplateResourceRow[] {
+  if (templateName !== "aws-single-firewall") return resources;
+
+  const { managementMode, folder } = resolveSingleFirewallManagement(params);
+
+  let changed = false;
+  const next = resources.map((resource) => {
+    if (resource.kind !== "panw-vmseries") return resource;
+    changed = true;
+    return {
+      ...resource,
+      config: {
+        ...resource.config,
+        managementServer: managementMode === "scm"
+          ? { mode: "scm", folder }
+          : { mode: "none" },
+      },
+    };
+  });
+
+  if (!changed) {
+    throw httpError(400, `template "${templateName}" has no VM-Series resource to configure`);
+  }
+  return next;
+}
+
+/** Preserve selected launch inputs on the clone, so a later deploy uses the same mode. */
+function applyInstanceInputDefaults(
+  templateName: string,
+  rawInputs: unknown,
+  params: Record<string, unknown> | null | undefined,
+): unknown[] {
+  const inputs = Array.isArray(rawInputs) ? rawInputs : [];
+  if (templateName !== "aws-single-firewall") return inputs;
+
+  const { managementMode, folder } = resolveSingleFirewallManagement(params);
+  return inputs.map((input) => {
+    if (!isObject(input) || typeof input.name !== "string") return input;
+    if (input.name === "managementMode") return { ...input, default: managementMode };
+    if (input.name === "scmFolder") return { ...input, default: folder };
+    return input;
+  });
+}
+
+function resolveSingleFirewallManagement(
+  params: Record<string, unknown> | null | undefined,
+): { managementMode: "direct" | "scm"; folder: string } {
+  const managementMode = params?.managementMode ?? "direct";
+  if (managementMode !== "direct" && managementMode !== "scm") {
+    throw httpError(400, 'managementMode must be "direct" or "scm"');
+  }
+
+  const folder = typeof params?.scmFolder === "string" ? params.scmFolder.trim() : "";
+  if (managementMode === "scm" && !folder) {
+    throw httpError(400, "scmFolder is required when managementMode is scm");
+  }
+  return { managementMode, folder };
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export async function deleteDeploymentInstance(userId: number, slug: string): Promise<{ deleted: boolean }> {

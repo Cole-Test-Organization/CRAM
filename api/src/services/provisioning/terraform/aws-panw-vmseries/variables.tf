@@ -146,18 +146,39 @@ variable "vm_auth_key" {
   sensitive   = true
 }
 
+variable "scm_folder" {
+  description = "Strata Cloud Manager folder for bootstrap when management_server_mode is scm."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.management_server_mode != "scm" || trimspace(var.scm_folder) != ""
+    error_message = "scm_folder is required when management_server_mode is scm."
+  }
+}
+
 variable "device_cert_pin_id" {
-  description = "Optional CSP device certificate registration PIN ID."
+  description = "CSP device certificate registration PIN ID; required for Strata Cloud Manager bootstrap."
   type        = string
   default     = ""
   sensitive   = true
+
+  validation {
+    condition     = var.management_server_mode != "scm" || trimspace(var.device_cert_pin_id) != ""
+    error_message = "device_cert_pin_id is required when management_server_mode is scm."
+  }
 }
 
 variable "device_cert_pin_value" {
-  description = "Optional CSP device certificate registration PIN value."
+  description = "CSP device certificate registration PIN value; required for Strata Cloud Manager bootstrap."
   type        = string
   default     = ""
   sensitive   = true
+
+  validation {
+    condition     = var.management_server_mode != "scm" || trimspace(var.device_cert_pin_value) != ""
+    error_message = "device_cert_pin_value is required when management_server_mode is scm."
+  }
 }
 
 variable "role" {

@@ -220,9 +220,13 @@ function deploymentInputs(
   declared: DeploymentInputConfig[] | undefined,
   steps: DeploymentStepConfig[],
 ): DeploymentInput[] {
+  const declaredValues = declaredInputs(declared);
+  const declaredNames = new Set(declaredValues.map((input) => input.name));
   return [
-    ...declaredInputs(declared),
-    ...inferInputs(steps),
+    ...declaredValues,
+    // A declared input can also gate a step. Keep its labels/options/default in
+    // discovery rather than rendering a second, bare inferred control.
+    ...inferInputs(steps).filter((input) => !declaredNames.has(input.name)),
   ];
 }
 

@@ -252,7 +252,7 @@ export class ProvisioningService {
         const instance = await createDeploymentInstance(
             this.userId,
             templateSlug,
-            { name: input.name },
+            { name: input.name, params: input.params },
         );
         return this.enqueueJob({
             kind: "deploy",

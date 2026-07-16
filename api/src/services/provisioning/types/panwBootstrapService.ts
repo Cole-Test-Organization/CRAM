@@ -52,6 +52,8 @@ export interface FirewallBootstrapResult {
   managementAddress: string;
   vmLicense?: string | null;
   serial?: string | null;
+  scmFolder?: string | null;
+  scmConnected?: boolean | null;
 }
 
 export interface FirewallDeactivationResult {

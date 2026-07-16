@@ -2,6 +2,7 @@ import https from "node:https";
 import type {
     ConnectedDevice,
     PanosApiClientOptions,
+    PanoramaConnectionStatus,
     SystemInfo,
     VmAuthKeyResult,
 } from "../../../types/panosClient.js";
@@ -171,6 +172,23 @@ export class PanosApiClient {
         }
 
         return [...devicesBySerial.values()];
+    }
+
+    async showPanoramaStatus(): Promise<PanoramaConnectionStatus> {
+        const body = await this.op(
+            "<show><panorama-status></panorama-status></show>",
+        );
+        const connected =
+            xmlText(body, "connected") ??
+            textMatch(body, /\bconnected\s*:\s*(yes|no|true|false)\b/i);
+        const server =
+            xmlText(body, "panorama-server") ??
+            xmlText(body, "server") ??
+            textMatch(body, /\bserver\s*:\s*([^\n<]+)/i);
+        return {
+            connected: /^(yes|true|connected)$/i.test(connected ?? ""),
+            server,
+        };
     }
 
     async ensureTemplate(templateName: string): Promise<void> {

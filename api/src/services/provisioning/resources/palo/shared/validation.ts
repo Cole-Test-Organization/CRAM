@@ -4,7 +4,7 @@ import type {
 } from "../../../types/index.js";
 
 export function validatePanwVmseriesCommon(
-  config: Pick<PanwVmseriesConfig, "hostname" | "license" | "management" | "managementServer">,
+  config: Pick<PanwVmseriesConfig, "hostname" | "license" | "management" | "managementServer" | "deviceCertificate">,
   prefix: string,
 ): void {
   if (!config.hostname) throw new Error(`${prefix} hostname is required`);
@@ -67,6 +67,24 @@ export function validatePanwVmseriesCommon(
     }
     if (config.managementServer.deviceGroup && isPlaceholder(config.managementServer.deviceGroup)) {
       throw new Error(`${prefix} managementServer.deviceGroup still has a placeholder value`);
+    }
+  } else if (config.managementServer.mode === "scm") {
+    const folder = config.managementServer.folder?.trim();
+    if (!folder) {
+      throw new Error(`${prefix} managementServer.folder is required for Strata Cloud Manager mode`);
+    }
+    if (isPlaceholder(folder)) {
+      throw new Error(`${prefix} managementServer.folder still has a placeholder value`);
+    }
+    if (!config.deviceCertificate?.pinId && !config.deviceCertificate?.pinIdEnv) {
+      throw new Error(
+        `${prefix} deviceCertificate.pinId or deviceCertificate.pinIdEnv is required for Strata Cloud Manager mode`,
+      );
+    }
+    if (!config.deviceCertificate?.pinValue && !config.deviceCertificate?.pinValueEnv) {
+      throw new Error(
+        `${prefix} deviceCertificate.pinValue or deviceCertificate.pinValueEnv is required for Strata Cloud Manager mode`,
+      );
     }
   }
 }

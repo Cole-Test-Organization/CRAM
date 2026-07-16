@@ -11,8 +11,9 @@ import { PanwBootstrapService } from "./bootstrapService.js";
  * this point in teardown.
  *
  * A failed/skipped deactivation is a hard error by default so credits are never
- * silently orphaned. The deployment's `destroy.allowWithoutDelicense` switch is
- * honored only when PANW_ALLOW_DESTROY_WITHOUT_DELICENSE=true is also set.
+ * silently orphaned. A deployment must explicitly opt into the lab-only
+ * `destroy.allowWithoutDelicense` escape hatch before teardown can continue
+ * without a confirmed deactivation.
  *
  * Returns true when it is safe to continue because the firewall deactivated its
  * license or reported that no active VM-Series license remained.
@@ -24,9 +25,7 @@ export async function deactivateLicenseIfPossible(
   log: LogFn,
   bootstrap: PanwBootstrapService = new PanwBootstrapService(),
 ): Promise<boolean> {
-  const allowWithout =
-    config.destroy?.allowWithoutDelicense === true &&
-    process.env.PANW_ALLOW_DESTROY_WITHOUT_DELICENSE === "true";
+  const allowWithout = config.destroy?.allowWithoutDelicense === true;
 
   if (!record.authCode) {
     const message = "no auth code is recorded for this firewall";

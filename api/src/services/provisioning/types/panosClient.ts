@@ -27,3 +27,8 @@ export interface ConnectedDevice {
   hostname?: string | null;
   connected?: string | null;
 }
+
+export interface PanoramaConnectionStatus {
+  connected: boolean;
+  server?: string | null;
+}

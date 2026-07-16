@@ -26,6 +26,8 @@ export interface ResourceRecord {
     vmAuthKey?: string | null;
     vmAuthKeyExpiresAt?: string | null;
     vmLicense?: string | null;
+    scmFolder?: string | null;
+    scmConnected?: boolean | null;
     connectedDeviceCount?: number | null;
     deviceGroup?: string | null;
     template?: string | null;

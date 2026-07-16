@@ -85,7 +85,8 @@ export interface PanwVmseriesConfig {
       }
     | {
         mode: "scm";
-        folder?: string | null;
+        /** Strata Cloud Manager folder. PAN-OS consumes this as `dgname` at first boot. */
+        folder: string;
       }
     | {
         mode: "none";
