@@ -52,6 +52,24 @@ function normalizeKind(kind: string | null | undefined): string | undefined {
   return kind;
 }
 
+// Email is a nullable identity key. Keep one canonical representation at every
+// write boundary so the service lookup and the DB uniqueness index agree.
+function normalizeContactEmail(email: string | null | undefined): string | null | undefined {
+  if (email === undefined) return undefined;
+  if (email === null) return null;
+  return email.trim().toLowerCase() || null;
+}
+
+function normalizeContactData(data: ContactData): ContactData {
+  if (!data || data.email === undefined) return data;
+  return { ...data, email: normalizeContactEmail(data.email) };
+}
+
+function isContactEmailUniqueViolation(err: unknown): boolean {
+  const e = err as { code?: string; constraint?: string };
+  return e?.code === '23505' && e?.constraint === 'contacts_user_email_normalized_uniq';
+}
+
 export class ContactsService {
   accountsService: AccountsService | null;
   internalDomainsService: InternalDomainsService | null;
@@ -176,7 +194,7 @@ export class ContactsService {
     if (!normalized) return null;
     return withUser(userId, async (client) => {
       const row = (await client.query(
-        `SELECT id FROM contacts WHERE LOWER(email) = $1 ORDER BY id LIMIT 1`,
+        `SELECT id FROM contacts WHERE LOWER(BTRIM(email)) = $1 ORDER BY id LIMIT 1`,
         [normalized]
       )).rows[0];
       if (!row) return null;
@@ -195,7 +213,7 @@ export class ContactsService {
     if (!normalized) return null;
     return withUser(userId, async (client) => {
       const row = (await client.query(
-        `SELECT id, full_name, email, title, company, kind FROM contacts WHERE LOWER(email) = $1 ORDER BY id LIMIT 1`,
+        `SELECT id, full_name, email, title, company, kind FROM contacts WHERE LOWER(BTRIM(email)) = $1 ORDER BY id LIMIT 1`,
         [normalized]
       )).rows[0];
       return row || null;
@@ -277,7 +295,7 @@ export class ContactsService {
       const normalized = data.email.trim().toLowerCase();
       if (normalized) {
         const row = (await client.query(
-          `SELECT id FROM contacts WHERE LOWER(email) = $1 ORDER BY id LIMIT 1`,
+          `SELECT id FROM contacts WHERE LOWER(BTRIM(email)) = $1 ORDER BY id LIMIT 1`,
           [normalized]
         )).rows[0];
         if (row) return row;
@@ -349,7 +367,7 @@ export class ContactsService {
   _identity(data: ContactData) {
     const kind = normalizeKind(data?.kind) || 'account';
     const fullName = typeof data?.full_name === 'string' ? data.full_name.trim() : '';
-    const email = typeof data?.email === 'string' ? data.email.trim().toLowerCase() : '';
+    const email = normalizeContactEmail(data?.email) || '';
     if (!fullName && !email) {
       throw badRequest('A contact needs at least an email or a full_name — both were empty. Pass data.email (e.g. "jsmith@acme.com") or data.full_name.');
     }
@@ -369,7 +387,7 @@ export class ContactsService {
   async _matchExisting(client: PoolClient, { email, fullName, kind }: { email?: string | null; fullName?: string | null; kind?: string | null }) {
     if (email) {
       const row = (await client.query(
-        'SELECT id FROM contacts WHERE LOWER(email) = $1 ORDER BY id LIMIT 1',
+        'SELECT id FROM contacts WHERE LOWER(BTRIM(email)) = $1 ORDER BY id LIMIT 1',
         [email]
       )).rows[0];
       if (row) return { id: row.id, matched_by: 'email' };
@@ -400,6 +418,27 @@ export class ContactsService {
     return null;
   }
 
+  async _throwDuplicate(client: PoolClient, match: { id: number; matched_by: string }): Promise<never> {
+    const existing = await this._fetchWithAccounts(client, match.id);
+    throw Object.assign(
+      conflict(`Contact already exists (matched on ${match.matched_by}): id=${match.id}, name="${existing?.full_name ?? ''}"${existing?.email ? `, email="${existing.email}"` : ''}. Update it via PATCH /api/contacts/${match.id} (contacts tool action="update"), link it via POST /api/contacts/${match.id}/accounts/:accountId (action="link_account"), or use find_or_create to upsert idempotently.`),
+      { existing }
+    );
+  }
+
+  async _assertEmailAvailable(client: PoolClient, email: string | null | undefined, excludeId: number) {
+    if (!email) return;
+    const row = (await client.query(
+      `SELECT id
+         FROM contacts
+        WHERE LOWER(BTRIM(email)) = $1 AND id <> $2
+        ORDER BY id
+        LIMIT 1`,
+      [email, excludeId]
+    )).rows[0];
+    if (row) await this._throwDuplicate(client, { id: row.id, matched_by: 'email' });
+  }
+
   // Explicit create. Runs the same dedupe core as findOrCreate but *refuses*
   // (409, with the existing row attached) on a match instead of upserting —
   // and never writes on that path (no enrich). Prefer findOrCreate for
@@ -407,15 +446,22 @@ export class ContactsService {
   async create(userId: number, data: ContactData, accountId?: number | null) {
     return withUser(userId, async (client) => {
       const { kind, fullName, email } = this._identity(data);
+      const normalizedData = { ...normalizeContactData(data), full_name: fullName || null, email: email || null };
       const match = await this._matchExisting(client, { email, fullName, kind });
-      if (match) {
-        const existing = await this._fetchWithAccounts(client, match.id);
-        throw Object.assign(
-          conflict(`Contact already exists (matched on ${match.matched_by}): id=${match.id}, name="${existing?.full_name ?? ''}"${existing?.email ? `, email="${existing.email}"` : ''}. Update it via PATCH /api/contacts/${match.id} (contacts tool action="update"), link it via POST /api/contacts/${match.id}/accounts/:accountId (action="link_account"), or use find_or_create to upsert idempotently.`),
-          { existing }
-        );
+      if (match) await this._throwDuplicate(client, match);
+
+      // ON CONFLICT closes the check-then-insert race. If another request wins
+      // the normalized-email key, return the same deliberate 409 as the normal
+      // pre-check rather than leaking a raw PostgreSQL 23505/500.
+      const contactId = await this._insertRow(client, normalizedData, kind);
+      if (contactId == null) {
+        const concurrent = email
+          ? await this._matchExisting(client, { email, fullName: null, kind })
+          : null;
+        if (concurrent) await this._throwDuplicate(client, concurrent);
+        throw conflict('Contact could not be created because another write claimed the same unique identity. Retry with find_or_create.');
       }
-      return this._insert(client, { ...data, full_name: fullName || null }, kind, accountId);
+      return this._linkAndFetch(client, contactId, accountId);
     });
   }
 
@@ -423,37 +469,33 @@ export class ContactsService {
   // path (create, findOrCreate, the bulk importer) routes through here so no
   // bespoke INSERT can skip a column default or a future constraint. Assumes
   // the caller has validated/normalized `kind` and decided no dedupe match
-  // applies. full_name may be null (email-only contact). Returns the new id.
+  // applies. full_name may be null (email-only contact). ON CONFLICT keeps the
+  // transaction usable when a concurrent write wins; null tells the caller to
+  // resolve the now-existing normalized email.
   async _insertRow(client: PoolClient, data: ContactData, kind: string) {
+    const normalizedData = normalizeContactData(data);
     const result = await client.query(
       `INSERT INTO contacts (user_id, full_name, company, title, email, phone, linkedin, notes, kind,
                              location_raw, city, state, country)
        VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       ON CONFLICT DO NOTHING
        RETURNING id`,
       [
-        data.full_name ?? null,
-        data.company || null,
-        data.title || null,
-        data.email || null,
-        data.phone || null,
-        data.linkedin || null,
-        data.notes || null,
+        normalizedData.full_name ?? null,
+        normalizedData.company || null,
+        normalizedData.title || null,
+        normalizedData.email || null,
+        normalizedData.phone || null,
+        normalizedData.linkedin || null,
+        normalizedData.notes || null,
         kind,
-        data.location_raw || null,
-        data.city || null,
-        data.state || null,
-        data.country || null,
+        normalizedData.location_raw || null,
+        normalizedData.city || null,
+        normalizedData.state || null,
+        normalizedData.country || null,
       ]
     );
-    return result.rows[0].id;
-  }
-
-  // Insert + (optional) account link + fetch with accounts. The full-object
-  // variant used by create()/findOrCreate(); the importer uses _insertRow
-  // directly to skip the per-row fetch.
-  async _insert(client: PoolClient, data: ContactData, kind: string, accountId?: number | null) {
-    const contactId = await this._insertRow(client, data, kind);
-    return this._linkAndFetch(client, contactId, accountId);
+    return result.rows[0]?.id ?? null;
   }
 
   // Link an (existing or just-created) contact to an account when one is given,
@@ -474,12 +516,15 @@ export class ContactsService {
   // the updated_at trigger stays quiet on a pure re-link. Returns the list of
   // columns filled (empty ⇒ no UPDATE issued).
   async _enrichBlanks(client: PoolClient, id: number, data: Record<string, unknown>) {
+    const normalizedData = Object.prototype.hasOwnProperty.call(data, 'email')
+      ? { ...data, email: normalizeContactEmail(data.email as string | null | undefined) }
+      : data;
     const existing = (await client.query(
       `SELECT ${CONTACT_ENRICHABLE_COLS.join(', ')} FROM contacts WHERE id = $1`,
       [id]
     )).rows[0];
     if (!existing) return [];
-    const { patch, fields } = fillBlanks(existing, data, CONTACT_ENRICHABLE_COLS);
+    const { patch, fields } = fillBlanks(existing, normalizedData, CONTACT_ENRICHABLE_COLS);
     if (!fields.length) return [];
     const cols = Object.keys(patch);
     const setSql = cols.map((c, i) => `${c} = $${i + 2}`).join(', ');
@@ -521,10 +566,11 @@ export class ContactsService {
   async findOrCreate(userId: number, data: ContactData, accountId?: number | null) {
     return withUser(userId, async (client) => {
       const { kind, fullName, email } = this._identity(data);
-      const match = await this._matchExisting(client, { email, fullName, kind });
+      const normalizedData = { ...normalizeContactData(data), full_name: fullName || null, email: email || null };
+      let match = await this._matchExisting(client, { email, fullName, kind });
       if (match) {
         const enriched_fields = await this._enrichBlanks(
-          client, match.id, { ...data, full_name: fullName || null, email: email || null }
+          client, match.id, normalizedData
         );
         const contact = await this._linkAndFetch(client, match.id, accountId);
         return {
@@ -535,8 +581,26 @@ export class ContactsService {
           ...(enriched_fields.length ? { enriched: true, enriched_fields } : {}),
         };
       }
-      const contact = await this._insert(client, { ...data, full_name: fullName || null }, kind, accountId);
-      return { contact, created: true };
+
+      const contactId = await this._insertRow(client, normalizedData, kind);
+      if (contactId != null) {
+        const contact = await this._linkAndFetch(client, contactId, accountId);
+        return { contact, created: true };
+      }
+
+      // A concurrent insert won the normalized-email unique index after our
+      // initial lookup. Resolve it inside this still-valid transaction, then do
+      // the same fill-only enrich + account link as an ordinary match.
+      match = email ? await this._matchExisting(client, { email, fullName: null, kind }) : null;
+      if (!match) throw new Error('Contact insert conflicted, but no normalized-email owner was found.');
+      const enriched_fields = await this._enrichBlanks(client, match.id, normalizedData);
+      const contact = await this._linkAndFetch(client, match.id, accountId);
+      return {
+        contact,
+        created: false,
+        matched_by: 'email',
+        ...(enriched_fields.length ? { enriched: true, enriched_fields } : {}),
+      };
     });
   }
 
@@ -596,75 +660,101 @@ export class ContactsService {
   }
 
   async update(userId: number, id: number, data: ContactData) {
-    return withUser(userId, async (client) => {
-      const existing = (await client.query('SELECT id, kind FROM contacts WHERE id = $1', [id])).rows[0];
-      if (!existing) return null;
+    const normalizedData = normalizeContactData(data);
+    try {
+      return await withUser(userId, async (client) => {
+        const existing = (await client.query('SELECT id, kind FROM contacts WHERE id = $1', [id])).rows[0];
+        if (!existing) return null;
 
-      const kind = data.kind !== undefined ? (normalizeKind(data.kind) || existing.kind) : existing.kind;
+        const kind = normalizedData.kind !== undefined ? (normalizeKind(normalizedData.kind) || existing.kind) : existing.kind;
+        await this._assertEmailAvailable(client, normalizedData.email, id);
 
-      await client.query(
-        `UPDATE contacts SET
-           full_name = $2, company = $3, title = $4,
-           email = $5, phone = $6, linkedin = $7, notes = $8, kind = $9,
-           location_raw = $10, city = $11, state = $12, country = $13
-         WHERE id = $1`,
-        [
-          id,
-          data.full_name,
-          data.company || null,
-          data.title || null,
-          data.email || null,
-          data.phone || null,
-          data.linkedin || null,
-          data.notes || null,
-          kind,
-          data.location_raw || null,
-          data.city || null,
-          data.state || null,
-          data.country || null,
-        ]
-      );
-      return this._fetchWithAccounts(client, id);
-    });
+        await client.query(
+          `UPDATE contacts SET
+             full_name = $2, company = $3, title = $4,
+             email = $5, phone = $6, linkedin = $7, notes = $8, kind = $9,
+             location_raw = $10, city = $11, state = $12, country = $13
+           WHERE id = $1`,
+          [
+            id,
+            normalizedData.full_name,
+            normalizedData.company || null,
+            normalizedData.title || null,
+            normalizedData.email || null,
+            normalizedData.phone || null,
+            normalizedData.linkedin || null,
+            normalizedData.notes || null,
+            kind,
+            normalizedData.location_raw || null,
+            normalizedData.city || null,
+            normalizedData.state || null,
+            normalizedData.country || null,
+          ]
+        );
+        return this._fetchWithAccounts(client, id);
+      });
+    } catch (err) {
+      if (isContactEmailUniqueViolation(err) && normalizedData.email) {
+        const existing = await this.findExisting(userId, { email: normalizedData.email });
+        throw Object.assign(
+          conflict(`Contact email "${normalizedData.email}" is already used by contact id=${existing?.id ?? 'unknown'}.`),
+          { existing }
+        );
+      }
+      throw err;
+    }
   }
 
   async patch(userId: number, id: number, data: ContactData) {
-    return withUser(userId, async (client) => {
-      const existing = (await client.query(`SELECT ${CONTACT_COLS} FROM contacts WHERE id = $1`, [id])).rows[0];
-      if (!existing) return null;
+    const normalizedData = normalizeContactData(data);
+    try {
+      return await withUser(userId, async (client) => {
+        const existing = (await client.query(`SELECT ${CONTACT_COLS} FROM contacts WHERE id = $1`, [id])).rows[0];
+        if (!existing) return null;
 
-      const updated = { ...existing };
-      for (const [key, value] of Object.entries(data)) {
-        if (value !== undefined && key !== 'id' && key !== 'created_at' && key !== 'accounts' && key !== 'user_id') {
-          updated[key] = value;
+        const updated = { ...existing };
+        for (const [key, value] of Object.entries(normalizedData)) {
+          if (value !== undefined && key !== 'id' && key !== 'created_at' && key !== 'accounts' && key !== 'user_id') {
+            updated[key] = value;
+          }
         }
-      }
-      if (data.kind !== undefined) updated.kind = normalizeKind(data.kind);
+        if (normalizedData.kind !== undefined) updated.kind = normalizeKind(normalizedData.kind);
+        await this._assertEmailAvailable(client, updated.email, id);
 
-      await client.query(
-        `UPDATE contacts SET
-           full_name = $2, company = $3, title = $4,
-           email = $5, phone = $6, linkedin = $7, notes = $8, kind = $9,
-           location_raw = $10, city = $11, state = $12, country = $13
-         WHERE id = $1`,
-        [
-          id,
-          updated.full_name,
-          updated.company,
-          updated.title,
-          updated.email,
-          updated.phone,
-          updated.linkedin,
-          updated.notes,
-          updated.kind,
-          updated.location_raw,
-          updated.city,
-          updated.state,
-          updated.country,
-        ]
-      );
-      return this._fetchWithAccounts(client, id);
-    });
+        await client.query(
+          `UPDATE contacts SET
+             full_name = $2, company = $3, title = $4,
+             email = $5, phone = $6, linkedin = $7, notes = $8, kind = $9,
+             location_raw = $10, city = $11, state = $12, country = $13
+           WHERE id = $1`,
+          [
+            id,
+            updated.full_name,
+            updated.company,
+            updated.title,
+            updated.email,
+            updated.phone,
+            updated.linkedin,
+            updated.notes,
+            updated.kind,
+            updated.location_raw,
+            updated.city,
+            updated.state,
+            updated.country,
+          ]
+        );
+        return this._fetchWithAccounts(client, id);
+      });
+    } catch (err) {
+      if (isContactEmailUniqueViolation(err) && normalizedData.email) {
+        const existing = await this.findExisting(userId, { email: normalizedData.email });
+        throw Object.assign(
+          conflict(`Contact email "${normalizedData.email}" is already used by contact id=${existing?.id ?? 'unknown'}.`),
+          { existing }
+        );
+      }
+      throw err;
+    }
   }
 
   async delete(userId: number, id: number) {

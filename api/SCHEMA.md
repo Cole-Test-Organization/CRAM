@@ -446,13 +446,14 @@
 
 **Check constraints:**
 
+- `contacts_email_normalized_check`: `CHECK (((email IS NULL) OR ((email <> ''::text) AND (email = lower(btrim(email))))))`
 - `contacts_kind_check`: `CHECK ((kind = ANY (ARRAY['account'::text, 'partner'::text, 'internal'::text])))`
 
 **Indexes:**
 
+- `contacts_user_email_normalized_uniq` *(unique)* — `CREATE UNIQUE INDEX contacts_user_email_normalized_uniq ON public.contacts USING btree (user_id, lower(btrim(email))) WHERE (email IS NOT NULL)`
 - `idx_contacts_city` — `CREATE INDEX idx_contacts_city ON public.contacts USING btree (lower(city))`
 - `idx_contacts_country` — `CREATE INDEX idx_contacts_country ON public.contacts USING btree (lower(country))`
-- `idx_contacts_email` — `CREATE INDEX idx_contacts_email ON public.contacts USING btree (email)`
 - `idx_contacts_full_name_trgm` — `CREATE INDEX idx_contacts_full_name_trgm ON public.contacts USING gin (lower(full_name) gin_trgm_ops)`
 - `idx_contacts_kind` — `CREATE INDEX idx_contacts_kind ON public.contacts USING btree (kind)`
 - `idx_contacts_name` — `CREATE INDEX idx_contacts_name ON public.contacts USING btree (full_name)`
