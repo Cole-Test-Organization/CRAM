@@ -5,7 +5,7 @@ node_modules/
 # Env / secrets
 .env
 todoist/.env
-calendar/.env
+google-scripts/calendar/.env
 
 # DB backups
 backups/

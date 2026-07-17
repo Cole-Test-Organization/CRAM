@@ -21,7 +21,7 @@ Google Calendar
 ```
 
 The endpoint is **deterministic / machine-to-machine** (no LLM, not agent- or
-MCP-callable) — see the `calendar-import` exception in [CLAUDE.md](../CLAUDE.md).
+MCP-callable) — see the `calendar-import` exception in [CLAUDE.md](../../CLAUDE.md).
 
 ## Files
 
@@ -52,7 +52,7 @@ MCP-callable) — see the `calendar-import` exception in [CLAUDE.md](../CLAUDE.m
 > `getRequiredProp_(...)`. Don't paste live Client ID/Secret values into the file —
 > they'd land in git history (this repo is distributable).
 >
-> To keep the values on disk anyway, store them in **`calendar/.env`** (gitignored,
+> To keep the values on disk anyway, store them in **`google-scripts/calendar/.env`** (gitignored,
 > copied from `.env.example`). Nothing here reads it at runtime — it's just a local
 > store so the credentials live next to the script; paste the same values into the
 > Apps Script Script Properties.
