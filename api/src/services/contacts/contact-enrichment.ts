@@ -267,6 +267,7 @@ export class ContactEnrichmentService {
         research: result,
         baseUrl: resolvedSettings?.local_base_url || null,
         model: resolvedSettings?.model || null,
+        apiKey: resolvedSettings?.local_api_key || null,
       });
     } catch (err) {
       job.status = 'failed';
@@ -335,7 +336,7 @@ function validateAndClean(obj: any): Record<string, string> | null {
 // as "didn't respond" → wait and try again. Returns the trimmed text, or throws
 // once every attempt is exhausted. Malformed-but-present JSON is NOT retried
 // here — that's the caller's reprompt loop, since the server clearly answered.
-async function callLLMWithRetry({ system, messages, model, baseUrl }: { system: string; messages: LlmMessage[]; model: string; baseUrl: string }) {
+async function callLLMWithRetry({ system, messages, model, baseUrl, apiKey }: { system: string; messages: LlmMessage[]; model: string; baseUrl: string; apiKey?: string | null }) {
   let lastErr: unknown = null;
   for (let attempt = 1; attempt <= LLM_MAX_ATTEMPTS; attempt++) {
     try {
@@ -344,7 +345,7 @@ async function callLLMWithRetry({ system, messages, model, baseUrl }: { system: 
         system,
         messages,
         mcpTools: [],
-        providerConfig: { baseUrl },
+        providerConfig: { baseUrl, apiKey },
         timeoutMs: LLM_TIMEOUT_MS,
       }))!;
       const text = (content || [])
@@ -369,7 +370,7 @@ async function callLLMWithRetry({ system, messages, model, baseUrl }: { system: 
   throw new Error(`local LLM call failed after ${LLM_MAX_ATTEMPTS} attempts: ${(lastErr as Error)?.message || String(lastErr)}`);
 }
 
-async function formatWithLocalLLM({ name, accountName, research, baseUrl, model }: { name: string; accountName?: string | null; research: unknown; baseUrl?: string | null; model?: string | null }) {
+async function formatWithLocalLLM({ name, accountName, research, baseUrl, model, apiKey }: { name: string; accountName?: string | null; research: unknown; baseUrl?: string | null; model?: string | null; apiKey?: string | null }) {
   // Truncate the research blob — local models often have 8-32K context and
   // we don't want a runaway profile crashing the call. 10K of JSON is plenty
   // for the meaningful fields the formatter cares about.
@@ -400,6 +401,7 @@ Return ONLY the JSON object specified in the system prompt.`;
       messages,
       model: effectiveModel,
       baseUrl: effectiveBaseUrl,
+      apiKey,
     });
     const parsed = parseLooseJson(text);
     const cleaned = validateAndClean(parsed);

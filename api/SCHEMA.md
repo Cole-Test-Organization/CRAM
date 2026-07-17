@@ -4,7 +4,7 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-07-12T20:47:53.502Z
+- **Generated:** 2026-07-17T16:43:07.522Z
 - **Tables:** 40
 - **Enums:** 0
 - **Views:** 0
@@ -66,7 +66,7 @@
 |---|---|---|---|---|
 | `account_id` | `bigint` | NO | — | **PK** |
 | `contact_id` | `bigint` | NO | — | **PK** |
-| `reports_to_contact_id` | `bigint` | NO | — |  |
+| `reports_to_contact_id` | `bigint` | YES | — |  |
 | `created_at` | `timestamp with time zone` | NO | `now()` |  |
 | `updated_at` | `timestamp with time zone` | NO | `now()` |  |
 
@@ -76,6 +76,7 @@
 
 - `account_id`, `contact_id` → `public.account_contacts`(`account_id`, `contact_id`) — ON DELETE CASCADE
 - `account_id`, `reports_to_contact_id` → `public.account_contacts`(`account_id`, `contact_id`) — ON DELETE CASCADE
+- `account_id`, `reports_to_contact_id` → `public.account_contact_reporting`(`account_id`, `contact_id`) — ON DELETE CASCADE
 
 **Check constraints:**
 
@@ -89,7 +90,7 @@
 
 - `account_contact_reporting_isolation` — ALL, PERMISSIVE, roles: public
   - USING: `(EXISTS ( SELECT 1    FROM accounts a   WHERE (a.id = account_contact_reporting.account_id)))`
-  - WITH CHECK: `((EXISTS ( SELECT 1    FROM accounts a   WHERE (a.id = account_contact_reporting.account_id))) AND (EXISTS ( SELECT 1    FROM account_contacts ac   WHERE ((ac.account_id = account_contact_reporting.account_id) AND (ac.contact_id = account_contact_reporting.contact_id)))) AND (EXISTS ( SELECT 1    FROM account_contacts ac   WHERE ((ac.account_id = account_contact_reporting.account_id) AND (ac.contact_id = account_contact_reporting.reports_to_contact_id)))))`
+  - WITH CHECK: `((EXISTS ( SELECT 1    FROM accounts a   WHERE (a.id = account_contact_reporting.account_id))) AND (EXISTS ( SELECT 1    FROM account_contacts ac   WHERE ((ac.account_id = account_contact_reporting.account_id) AND (ac.contact_id = account_contact_reporting.contact_id)))) AND ((reports_to_contact_id IS NULL) OR (EXISTS ( SELECT 1    FROM account_contacts ac   WHERE ((ac.account_id = account_contact_reporting.account_id) AND (ac.contact_id = account_contact_reporting.reports_to_contact_id))))))`
 
 ---
 
@@ -445,13 +446,14 @@
 
 **Check constraints:**
 
+- `contacts_email_normalized_check`: `CHECK (((email IS NULL) OR ((email <> ''::text) AND (email = lower(btrim(email))))))`
 - `contacts_kind_check`: `CHECK ((kind = ANY (ARRAY['account'::text, 'partner'::text, 'internal'::text])))`
 
 **Indexes:**
 
+- `contacts_user_email_normalized_uniq` *(unique)* — `CREATE UNIQUE INDEX contacts_user_email_normalized_uniq ON public.contacts USING btree (user_id, lower(btrim(email))) WHERE (email IS NOT NULL)`
 - `idx_contacts_city` — `CREATE INDEX idx_contacts_city ON public.contacts USING btree (lower(city))`
 - `idx_contacts_country` — `CREATE INDEX idx_contacts_country ON public.contacts USING btree (lower(country))`
-- `idx_contacts_email` — `CREATE INDEX idx_contacts_email ON public.contacts USING btree (email)`
 - `idx_contacts_full_name_trgm` — `CREATE INDEX idx_contacts_full_name_trgm ON public.contacts USING gin (lower(full_name) gin_trgm_ops)`
 - `idx_contacts_kind` — `CREATE INDEX idx_contacts_kind ON public.contacts USING btree (kind)`
 - `idx_contacts_name` — `CREATE INDEX idx_contacts_name ON public.contacts USING btree (full_name)`
@@ -1271,12 +1273,21 @@
 | `local_base_url` | `text` | YES | — |  |
 | `updated_at` | `timestamp with time zone` | NO | `now()` |  |
 | `system_prompt` | `text` | YES | — |  |
+| `local_api_key_ciphertext` | `bytea` | YES | — |  |
+| `local_api_key_iv` | `bytea` | YES | — |  |
+| `local_api_key_auth_tag` | `bytea` | YES | — |  |
+| `local_api_key_algo` | `text` | YES | — |  |
+| `local_api_key_key_version` | `integer` | YES | — |  |
 
 **Primary key:** `user_id`
 
 **Foreign keys:**
 
 - `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Check constraints:**
+
+- `user_agent_settings_local_api_key_encrypted_check`: `CHECK ((((local_api_key_ciphertext IS NULL) AND (local_api_key_iv IS NULL) AND (local_api_key_auth_tag IS NULL) AND (local_api_key_algo IS NULL) AND (local_api_key_key_version IS NULL)) OR ((local_api_key_ciphertext IS NOT NULL) AND (local_api_key_iv IS NOT NULL) AND (local_api_key_auth_tag IS NOT NULL) AND (local_api_key_algo IS NOT NULL) AND (local_api_key_key_version IS NOT NULL))))`
 
 **Row-Level Security:** enabled (forced)
 

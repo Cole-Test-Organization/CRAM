@@ -16,8 +16,9 @@ test.describe('Internal-note triage', () => {
 
     await page.goto(`/meetings/${note.id}`);
     // Scenario A: account-less parked note.
-    await expect(page.getByText("This note isn't assigned to an account.")).toBeVisible();
-    await expect(page.getByText('Needs review')).toBeVisible();
+    const reviewHeading = page.getByRole('heading', { name: 'This note needs review.' });
+    await expect(reviewHeading).toBeVisible();
+    await expect(page.getByText('Needs review', { exact: true })).toBeVisible();
 
     // Assign it to a seeded account via the triage AccountPicker.
     await page.getByRole('button', { name: 'Search for an account...' }).click();
@@ -26,8 +27,8 @@ test.describe('Internal-note triage', () => {
     await page.getByRole('button', { name: 'Assign account' }).click();
 
     // The note is now placed → review flag + triage panel are gone.
-    await expect(page.getByText("This note isn't assigned to an account.")).toBeHidden();
-    await expect(page.getByText('Needs review')).toBeHidden();
+    await expect(reviewHeading).toBeHidden();
+    await expect(page.getByText('Needs review', { exact: true })).toBeHidden();
   });
 
   test('keep a parked note as internal → review flag clears, stays internal', async ({ page, request }) => {
@@ -39,13 +40,14 @@ test.describe('Internal-note triage', () => {
     });
 
     await page.goto(`/meetings/${note.id}`);
-    await expect(page.getByText("This note isn't assigned to an account.")).toBeVisible();
+    const reviewHeading = page.getByRole('heading', { name: 'This note needs review.' });
+    await expect(reviewHeading).toBeVisible();
 
     await page.getByRole('button', { name: 'Keep as internal' }).click();
 
     // Flag clears, panel disappears, and it remains an internal note.
-    await expect(page.getByText("This note isn't assigned to an account.")).toBeHidden();
-    await expect(page.getByText('Needs review')).toBeHidden();
+    await expect(reviewHeading).toBeHidden();
+    await expect(page.getByText('Needs review', { exact: true })).toBeHidden();
     await expect(page.getByText('Internal').first()).toBeVisible();
   });
 });

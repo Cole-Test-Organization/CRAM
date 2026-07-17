@@ -57,7 +57,8 @@ services:
       # (this device). Point at a LAN address (e.g. http://192.168.1.50:11434)
       # to use another machine. host.docker.internal needs extra_hosts below.
       - "LOCAL_BASE_URL=${LOCAL_BASE_URL:-http://host.docker.internal:11434}"
-      - LOCAL_API_KEY=${LOCAL_API_KEY:-}
+      # Optional bearer credentials are configured per user in Agent LLM
+      # settings and stored encrypted in Postgres, never passed through env.
       # Todoist (optional). TODOIST_ENABLED defaults to true; set to "false" in
       # .env to skip route/tool/instructions registration entirely. The token
       # passes through from .env so the container reads it from process.env (no
@@ -83,10 +84,9 @@ services:
       # In-container path the scheduled pg_dump writes to. Must live under the
       # /backups bind mount below — the host source of that mount is BACKUP_HOST_DIR.
       - BACKUP_DIR=${BACKUP_DIR:-/backups}
-      # Provisioning broker — AES master key that decrypts the provisioning_secrets
-      # table at deploy time. The secrets themselves live in Postgres, not here; set
-      # PROVISIONING_SECRETS_KEY in .env (openssl rand -base64 32). In-container the
-      # local .env→table seed stays off (no broker .env to read; secrets are DB-managed).
+      # Shared AES master key for encrypted DB secrets (provisioning vault + Agent
+      # LLM bearer tokens). Credentials live in Postgres, not here; set the key in
+      # .env (openssl rand -base64 32). The local broker seed stays off in-container.
       - PROVISIONING_SECRETS_KEY=${PROVISIONING_SECRETS_KEY:-}
       - PROVISIONING_SEED_SECRETS_ON_BOOT=${PROVISIONING_SEED_SECRETS_ON_BOOT:-false}
       - PROVISIONING_TF_PG_CONN=${PROVISIONING_TF_PG_CONN:-postgres://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-devpassword}@db:5432/${POSTGRES_DB:-crm}?sslmode=disable}
@@ -161,7 +161,6 @@ services:
       # Agent LLM — local by default (Ollama on the device). See app service above.
       - AGENT_PROVIDER=${AGENT_PROVIDER:-local}
       - "LOCAL_BASE_URL=${LOCAL_BASE_URL:-http://host.docker.internal:11434}"
-      - LOCAL_API_KEY=${LOCAL_API_KEY:-}
       # Todoist (optional). See app service above for semantics.
       - TODOIST_ENABLED=${TODOIST_ENABLED:-true}
       - TODOIST_API_TOKEN=${TODOIST_API_TOKEN:-}
@@ -177,10 +176,9 @@ services:
       - NEWS_MAX_ARTICLES=${NEWS_MAX_ARTICLES:-40}
       - NEWS_RANK_LLM_TIMEOUT_MS=${NEWS_RANK_LLM_TIMEOUT_MS:-}
       - BACKUP_DIR=${BACKUP_DIR:-/backups}
-      # Provisioning broker — AES master key that decrypts the provisioning_secrets
-      # table at deploy time. The secrets themselves live in Postgres, not here; set
-      # PROVISIONING_SECRETS_KEY in .env (openssl rand -base64 32). In-container the
-      # local .env→table seed stays off (no broker .env to read; secrets are DB-managed).
+      # Shared AES master key for encrypted DB secrets (provisioning vault + Agent
+      # LLM bearer tokens). Credentials live in Postgres, not here; set the key in
+      # .env (openssl rand -base64 32). The local broker seed stays off in-container.
       - PROVISIONING_SECRETS_KEY=${PROVISIONING_SECRETS_KEY:-}
       - PROVISIONING_SEED_SECRETS_ON_BOOT=${PROVISIONING_SEED_SECRETS_ON_BOOT:-false}
       - PROVISIONING_TF_PG_CONN=${PROVISIONING_TF_PG_CONN:-postgres://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-devpassword}@db:5432/${POSTGRES_DB:-crm}?sslmode=disable}

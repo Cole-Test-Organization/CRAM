@@ -78,7 +78,7 @@ export default async function contactRoutes(fastify: FastifyInstance, { contacts
   // of letting create() throw 409.
   fastify.post<{ Body: { email?: string; full_name?: string; kind?: string } }>('/contacts/find-existing', {
     schema: {
-      description: 'Read-only dedupe probe: case-insensitive email match wins, then exact (full_name + kind). No fuzzy tier (that\'s only in create/find-or-create). Returns the matched contact (with linked accounts) or 404. Use this to decide whether to create vs update vs link.',
+      description: 'Read-only dedupe probe: normalized email (trimmed + lowercased, unique per user when non-null) wins, then exact (full_name + kind). No fuzzy tier (that\'s only in create/find-or-create). Returns the matched contact (with linked accounts) or 404. Use this to decide whether to create vs update vs link.',
       tags: ['contacts'],
       body: {
         type: 'object',
@@ -101,7 +101,7 @@ export default async function contactRoutes(fastify: FastifyInstance, { contacts
   // over POST /contacts when ingesting people so near-duplicates don't pile up.
   fastify.post<{ Body: { full_name?: string; company?: string; title?: string; email?: string; phone?: string; linkedin?: string; notes?: string; kind?: string; location_raw?: string; city?: string; state?: string; country?: string; account_id?: number } }>('/contacts/find-or-create', {
     schema: {
-      description: 'Idempotent contact upsert — the single creation path that runs full dedupe + enrich. Matches an existing contact by exact email (case-insensitive), then exact full_name+kind, then fuzzy full_name within the same kind (pg_trgm) — returning it with matched_by (email|full_name|fuzzy) and match_score (for fuzzy); otherwise creates. On a match, any field you supply that is currently BLANK on the stored contact is filled in (enriched, never overwriting existing values) and reported via enriched/enriched_fields. Supply at least one of email or full_name — an email-only contact is valid (e.g. jsmith@acme.com with no name yet). Optional account_id (re)links the result to an account. Never throws 409 (unlike POST /contacts).',
+      description: 'Idempotent contact upsert — the single creation path that runs full dedupe + enrich. Email is optional, but every nonblank address is trimmed, lowercased, and unique per user. Matches an existing contact by normalized email, then exact full_name+kind, then fuzzy full_name within the same kind (pg_trgm) — returning it with matched_by (email|full_name|fuzzy) and match_score (for fuzzy); otherwise creates. On a match, any field you supply that is currently BLANK on the stored contact is filled in (enriched, never overwriting existing values) and reported via enriched/enriched_fields. Supply at least one of email or full_name — a name-only or email-only contact is valid. Optional account_id (re)links the result to an account. Concurrent submissions of the same email resolve to one row. Never throws 409 (unlike POST /contacts).',
       tags: ['contacts'],
       body: {
         type: 'object',
@@ -252,7 +252,7 @@ export default async function contactRoutes(fastify: FastifyInstance, { contacts
   // Create contact (standalone)
   fastify.post<{ Body: { full_name?: string; company?: string; title?: string; email?: string; phone?: string; linkedin?: string; notes?: string; kind?: string; location_raw?: string; city?: string; state?: string; country?: string } }>('/contacts', {
     schema: {
-      description: 'Create a new standalone contact (useful for kind=internal, with no account link yet — link later via POST /contacts/:id/accounts/:accountId to record which accounts a teammate supports). Runs the same dedupe core as find-or-create and returns 409 with the existing row if a match is found — prefer POST /contacts/find-or-create to upsert/enrich idempotently. Supply at least one of email or full_name.',
+      description: 'Create a new standalone contact (useful for kind=internal, with no account link yet — link later via POST /contacts/:id/accounts/:accountId to record which accounts a teammate supports). Email is optional; a supplied address is trimmed, lowercased, and unique per user. Runs the same dedupe core as find-or-create and returns 409 with the existing row if a match is found — prefer POST /contacts/find-or-create to upsert/enrich idempotently. Supply at least one of email or full_name.',
       tags: ['contacts'],
       body: {
         type: 'object',
@@ -290,7 +290,7 @@ export default async function contactRoutes(fastify: FastifyInstance, { contacts
   // Create contact under an account (creates + links)
   fastify.post<{ Params: { accountId: number }; Body: { full_name?: string; company?: string; title?: string; email?: string; phone?: string; linkedin?: string; notes?: string; kind?: string; location_raw?: string; city?: string; state?: string; country?: string } }>('/accounts/:accountId/contacts', {
     schema: {
-      description: 'Create a new contact and link it to an account. Defaults kind=account; use kind=partner when creating a rep at a partner account. Runs the same dedupe core as find-or-create (409 on a match) — prefer find-or-create with account_id to upsert/enrich idempotently. Supply at least one of email or full_name.',
+      description: 'Create a new contact and link it to an account. Email is optional; a supplied address is trimmed, lowercased, and unique per user. Defaults kind=account; use kind=partner when creating a rep at a partner account. Runs the same dedupe core as find-or-create (409 on a match) — prefer find-or-create with account_id to upsert/enrich idempotently. Supply at least one of email or full_name.',
       tags: ['contacts'],
       params: { type: 'object', properties: { accountId: { type: 'integer' } } },
       body: {
@@ -399,7 +399,7 @@ export default async function contactRoutes(fastify: FastifyInstance, { contacts
   // Full update
   fastify.put<{ Params: { id: number }; Body: { full_name: string; company?: string; title?: string; email?: string; phone?: string; linkedin?: string; notes?: string; kind?: string; location_raw?: string; city?: string; state?: string; country?: string } }>('/contacts/:id', {
     schema: {
-      description: 'Full update of a contact.',
+      description: 'Full update of a contact. A supplied email is trimmed/lowercased and returns 409 if another contact owned by this user already has it; omit email to store no address.',
       tags: ['contacts'],
       params: { type: 'object', properties: { id: { type: 'integer' } } },
       body: {
@@ -439,7 +439,7 @@ export default async function contactRoutes(fastify: FastifyInstance, { contacts
   // Partial update
   fastify.patch<{ Params: { id: number }; Body: { full_name?: string; company?: string; title?: string; email?: string; phone?: string; linkedin?: string; notes?: string; kind?: string; location_raw?: string; city?: string; state?: string; country?: string } }>('/contacts/:id', {
     schema: {
-      description: 'Partial update of a contact. Only provided fields are changed.',
+      description: 'Partial update of a contact. Only provided fields are changed. A supplied email is trimmed/lowercased and returns 409 if another contact owned by this user already has it.',
       tags: ['contacts'],
       params: { type: 'object', properties: { id: { type: 'integer' } } },
       body: {

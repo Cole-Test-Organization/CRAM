@@ -29,6 +29,41 @@ describe('Contacts — CRUD + dedupe', () => {
     assert.ok(dup.body.existing);
   });
 
+  it('normalizes email and enforces one non-null address per user', async (t) => {
+    const email = uniqueEmail();
+    const rawEmail = `  ${email.toUpperCase()}  `;
+    const first = await makeContact(t, { full_name: uniqueName('ZZZ Normalized'), email: rawEmail });
+    assert.equal(first.status, 201);
+    assert.equal(first.body.email, email);
+
+    const duplicate = await post('/contacts', {
+      full_name: uniqueName('ZZZ Normalized Duplicate'),
+      email,
+    });
+    assert.equal(duplicate.status, 409);
+    assert.equal(duplicate.body.existing.id, first.body.id);
+  });
+
+  it('allows multiple name-only contacts with null email', async (t) => {
+    const first = await makeContact(t, { full_name: uniqueName('ZZZ Alpha Executive') });
+    const second = await makeContact(t, { full_name: uniqueName('QQQ Omega Director') });
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    assert.equal(first.body.email, null);
+    assert.equal(second.body.email, null);
+  });
+
+  it('PATCH rejects an email already owned by another contact', async (t) => {
+    const email = uniqueEmail();
+    const first = await makeContact(t, { full_name: uniqueName('ZZZ Email Owner'), email });
+    const second = await makeContact(t, { full_name: uniqueName('ZZZ Email Other'), email: uniqueEmail() });
+
+    const collision = await patch(`/contacts/${second.body.id}`, { email: ` ${email.toUpperCase()} ` });
+    assert.equal(collision.status, 409);
+    assert.equal(collision.body.existing.id, first.body.id);
+    assert.notEqual((await get(`/contacts/${second.body.id}`)).body.email, email);
+  });
+
   it('PATCH and PUT update a contact', async (t) => {
     const { body } = await makeContact(t, { full_name: uniqueName('ZZZ Edit'), kind: 'internal' });
     const patched = await patch(`/contacts/${body.id}`, { title: 'VP Testing' });
@@ -93,6 +128,23 @@ describe('Contacts — find-or-create (upsert + fill-blanks)', () => {
     assert.equal(again.body.created, false);
     assert.equal(again.body.contact.title, 'Original Title');
     assert.ok(!again.body.enriched_fields || !again.body.enriched_fields.includes('title'));
+  });
+
+  it('serializes concurrent inserts for the same normalized email', async (t) => {
+    const email = uniqueEmail();
+    const responses = await Promise.all(
+      Array.from({ length: 8 }, (_, i) => post('/contacts/find-or-create', {
+        email: i % 2 === 0 ? email.toUpperCase() : ` ${email} `,
+        kind: 'internal',
+      }))
+    );
+
+    const ids = new Set(responses.map((r) => r.body?.contact?.id).filter(Boolean));
+    for (const id of ids) deleteAfter(t, `/contacts/${id}`);
+    assert.equal(ids.size, 1, `expected one contact id, got ${JSON.stringify([...ids])}`);
+    assert.equal(responses.filter((r) => r.body?.created === true).length, 1);
+    assert.ok(responses.every((r) => r.status === 200 || r.status === 201));
+    assert.ok(responses.every((r) => r.body.contact.email === email));
   });
 });
 

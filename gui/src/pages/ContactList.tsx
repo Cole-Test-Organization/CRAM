@@ -31,23 +31,25 @@ export default function ContactList(props: Props = {}) {
     async ({ embedded }) => (embedded ? [] : api.getContactCompanies()),
   );
 
-  // Per-account endpoint omits search filtering server-side, so we do it
-  // client-side in embedded mode. Global mode keeps API-level filtering for
-  // larger result sets.
+  // Fetch one stable collection URL and filter it locally. Besides avoiding a
+  // request per keystroke, this makes the exact same collection usable from
+  // the per-device offline cache.
   const [contacts, { refetch }] = createResource(
-    () => ({ accountId: props.accountId, company: company(), search: search() }),
-    async ({ accountId, company: companySlug, search: searchTerm }) => {
+    () => ({ accountId: props.accountId }),
+    async ({ accountId }) => {
       if (accountId !== undefined && accountId !== null) return api.getContacts(accountId);
-      return api.getAllContacts({
-        company: companySlug || undefined,
-        search: searchTerm || undefined,
-      });
+      return api.getAllContacts();
     },
   );
 
   const filtered = () => {
-    const list = contacts() || [];
-    if (props.accountId === undefined || props.accountId === null) return list;
+    let list = contacts() || [];
+    if (props.accountId === undefined || props.accountId === null) {
+      const selectedCompany = company();
+      if (selectedCompany) {
+        list = list.filter((c: any) => (c.account_slugs || '').split(',').includes(selectedCompany));
+      }
+    }
     const q = search().toLowerCase();
     if (!q) return list;
     return list.filter((c: any) =>

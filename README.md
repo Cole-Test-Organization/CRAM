@@ -140,7 +140,7 @@ To add new sources, drop a scraper file into `events/src/scrapers/` and register
 
 ### Calendar import (daily auto-import)
 
-Your daily meetings can flow into the CRM automatically. A Google Apps Script reads a day's calendar events and POSTs them to `POST /api/calendar-import`, which creates a meeting per event and resolves attendees/accounts by email domain. The exporter source and setup steps live in [`calendar/`](calendar/README.md). It's optional — the CRM works fine without it; you can also create meetings by hand or via the API/MCP.
+Your daily meetings can flow into the CRM automatically. A Google Apps Script reads a day's calendar events and POSTs them to `POST /api/calendar-import`, which creates a meeting per event and resolves attendees/accounts by email domain. The exporter source and setup steps live in [`google-scripts/calendar/`](google-scripts/calendar/README.md). It's optional — the CRM works fine without it; you can also create meetings by hand or via the API/MCP.
 
 ## Usage
 
@@ -149,6 +149,28 @@ Once running:
 - **Web UI**: `http://<host>:3200`
 - **API docs (Swagger UI)**: `http://<host>:3200/docs`
 - **MCP endpoint** — point Claude Desktop, Cursor, or any other MCP client at `http://<host>:3100/mcp`. The server delivers its full workflow doc and tool schemas on connect.
+
+### Install the web app and prepare it for offline use
+
+Serve CRAM from one stable HTTPS hostname (localhost also works for local
+testing), then install that exact origin:
+
+- **macOS Safari:** open CRAM, then choose **File → Add to Dock**.
+- **iPhone/iPad Safari:** open CRAM, tap **Share**, then **Add to Home Screen**.
+- **Chrome/Edge:** use the install icon in the address bar or the browser's
+  **Install app** menu item.
+
+After installation, open CRAM while connected and wait for the header/sidebar
+to show a successful **Last sync** time. The app refreshes its device-local
+copy when launched, foregrounded, reconnected, clicked manually, and every five
+minutes while visible. A closed iPhone web app cannot be guaranteed to refresh
+in the background, so its offline data is only as current as the timestamp
+shown on that phone.
+
+Offline mode currently supports reading the core CRM dataset. Writes remain
+server-only and are blocked while disconnected so an old device copy cannot
+overwrite a newer server edit. See [OFFLINE-SYNC.md](OFFLINE-SYNC.md) for the
+cache boundary and the versioned-outbox plan for future offline editing.
 
 ## Testing
 

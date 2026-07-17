@@ -465,6 +465,18 @@ async function main() {
 		}
 	}
 
+	// Seed one partial hierarchy through the public API: two Acme contacts are
+	// deliberately placed, while Priya remains associated but unassigned. Other
+	// accounts start with empty charts so both GUI states stay exercised.
+	console.log('Creating sample org chart…');
+	const [dianeId, marcusId] = contactIdsByCustomer['acme-manufacturing'];
+	await patch(`/accounts/${customerIds['acme-manufacturing']}/org-chart/contacts/${dianeId}`, {
+		reports_to_contact_id: null,
+	});
+	await patch(`/accounts/${customerIds['acme-manufacturing']}/org-chart/contacts/${marcusId}`, {
+		reports_to_contact_id: dianeId,
+	});
+
 	console.log('Creating partner contacts…');
 	const contactIdsByPartner = {};
 	for (const [slug, contacts] of Object.entries(contactsByPartnerSlug)) {

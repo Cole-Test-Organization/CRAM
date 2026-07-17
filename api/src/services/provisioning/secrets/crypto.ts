@@ -1,9 +1,9 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
-// App-side encryption-at-rest for provisioning secrets. AES-256-GCM with a 32-byte
-// master key supplied via env (PROVISIONING_SECRETS_KEY, hex or base64). Only the
-// ciphertext + 12-byte iv + 16-byte auth tag are persisted (migration 042); the key
-// never touches Postgres. Decrypted values MUST never be logged.
+// Shared app-side encryption-at-rest for provisioning secrets and the agent LLM
+// bearer token. AES-256-GCM uses the existing 32-byte
+// PROVISIONING_SECRETS_KEY master key (hex or base64); the credentials themselves
+// are never read from env. Only ciphertext + IV + auth tag reach Postgres.
 
 const ALGO = "aes-256-gcm";
 const IV_BYTES = 12; // GCM standard nonce length
@@ -15,7 +15,7 @@ function masterKey(): Buffer {
   const raw = process.env[SECRETS_KEY_ENV];
   if (!raw) {
     throw new Error(
-      `${SECRETS_KEY_ENV} is not set — it is required to encrypt/decrypt provisioning secrets. ` +
+      `${SECRETS_KEY_ENV} is not set — it is required to encrypt/decrypt stored secrets. ` +
         "Generate one with: openssl rand -base64 32",
     );
   }

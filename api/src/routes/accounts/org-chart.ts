@@ -13,7 +13,7 @@ const ORG_CHART_EDGE = {
 export default async function orgChartRoutes(fastify: FastifyInstance, { orgChartService }: { orgChartService: OrgChartService }) {
   fastify.get<{ Params: { accountId: number } }>('/accounts/:accountId/org-chart', {
     schema: {
-      description: 'Get an account org chart. Returns every external contact linked to the account as nodes, plus reporting edges scoped to that account.',
+      description: 'Get an account org chart. Returns every eligible account contact in contacts, explicit chart members in nodes, root ids, and reporting edges.',
       tags: ['org-chart'],
       params: {
         type: 'object',
@@ -36,7 +36,7 @@ export default async function orgChartRoutes(fastify: FastifyInstance, { orgChar
     Body: { reports_to_contact_id?: number | null };
   }>('/accounts/:accountId/org-chart/contacts/:contactId', {
     schema: {
-      description: 'Set or clear one contact manager in the account org chart. Pass reports_to_contact_id=null to make the contact a root.',
+      description: 'Place one contact in the account org chart. Pass a manager id to report to that contact, or null to make this contact explicitly top-level.',
       tags: ['org-chart'],
       params: {
         type: 'object',
@@ -58,7 +58,7 @@ export default async function orgChartRoutes(fastify: FastifyInstance, { orgChar
     try {
       if (!request.body || !Object.hasOwn(request.body, 'reports_to_contact_id')) {
         reply.code(400);
-        return { error: 'reports_to_contact_id is required; pass a contact id or null to clear.' };
+        return { error: 'reports_to_contact_id is required; pass a contact id or null for top-level.' };
       }
       const managerId = request.body?.reports_to_contact_id ?? null;
       return await orgChartService.setManager(request.userId, request.params.accountId, request.params.contactId, managerId);
@@ -69,9 +69,35 @@ export default async function orgChartRoutes(fastify: FastifyInstance, { orgChar
     }
   });
 
-  fastify.put<{ Params: { accountId: number }; Body: { edges?: Array<{ contact_id: number; reports_to_contact_id: number }> } }>('/accounts/:accountId/org-chart', {
+  fastify.delete<{ Params: { accountId: number; contactId: number } }>('/accounts/:accountId/org-chart/contacts/:contactId', {
     schema: {
-      description: 'Replace the entire account org chart edge set. Contacts omitted from edges become roots. Rejects non-account contacts, duplicate managers, self-reports, and cycles.',
+      description: 'Remove one contact from the account org chart without unlinking the contact from the account. Direct reports must be reassigned first.',
+      tags: ['org-chart'],
+      params: {
+        type: 'object',
+        required: ['accountId', 'contactId'],
+        properties: {
+          accountId: { type: 'integer' },
+          contactId: { type: 'integer' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    try {
+      return await orgChartService.remove(request.userId, request.params.accountId, request.params.contactId);
+    } catch (err) {
+      const e = err as { statusCode?: number; message?: string };
+      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
+      throw err;
+    }
+  });
+
+  fastify.put<{
+    Params: { accountId: number };
+    Body: { edges?: Array<{ contact_id: number; reports_to_contact_id: number }>; root_contact_ids?: number[] };
+  }>('/accounts/:accountId/org-chart', {
+    schema: {
+      description: 'Replace the entire account org chart. root_contact_ids are explicit top-level contacts; edge endpoints also become members. Contacts omitted from both are unassigned.',
       tags: ['org-chart'],
       params: {
         type: 'object',
@@ -83,12 +109,18 @@ export default async function orgChartRoutes(fastify: FastifyInstance, { orgChar
         required: ['edges'],
         properties: {
           edges: { type: 'array', items: ORG_CHART_EDGE },
+          root_contact_ids: { type: 'array', items: { type: 'integer' } },
         },
       },
     },
   }, async (request, reply) => {
     try {
-      return await orgChartService.replace(request.userId, request.params.accountId, request.body?.edges || []);
+      return await orgChartService.replace(
+        request.userId,
+        request.params.accountId,
+        request.body?.edges || [],
+        request.body?.root_contact_ids || [],
+      );
     } catch (err) {
       const e = err as { statusCode?: number; message?: string };
       if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }

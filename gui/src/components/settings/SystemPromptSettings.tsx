@@ -43,11 +43,8 @@ export default function SystemPromptSettings() {
         if (kind === "ok") setTimeout(() => setMsg(null), 4000);
     };
 
-    // Note: we re-sync from a fresh GET (refetch), not from the PATCH response.
-    // The settings service's update() returns its read inside the same
-    // transaction as the write, so the PATCH body reflects the *pre-write* row
-    // — trusting it would show the default right after saving a custom prompt.
-    // AgentLLMSettings.tsx works around the same quirk the same way.
+    // Re-sync from a fresh GET so every settings editor observes the same
+    // server-owned row after a save.
     const save = async () => {
         setSaving(true);
         setMsg(null);

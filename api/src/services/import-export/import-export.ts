@@ -10,7 +10,7 @@ import { badRequest } from '../../lib/http-error.js';
 // falls back to inline SQL.
 interface ContactsServiceLike {
   _findExisting(client: PoolClient, data: any): Promise<any>;
-  _insertRow(client: PoolClient, data: any, kind: string): Promise<any>;
+  _insertRow(client: PoolClient, data: any, kind: string): Promise<number | null>;
 }
 interface AccountsServiceLike {
   _findExisting(client: PoolClient, data: any): Promise<any>;
@@ -521,23 +521,25 @@ export class ImportExportService {
   // then full_name+kind), then either creates a new row or PATCH-merges
   // non-null portable fields into the matched row.
   async _upsertContactRow(client: PoolClient, c: any, defaultKind: string) {
-    const kind = c.kind || defaultKind || 'account';
-    const lookup = { email: c.email, full_name: c.full_name, kind };
+    const email = typeof c.email === 'string' ? c.email.trim().toLowerCase() || null : null;
+    const normalized = { ...c, email };
+    const kind = normalized.kind || defaultKind || 'account';
+    const lookup = { email: normalized.email, full_name: normalized.full_name, kind };
     let existing = this.contactsService
       ? await this.contactsService._findExisting(client, lookup)
       : null;
     if (!existing && !this.contactsService) {
       // Fallback path when the service wasn't injected. Mirrors _findExisting.
-      if (c.email) {
+      if (normalized.email) {
         existing = (await client.query(
-          'SELECT id FROM contacts WHERE LOWER(email) = LOWER($1) LIMIT 1',
-          [c.email]
+          'SELECT id FROM contacts WHERE LOWER(BTRIM(email)) = $1 ORDER BY id LIMIT 1',
+          [normalized.email]
         )).rows[0];
       }
-      if (!existing && c.full_name) {
+      if (!existing && normalized.full_name) {
         existing = (await client.query(
           'SELECT id FROM contacts WHERE full_name = $1 AND kind = $2 LIMIT 1',
-          [c.full_name, kind]
+          [normalized.full_name, kind]
         )).rows[0];
       }
     }
@@ -549,28 +551,47 @@ export class ImportExportService {
       // shared. The raw INSERT remains as a fallback for the (defensive) path
       // where no ContactsService was injected.
       if (this.contactsService) {
-        return this.contactsService._insertRow(client, c, kind);
+        const insertedId = await this.contactsService._insertRow(client, normalized, kind);
+        if (insertedId != null) return insertedId;
+
+        // A concurrent importer inserted this normalized email after the lookup.
+        // ON CONFLICT kept the transaction usable; resolve and merge that row.
+        existing = await this.contactsService._findExisting(client, lookup);
+        if (!existing) {
+          throw new Error('Contact import conflicted, but no normalized-email owner was found.');
+        }
+      } else {
+        const ins = await client.query(
+          `INSERT INTO contacts (user_id, full_name, company, title, email, phone, linkedin,
+                                 notes, kind, location_raw, city, state, country)
+           VALUES (current_setting('app.current_user_id')::bigint,
+                   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           ON CONFLICT DO NOTHING
+           RETURNING id`,
+          [
+            normalized.full_name, normalized.company || null, normalized.title || null, normalized.email,
+            normalized.phone || null, normalized.linkedin || null, normalized.notes || null, kind,
+            normalized.location_raw || null, normalized.city || null, normalized.state || null, normalized.country || null,
+          ]
+        );
+        if (ins.rows[0]) return ins.rows[0].id;
+        existing = normalized.email
+          ? (await client.query(
+              'SELECT id FROM contacts WHERE LOWER(BTRIM(email)) = $1 ORDER BY id LIMIT 1',
+              [normalized.email]
+            )).rows[0]
+          : null;
+        if (!existing) {
+          throw new Error('Contact import conflicted, but no normalized-email owner was found.');
+        }
       }
-      const ins = await client.query(
-        `INSERT INTO contacts (user_id, full_name, company, title, email, phone, linkedin,
-                               notes, kind, location_raw, city, state, country)
-         VALUES (current_setting('app.current_user_id')::bigint,
-                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-         RETURNING id`,
-        [
-          c.full_name, c.company || null, c.title || null, c.email || null,
-          c.phone || null, c.linkedin || null, c.notes || null, kind,
-          c.location_raw || null, c.city || null, c.state || null, c.country || null,
-        ]
-      );
-      return ins.rows[0].id;
     }
 
     const fields: string[] = [];
     const params: any[] = [existing.id];
     const set = (col: string, val: any) => { params.push(val); fields.push(`${col} = $${params.length}`); };
     for (const col of CONTACT_PORTABLE_COLS) {
-      if (c[col] != null && col !== 'kind') set(col, c[col]);
+      if (normalized[col] != null && col !== 'kind') set(col, normalized[col]);
     }
     if (fields.length > 0) {
       await client.query(`UPDATE contacts SET ${fields.join(', ')} WHERE id = $1`, params);

@@ -1,3 +1,5 @@
+import { apiFetch } from './offline';
+
 const BASE = '/api';
 
 // ── Notes-import job shapes (bulk directory/zip → meetings) ───────────────
@@ -218,14 +220,16 @@ export type ProvisioningTunnel = {
 
 export type ProvisioningRdpTunnel = ProvisioningTunnel;
 
+const OPPORTUNITY_PAGE_SIZE = 500;
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await apiFetch(`${BASE}${path}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
 }
 
 async function post<T>(path: string, data: any): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await apiFetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -235,7 +239,7 @@ async function post<T>(path: string, data: any): Promise<T> {
 }
 
 async function patch<T>(path: string, data: any): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await apiFetch(`${BASE}${path}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -245,7 +249,7 @@ async function patch<T>(path: string, data: any): Promise<T> {
 }
 
 async function put<T>(path: string, data: any): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await apiFetch(`${BASE}${path}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -255,10 +259,37 @@ async function put<T>(path: string, data: any): Promise<T> {
 }
 
 async function del<T = void>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: 'DELETE' });
+  const res = await apiFetch(`${BASE}${path}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   const text = await res.text();
   return (text ? JSON.parse(text) : undefined) as T;
+}
+
+async function getAllOpportunityPages(params: {
+  account_id?: number;
+  stage?: string;
+  sort?: string;
+  order?: 'asc' | 'desc';
+} = {}): Promise<{ opportunities: any[]; total: number }> {
+  const opportunities: any[] = [];
+  let total = 0;
+
+  do {
+    const qs = new URLSearchParams();
+    if (params.account_id) qs.set('account_id', String(params.account_id));
+    if (params.stage) qs.set('stage', params.stage);
+    if (params.sort) qs.set('sort', params.sort);
+    if (params.order) qs.set('order', params.order);
+    qs.set('limit', String(OPPORTUNITY_PAGE_SIZE));
+    if (opportunities.length) qs.set('offset', String(opportunities.length));
+
+    const page = await get<{ opportunities: any[]; total: number }>(`/opportunities?${qs.toString()}`);
+    opportunities.push(...page.opportunities);
+    total = page.total;
+    if (!page.opportunities.length) break;
+  } while (opportunities.length < total);
+
+  return { opportunities, total };
 }
 
 export const api = {
@@ -322,8 +353,14 @@ export const api = {
       reports_to_contact_id: reportsToContactId,
     }),
 
-  replaceOrgChart: (accountId: number, edges: import('./types').OrgChartEdge[]) =>
-    put<import('./types').OrgChart>(`/accounts/${accountId}/org-chart`, { edges }),
+  removeOrgChartContact: (accountId: number, contactId: number) =>
+    del<import('./types').OrgChart>(`/accounts/${accountId}/org-chart/contacts/${contactId}`),
+
+  replaceOrgChart: (accountId: number, edges: import('./types').OrgChartEdge[], rootContactIds: number[] = []) =>
+    put<import('./types').OrgChart>(`/accounts/${accountId}/org-chart`, {
+      edges,
+      root_contact_ids: rootContactIds,
+    }),
 
   createContact: (accountId: number, data: any) =>
     post<any>(`/accounts/${accountId}/contacts`, data),
@@ -600,6 +637,8 @@ export const api = {
     return get<{ opportunities: any[]; total: number }>(`/opportunities${q ? '?' + q : ''}`);
   },
 
+  getAllOpportunities: getAllOpportunityPages,
+
   getOpportunitiesByAccount: (accountId: number) =>
     get<any[]>(`/accounts/${accountId}/opportunities`),
 
@@ -708,7 +747,7 @@ export const api = {
   // A missing row (404) means "no profile yet" — surfaced as null so the GUI
   // can render the empty form without spamming the console.
   getAccountDetails: async (accountId: number) => {
-    const res = await fetch(`${BASE}/accounts/${accountId}/details`);
+    const res = await apiFetch(`${BASE}/accounts/${accountId}/details`);
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
@@ -731,7 +770,7 @@ export const api = {
   importNotesZip: async (file: File) => {
     // Raw octet-stream like the backup upload — the API unpacks text entries
     // server-side. No Content-Type juggling, no multipart.
-    const res = await fetch(`${BASE}/notes-import/upload-zip`, {
+    const res = await apiFetch(`${BASE}/notes-import/upload-zip`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream' },
       body: file,
@@ -819,9 +858,9 @@ export const api = {
   // browser-localStorage state. Background workers read the same row so
   // they hit the same LLM the user has configured for the in-app agent.
   getAgentSettings: () =>
-    get<{ provider: string | null; model: string | null; local_base_url: string | null; system_prompt: string | null; default_system_prompt: string; updated_at: string | null }>('/agent/settings'),
-  patchAgentSettings: (data: { provider?: string | null; model?: string | null; local_base_url?: string | null; system_prompt?: string | null }) =>
-    patch<{ provider: string | null; model: string | null; local_base_url: string | null; system_prompt: string | null; default_system_prompt: string; updated_at: string | null }>('/agent/settings', data),
+    get<{ provider: string | null; model: string | null; local_base_url: string | null; has_local_api_key: boolean; system_prompt: string | null; default_system_prompt: string; updated_at: string | null }>('/agent/settings'),
+  patchAgentSettings: (data: { provider?: string | null; model?: string | null; local_base_url?: string | null; local_api_key?: string | null; system_prompt?: string | null }) =>
+    patch<{ provider: string | null; model: string | null; local_base_url: string | null; has_local_api_key: boolean; system_prompt: string | null; default_system_prompt: string; updated_at: string | null }>('/agent/settings', data),
 
   // Internal domains (per-user) — domains belonging to the user's own
   // company. Used by the from-emails meeting flow to tag attendees from
@@ -866,7 +905,7 @@ export const api = {
   importBackup: async (file: File) => {
     // Send the file as a raw octet-stream — the API streams it straight to disk
     // without buffering, so multi-GB dumps don't OOM the request handler.
-    const res = await fetch(
+    const res = await apiFetch(
       `/api/backup/import?filename=${encodeURIComponent(file.name)}`,
       {
         method: 'POST',

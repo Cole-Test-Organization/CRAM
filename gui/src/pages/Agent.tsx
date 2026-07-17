@@ -22,6 +22,7 @@ import type {
     AgentLocationState,
 } from "../types/agent";
 import { formatRelative } from "../utils/date";
+import { apiFetch } from "../lib/offline";
 
 const DEFAULT_LIMIT = 5;
 const EXPANDED_LIMIT = 50;
@@ -57,12 +58,18 @@ export default function Agent() {
         provider: string;
         model: string;
         localBaseUrl: string;
+        localApiKey: string;
+        hasLocalApiKey: boolean;
+        localApiKeyDirty: boolean;
         saving: boolean;
         msg: { kind: "ok" | "err"; text: string } | null;
     }>({
         provider: "local",
         model: "",
         localBaseUrl: "",
+        localApiKey: "",
+        hasLocalApiKey: false,
+        localApiKeyDirty: false,
         saving: false,
         msg: null,
     });
@@ -77,18 +84,37 @@ export default function Agent() {
             provider: "local",
             model: s.model || "",
             localBaseUrl: s.local_base_url || "",
+            localApiKey: "",
+            hasLocalApiKey: s.has_local_api_key,
+            localApiKeyDirty: false,
         });
         agentSettingsSeeded = true;
     });
     const saveAgentSettings = async () => {
         setAgentSettings({ saving: true, msg: null });
         try {
-            await api.patchAgentSettings({
+            const payload: {
+                provider: string | null;
+                model: string | null;
+                local_base_url: string | null;
+                local_api_key?: string | null;
+            } = {
                 provider: agentSettings.provider || null,
                 model: agentSettings.model.trim() || null,
                 local_base_url: agentSettings.localBaseUrl.trim() || null,
+            };
+            if (agentSettings.localApiKeyDirty) {
+                payload.local_api_key =
+                    agentSettings.localApiKey.trim() || null;
+            }
+            await api.patchAgentSettings(payload);
+            const fresh = await refetchAgentSettings();
+            setAgentSettings({
+                localApiKey: "",
+                hasLocalApiKey:
+                    fresh?.has_local_api_key ?? agentSettings.hasLocalApiKey,
+                localApiKeyDirty: false,
             });
-            await refetchAgentSettings();
             setAgentSettings("msg", { kind: "ok", text: "Saved" });
             setTimeout(() => setAgentSettings("msg", null), 3000);
         } catch (err: any) {
@@ -120,7 +146,7 @@ export default function Agent() {
                 const params = new URLSearchParams();
                 if (q) params.set("search", q);
                 params.set("limit", String(limit));
-                const res = await fetch(
+                const res = await apiFetch(
                     `/api/agent/sessions?${params.toString()}`,
                 );
                 if (!res.ok) return { total: 0, sessions: [] };
@@ -162,7 +188,7 @@ export default function Agent() {
         e.stopPropagation();
         if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
         try {
-            const res = await fetch(`/api/agent/sessions/${id}`, {
+            const res = await apiFetch(`/api/agent/sessions/${id}`, {
                 method: "DELETE",
             });
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -191,7 +217,7 @@ export default function Agent() {
         if (running() || loadingSession()) return;
         setLoadingSession(true);
         try {
-            const res = await fetch(`/api/agent/sessions/${id}`);
+            const res = await apiFetch(`/api/agent/sessions/${id}`);
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
             const data = (await res.json()) as {
                 id: string;
@@ -234,7 +260,7 @@ export default function Agent() {
         abortController = new AbortController();
 
         try {
-            const res = await fetch("/api/agent/query", {
+            const res = await apiFetch("/api/agent/query", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -436,6 +462,7 @@ export default function Agent() {
                     </label>
 
                     <Show when={agentSettings.provider === "local"}>
+                        <>
                         <label class="flex flex-col gap-1">
                             <span class="text-[11px] uppercase tracking-widest text-base-300">
                                 Local server URL
@@ -505,6 +532,65 @@ export default function Agent() {
                                 this device.
                             </span>
                         </label>
+
+                            <div class="flex flex-col gap-1">
+                                <label
+                                    for="agent-inline-local-api-key"
+                                    class="text-[11px] uppercase tracking-widest text-base-300"
+                                >
+                                    API key / bearer token
+                                </label>
+                                <input
+                                    id="agent-inline-local-api-key"
+                                    type="password"
+                                    value={agentSettings.localApiKey}
+                                    onInput={(e) =>
+                                        setAgentSettings({
+                                            localApiKey: e.currentTarget.value,
+                                            localApiKeyDirty: true,
+                                        })
+                                    }
+                                    autocomplete="new-password"
+                                    placeholder={
+                                        agentSettings.hasLocalApiKey &&
+                                        !agentSettings.localApiKeyDirty
+                                            ? "Encrypted token saved — enter a replacement"
+                                            : "Paste the token value"
+                                    }
+                                    class="input-vintage font-mono"
+                                />
+                                <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                    <span class="text-[10px] text-base-500">
+                                        {agentSettings.hasLocalApiKey &&
+                                        !agentSettings.localApiKeyDirty
+                                            ? "An encrypted token is saved. Leave blank to keep it."
+                                            : agentSettings.localApiKeyDirty &&
+                                                !agentSettings.localApiKey.trim()
+                                              ? "The saved token will be removed when you save."
+                                              : "Sent as Authorization: Bearer <token>; plaintext is never returned."}
+                                    </span>
+                                    <Show
+                                        when={
+                                            agentSettings.hasLocalApiKey ||
+                                            agentSettings.localApiKey.length > 0
+                                        }
+                                    >
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() =>
+                                                setAgentSettings({
+                                                    localApiKey: "",
+                                                    localApiKeyDirty: true,
+                                                })
+                                            }
+                                        >
+                                            Clear token
+                                        </Button>
+                                    </Show>
+                                </div>
+                            </div>
+                        </>
                     </Show>
 
                     <Show when={agentSettings.msg}>
@@ -527,9 +613,9 @@ export default function Agent() {
                     </div>
 
                     <div class="text-[10px] text-base-500 border-t border-base-700 pt-2">
-                        No auth by default — set LOCAL_API_KEY on the server if
-                        your endpoint requires a bearer token. New sessions
-                        remember their model; resume to keep using it.
+                        The optional bearer token is encrypted in the database
+                        and never shown again after saving. New sessions remember
+                        their model; resume to keep using it.
                     </div>
                 </div>
                 <SystemPromptSettings />

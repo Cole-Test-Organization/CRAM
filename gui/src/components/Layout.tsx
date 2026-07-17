@@ -6,6 +6,7 @@ import {
     type ParentProps,
 } from "solid-js";
 import { useNavHistory } from "../lib/navigation";
+import SyncStatus, { OfflineNotice } from "./SyncStatus";
 
 export default function Layout(props: ParentProps) {
     const location = useLocation();
@@ -87,6 +88,9 @@ export default function Layout(props: ParentProps) {
                 <div class="text-[28px] font-bold text-surf-300 font-[family-name:var(--font-display)] tracking-wider uppercase">
                     CRAM
                 </div>
+                <div class="ml-auto min-w-0">
+                    <SyncStatus compact />
+                </div>
             </header>
 
             {/* Drawer overlay — only below md, only when open. */}
@@ -101,7 +105,7 @@ export default function Layout(props: ParentProps) {
             {/* Sidebar / drawer. Below md: fixed, off-canvas, translateX(-100%)
           by default, translateX(0) when open. At md+: behaves as before. */}
             <aside
-                class={`w-sidebar bg-base-900 border-r-2 border-base-600 py-5 fixed top-0 bottom-0 overflow-y-auto z-50 transform transition-transform duration-200 ease-out
+                class={`w-sidebar bg-base-900 border-r-2 border-base-600 py-5 fixed top-0 bottom-0 overflow-y-auto z-50 transform transition-transform duration-200 ease-out flex flex-col
           ${drawerOpen() ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
             >
                 <div class="px-5 pb-5 mb-4 border-b-2 border-base-600 flex items-center justify-between">
@@ -137,12 +141,19 @@ export default function Layout(props: ParentProps) {
                     {link("/import-export", "Import / Export")}
                     {link("/settings", "Settings")}
                 </nav>
+                <div class="mt-auto px-3 pt-5">
+                    <SyncStatus />
+                    <div class="text-[9px] text-base-500 leading-relaxed mt-2 px-1">
+                        Offline mode is read-only. Open CRAM while connected to refresh this device.
+                    </div>
+                </div>
             </aside>
             {/* min-w-0: let wide content (org chart canvas, tables) scroll inside
                 its own overflow container instead of stretching the page. */}
             <main class="flex-1 min-w-0 py-5 px-4 md:ml-sidebar md:py-8 md:px-10">
                 {props.children}
             </main>
+            <OfflineNotice />
         </div>
     );
 }

@@ -27,24 +27,24 @@ export default function OpportunitiesList(props: Props = {}) {
   const [modalOpen, setModalOpen] = createSignal(false);
   const navigate = useNavigate();
 
-  const [data, { refetch }] = createResource(
-    () => ({ accountId: props.accountId, stage: stageFilter() }),
-    async ({ accountId, stage }) =>
-      api.getOpportunities({
-        account_id: accountId,
-        stage: stage || undefined,
-        sort: 'created_at',
-        order: 'desc',
-        limit: 500,
-      }),
-  );
+  // One complete, stable collection is cached for offline use. Account/stage
+  // filtering stays client-side so changing a filter never requires a network
+  // round-trip or a separately cached query URL.
+  const [data, { refetch }] = createResource(() => api.getAllOpportunities({
+    sort: 'created_at',
+    order: 'desc',
+  }));
 
   const filtered = createMemo(() => {
     const q = filter().toLowerCase();
     const stage = stageFilter();
-    const opps = data()?.opportunities || [];
+    let opps = data()?.opportunities || [];
+    if (props.accountId !== undefined && props.accountId !== null) {
+      opps = opps.filter((o: any) => o.account_id === props.accountId);
+    }
     const result = opps.filter((o: any) => {
       if (!stage && STAGE_BY_ID[o.stage as OpportunityStage]?.terminal) return false;
+      if (stage && o.stage !== stage) return false;
       if (!q) return true;
       return (
         o.name.toLowerCase().includes(q) ||

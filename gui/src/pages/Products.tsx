@@ -8,6 +8,7 @@ import {
 } from '../components/FormModals';
 import Button from '../components/Button';
 import { vendorProductLabel } from '../lib/vendorProduct';
+import { apiFetch } from '../lib/offline';
 
 const VENDOR_PRODUCT_CATEGORIES = [
   'firewall', 'edr', 'siem', 'idp', 'mfa', 'pam',
@@ -166,15 +167,19 @@ function VendorsTab() {
   const [needsReviewOnly, setNeedsReviewOnly] = createSignal(false);
   const [includeDeleted, setIncludeDeleted] = createSignal(false);
 
-  const [vendors, { refetch }] = createResource(
-    () => ({ search: search(), needs_review: needsReviewOnly() || undefined, include_deleted: includeDeleted() }),
-    (params) => api.getVendors({
-      search: params.search || undefined,
-      needs_review: params.needs_review,
-      include_deleted: params.include_deleted,
-      limit: 500,
-    })
-  );
+  const [vendors, { refetch }] = createResource(() => api.getVendors({
+    include_deleted: true,
+  }));
+  const visibleVendors = createMemo(() => {
+    const query = search().trim().toLowerCase();
+    return (vendors()?.vendors || []).filter((vendor: any) => {
+      if (!includeDeleted() && vendor.deleted_at) return false;
+      if (needsReviewOnly() && !vendor.needs_review) return false;
+      if (!query) return true;
+      return [vendor.name, vendor.slug, vendor.website]
+        .some((value) => String(value || '').toLowerCase().includes(query));
+    });
+  });
 
   const softDelete = async (v: any) => {
     if (!confirm(`Soft-delete "${v.name}"? Existing account_details references are preserved.`)) return;
@@ -186,7 +191,7 @@ function VendorsTab() {
     // Restore via PATCH — clear deleted_at would require the dedicated endpoint, but
     // the GUI is fine going through the PATCH endpoint since the service also clears
     // it. Actually we should use the dedicated restore route — call it via fetch.
-    await fetch(`/api/vendors/${v.id}/restore`, { method: 'POST' });
+    await apiFetch(`/api/vendors/${v.id}/restore`, { method: 'POST' });
     refetch();
   };
 
@@ -215,7 +220,7 @@ function VendorsTab() {
 
       <div class="panel panel-accent">
         <Show when={!vendors.loading} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
-          <For each={vendors()?.vendors || []} fallback={
+          <For each={visibleVendors()} fallback={
             <div class="text-base-400 text-center p-8 text-sm italic">
               No vendors {search() ? `match "${search()}"` : 'yet'}. <button class="text-surf-300 underline" onClick={() => setVendorModal({ open: true })}>Create one</button>.
             </div>
@@ -266,24 +271,24 @@ function VendorProductsTab() {
   const [needsReviewOnly, setNeedsReviewOnly] = createSignal(false);
   const [includeDeleted, setIncludeDeleted] = createSignal(false);
 
-  const [products, { refetch }] = createResource(
-    () => ({
-      search: search(),
-      category: category(),
-      needs_review: needsReviewOnly() || undefined,
-      include_deleted: includeDeleted(),
-    }),
-    (params) => api.getVendorProducts({
-      search: params.search || undefined,
-      category: params.category || undefined,
-      needs_review: params.needs_review,
-      include_deleted: params.include_deleted,
-      limit: 500,
-    })
-  );
+  const [products, { refetch }] = createResource(() => api.getVendorProducts({
+    include_deleted: true,
+  }));
+
+  const visibleProducts = createMemo(() => {
+    const query = search().trim().toLowerCase();
+    return (products()?.products || []).filter((product: any) => {
+      if (!includeDeleted() && product.deleted_at) return false;
+      if (needsReviewOnly() && !product.needs_review) return false;
+      if (category() && product.category !== category()) return false;
+      if (!query) return true;
+      return [product.name, product.slug, product.vendor_name, product.vendor_slug]
+        .some((value) => String(value || '').toLowerCase().includes(query));
+    });
+  });
 
   const grouped = createMemo(() => {
-    const list = products()?.products || [];
+    const list = visibleProducts();
     const byCategory = new Map<string, any[]>();
     for (const p of list) {
       const arr = byCategory.get(p.category) || [];
@@ -300,7 +305,7 @@ function VendorProductsTab() {
   };
 
   const restore = async (p: any) => {
-    await fetch(`/api/vendor-products/${p.id}/restore`, { method: 'POST' });
+    await apiFetch(`/api/vendor-products/${p.id}/restore`, { method: 'POST' });
     refetch();
   };
 

@@ -1,12 +1,10 @@
-// Per-user agent config — provider, model, local inference server URL, and the
-// agent's base system prompt. Read by the agent loop (as defaults; the request
-// body still wins for per-call overrides) and by background workers like the
-// contact-enrichment formatter that have no request context.
+// Per-user agent config — provider, model, local inference server URL, encrypted
+// bearer token, and the agent's base system prompt. Read by the agent loop and
+// background workers so every local-LLM call uses the same saved configuration.
 //
-// The only provider is `local` (an OpenAI-compatible inference server such as
-// Ollama). Provider and server URL fall back to env-backed defaults
-// (AGENT_PROVIDER / LOCAL_BASE_URL). The default *model*, when the user hasn't
-// chosen one, is resolved from the server's installed models — see getEffective.
+// The bearer token is write-only at the HTTP/MCP boundary. It is encrypted with
+// AES-256-GCM before being written to user_agent_settings and decrypted only for
+// an outbound request to the configured inference server.
 
 import { withUser } from '../../db/connection.js';
 import {
@@ -17,11 +15,47 @@ import {
 } from '../../agent/defaults.js';
 import { listModels } from '../../agent/providers/local.js';
 import { badRequest } from '../../lib/http-error.js';
+import { decryptSecret, encryptSecret } from '../provisioning/secrets/crypto.js';
 
 const VALID_PROVIDERS = new Set(['local']);
+const MAX_API_KEY_LENGTH = 8192;
 
-function normalize(patch: Record<string, unknown>) {
-  const out: { provider?: string | null; model?: string | null; local_base_url?: string | null; system_prompt?: string | null } = {};
+interface StoredAgentSettings {
+  provider: string | null;
+  model: string | null;
+  local_base_url: string | null;
+  system_prompt: string | null;
+  local_api_key_ciphertext: Buffer | null;
+  local_api_key_iv: Buffer | null;
+  local_api_key_auth_tag: Buffer | null;
+  local_api_key_algo: string | null;
+  local_api_key_key_version: number | null;
+  updated_at: Date | string | null;
+}
+
+interface AgentSettingsPatch {
+  provider?: string | null;
+  model?: string | null;
+  local_base_url?: string | null;
+  local_api_key?: string | null;
+  system_prompt?: string | null;
+}
+
+const EMPTY_STORED_SETTINGS: StoredAgentSettings = {
+  provider: null,
+  model: null,
+  local_base_url: null,
+  system_prompt: null,
+  local_api_key_ciphertext: null,
+  local_api_key_iv: null,
+  local_api_key_auth_tag: null,
+  local_api_key_algo: null,
+  local_api_key_key_version: null,
+  updated_at: null,
+};
+
+function normalize(patch: Record<string, unknown>): AgentSettingsPatch {
+  const out: AgentSettingsPatch = {};
   if (patch.provider !== undefined) {
     const v = patch.provider == null ? null : String(patch.provider).trim().toLowerCase();
     if (v && !VALID_PROVIDERS.has(v)) {
@@ -42,6 +76,19 @@ function normalize(patch: Record<string, unknown>) {
     }
     out.local_base_url = v || null;
   }
+  if (patch.local_api_key !== undefined) {
+    let v = patch.local_api_key == null ? null : String(patch.local_api_key).trim();
+    // Be forgiving when a user pastes the complete header value into the token
+    // field. Only the credential itself is encrypted; the provider adds Bearer.
+    if (v) v = v.replace(/^Bearer\s+/i, '').trim();
+    if (v && /[\r\n]/.test(v)) {
+      throw badRequest('local_api_key must not contain line breaks.');
+    }
+    if (v && v.length > MAX_API_KEY_LENGTH) {
+      throw badRequest(`local_api_key must be ${MAX_API_KEY_LENGTH} characters or fewer.`);
+    }
+    out.local_api_key = v || null;
+  }
   if (patch.system_prompt !== undefined) {
     // Empty/whitespace-only clears the customization → null → built-in default
     // applies. Same "null means use the default" contract as the fields above.
@@ -51,17 +98,11 @@ function normalize(patch: Record<string, unknown>) {
   return out;
 }
 
-// Resolve a default model from what the server actually has installed — no OS
-// guessing. Preference order:
-//   1. `${FALLBACK_MODEL}-mlx` — the MLX build. Its presence means an Apple
-//      Silicon server (you can't pull/run MLX elsewhere), so it's the faster
-//      build exactly where it exists.
-//   2. `${FALLBACK_MODEL}` exact — the plain GGUF build (e.g. on Linux).
-//   3. any other variant/quant of the base tag.
-//   4. whatever's installed first.
-// null if nothing is installed or the server can't be reached.
-async function pickInstalledModel(baseUrl: string) {
-  const models: string[] = await listModels(baseUrl);
+// Resolve a default model from what the authenticated server actually exposes.
+// The bearer token must be used here too: llama.cpp can protect /v1/models as
+// well as /v1/chat/completions.
+async function pickInstalledModel(baseUrl: string, apiKey: string | null) {
+  const models: string[] = await listModels(baseUrl, apiKey);
   if (!models.length) return null;
   return (
     models.find((m) => m === `${FALLBACK_MODEL}-mlx`) ||
@@ -71,80 +112,139 @@ async function pickInstalledModel(baseUrl: string) {
   );
 }
 
+function decryptApiKey(stored: StoredAgentSettings): string | null {
+  if (!stored.local_api_key_ciphertext) return null;
+  if (!stored.local_api_key_iv || !stored.local_api_key_auth_tag) {
+    throw new Error('Stored local LLM API key is missing encryption metadata.');
+  }
+  return decryptSecret({
+    ciphertext: stored.local_api_key_ciphertext,
+    iv: stored.local_api_key_iv,
+    authTag: stored.local_api_key_auth_tag,
+  });
+}
+
 export class AgentSettingsService {
-  // Returns the raw stored row (or a row of all-nulls if none exists yet),
-  // plus `default_system_prompt` — the built-in default rendered live — so the
-  // GUI/MCP can show the user what they'd get if they reset (system_prompt null
-  // → the default applies). The stored `system_prompt` stays null until the
-  // user actually customizes it.
-  async get(userId: number) {
-    const default_system_prompt = defaultSystemPrompt();
+  private async getStored(userId: number): Promise<StoredAgentSettings> {
     return withUser(userId, async (client) => {
       const row = (await client.query(
-        `SELECT provider, model, local_base_url, system_prompt, updated_at
+        `SELECT provider, model, local_base_url, system_prompt,
+                local_api_key_ciphertext, local_api_key_iv,
+                local_api_key_auth_tag, local_api_key_algo,
+                local_api_key_key_version, updated_at
          FROM user_agent_settings
          WHERE user_id = current_setting('app.current_user_id')::bigint`
-      )).rows[0];
-      if (!row) {
-        return {
-          provider: null, model: null, local_base_url: null,
-          system_prompt: null, default_system_prompt, updated_at: null,
-        };
-      }
-      return { ...row, default_system_prompt };
+      )).rows[0] as StoredAgentSettings | undefined;
+      return row || { ...EMPTY_STORED_SETTINGS };
     });
   }
 
-  // Returns the effective config a worker should use — merging the user's
-  // stored values over env defaults. Workers (loop.js, contact enrichment)
-  // call this so they don't have to re-implement the fallback chain.
+  // Public settings are deliberately write-only for the token. Callers learn
+  // only whether one is saved, never its plaintext or ciphertext.
+  async get(userId: number) {
+    const stored = await this.getStored(userId);
+    return {
+      provider: stored.provider,
+      model: stored.model,
+      local_base_url: stored.local_base_url,
+      has_local_api_key: Boolean(stored.local_api_key_ciphertext),
+      system_prompt: stored.system_prompt,
+      default_system_prompt: defaultSystemPrompt(),
+      updated_at: stored.updated_at,
+    };
+  }
+
+  // Internal-only effective config. The decrypted credential must never be
+  // returned from an HTTP/MCP handler or written to a log.
   async getEffective(userId: number) {
-    const stored = await this.get(userId);
-    // Coerce any legacy/unknown stored provider (e.g. a value from before the
-    // local-only switch) to the default so the provider registry never throws.
-    const provider = VALID_PROVIDERS.has(stored.provider) ? stored.provider : DEFAULT_PROVIDER;
+    const stored = await this.getStored(userId);
+    const provider = VALID_PROVIDERS.has(stored.provider || '') ? stored.provider! : DEFAULT_PROVIDER;
     const local_base_url = stored.local_base_url || DEFAULT_LOCAL_BASE_URL;
-    // Model: the user's saved choice wins; otherwise resolve it from what the
-    // configured server actually has installed (correct on Mac/Linux/remote
-    // without guessing), falling back to a static tag only if it's unreachable.
-    const model = stored.model || (await pickInstalledModel(local_base_url)) || FALLBACK_MODEL;
+    const local_api_key = decryptApiKey(stored);
+    const model = stored.model || (await pickInstalledModel(local_base_url, local_api_key)) || FALLBACK_MODEL;
     return {
       provider,
       model,
       local_base_url,
-      // The base system prompt the agent loop should run with: the user's saved
-      // text, or the built-in default when they haven't customized it.
-      system_prompt: stored.system_prompt || stored.default_system_prompt,
+      local_api_key,
+      system_prompt: stored.system_prompt || defaultSystemPrompt(),
     };
   }
 
-  // Patch-style upsert: only fields present in the input are touched.
+  // Patch-style upsert: omitted fields are preserved. local_api_key is encrypted
+  // when non-empty and all encrypted columns are cleared when it is null/blank.
   async update(userId: number, patch: Record<string, unknown>) {
     const fields = normalize(patch || {});
-    if (Object.keys(fields).length === 0) {
-      return this.get(userId);
-    }
+    if (Object.keys(fields).length === 0) return this.get(userId);
+
     return withUser(userId, async (client) => {
-      // Read existing, merge, then upsert. Simpler than constructing a
-      // dynamic UPDATE with conditional COALESCE per field.
-      const existing = (await client.query(
-        `SELECT provider, model, local_base_url, system_prompt
+      const existing = ((await client.query(
+        `SELECT provider, model, local_base_url, system_prompt,
+                local_api_key_ciphertext, local_api_key_iv,
+                local_api_key_auth_tag, local_api_key_algo,
+                local_api_key_key_version, updated_at
          FROM user_agent_settings
          WHERE user_id = current_setting('app.current_user_id')::bigint`
-      )).rows[0] || { provider: null, model: null, local_base_url: null, system_prompt: null };
+      )).rows[0] as StoredAgentSettings | undefined) || { ...EMPTY_STORED_SETTINGS };
 
       const merged = { ...existing, ...fields };
-      await client.query(
-        `INSERT INTO user_agent_settings (user_id, provider, model, local_base_url, system_prompt)
-         VALUES (current_setting('app.current_user_id')::bigint, $1, $2, $3, $4)
+      if (fields.local_api_key !== undefined) {
+        if (fields.local_api_key) {
+          const encrypted = encryptSecret(fields.local_api_key);
+          merged.local_api_key_ciphertext = encrypted.ciphertext;
+          merged.local_api_key_iv = encrypted.iv;
+          merged.local_api_key_auth_tag = encrypted.authTag;
+          merged.local_api_key_algo = encrypted.algo;
+          merged.local_api_key_key_version = 1;
+        } else {
+          merged.local_api_key_ciphertext = null;
+          merged.local_api_key_iv = null;
+          merged.local_api_key_auth_tag = null;
+          merged.local_api_key_algo = null;
+          merged.local_api_key_key_version = null;
+        }
+      }
+
+      const updated = (await client.query(
+        `INSERT INTO user_agent_settings
+           (user_id, provider, model, local_base_url, system_prompt,
+            local_api_key_ciphertext, local_api_key_iv, local_api_key_auth_tag,
+            local_api_key_algo, local_api_key_key_version)
+         VALUES (current_setting('app.current_user_id')::bigint,
+                 $1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (user_id) DO UPDATE
            SET provider = EXCLUDED.provider,
                model = EXCLUDED.model,
                local_base_url = EXCLUDED.local_base_url,
-               system_prompt = EXCLUDED.system_prompt`,
-        [merged.provider, merged.model, merged.local_base_url, merged.system_prompt]
-      );
-      return this.get(userId);
+               system_prompt = EXCLUDED.system_prompt,
+               local_api_key_ciphertext = EXCLUDED.local_api_key_ciphertext,
+               local_api_key_iv = EXCLUDED.local_api_key_iv,
+               local_api_key_auth_tag = EXCLUDED.local_api_key_auth_tag,
+               local_api_key_algo = EXCLUDED.local_api_key_algo,
+               local_api_key_key_version = EXCLUDED.local_api_key_key_version
+         RETURNING updated_at`,
+        [
+          merged.provider,
+          merged.model,
+          merged.local_base_url,
+          merged.system_prompt,
+          merged.local_api_key_ciphertext,
+          merged.local_api_key_iv,
+          merged.local_api_key_auth_tag,
+          merged.local_api_key_algo,
+          merged.local_api_key_key_version,
+        ]
+      )).rows[0];
+
+      return {
+        provider: merged.provider,
+        model: merged.model,
+        local_base_url: merged.local_base_url,
+        has_local_api_key: Boolean(merged.local_api_key_ciphertext),
+        system_prompt: merged.system_prompt,
+        default_system_prompt: defaultSystemPrompt(),
+        updated_at: updated?.updated_at ?? null,
+      };
     });
   }
 }
