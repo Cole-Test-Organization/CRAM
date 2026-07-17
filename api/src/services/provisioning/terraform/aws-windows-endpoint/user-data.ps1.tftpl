@@ -87,20 +87,40 @@ function Get-AdminPassword {
   }
 
   # The password lives in SSM Parameter Store (SecureString), never in user_data or the
-  # SSM document body. Fetch it at boot with the instance role. Non-fatal: if the fetch
-  # fails (no role, no AWS CLI), leave the admin login unchanged so the EC2 key-pair
-  # password-decrypt fallback still works.
+  # SSM document body. Fetch it at boot with the instance role. Amazon Windows AMIs ship
+  # the AWS Tools for PowerShell but NOT the aws CLI, so the module is the primary path;
+  # the CLI is only a fallback for custom AMIs that have it. Non-fatal: if every fetch
+  # fails, leave the admin login unchanged so the EC2 key-pair password-decrypt fallback
+  # still works.
   try {
-    $Value = & aws ssm get-parameter --name $AdminPasswordParam --with-decryption --query "Parameter.Value" --output text --region $Region 2>$null
-    if ($LASTEXITCODE -eq 0 -and $Value) {
-      return $Value.Trim()
+    if (Get-Command Get-SSMParameterValue -ErrorAction SilentlyContinue) {
+      $Result = Get-SSMParameterValue -Name $AdminPasswordParam -WithDecryption $true -Region $Region
+      $Value = ($Result.Parameters | Select-Object -First 1).Value
+      if ($Value) {
+        return $Value.Trim()
+      }
+      Write-Host "AWS Tools for PowerShell returned no value for $AdminPasswordParam."
+    } else {
+      Write-Host "AWS Tools for PowerShell (Get-SSMParameterValue) not available."
     }
-    Write-Host "Could not fetch the admin password from SSM Parameter Store (exit $LASTEXITCODE); leaving local admin credentials unchanged."
-    return $null
   } catch {
-    Write-Host "Could not fetch the admin password from SSM Parameter Store: $($_.Exception.Message)"
-    return $null
+    Write-Host "AWS Tools for PowerShell could not fetch the admin password: $($_.Exception.Message)"
   }
+
+  try {
+    if (Get-Command aws -ErrorAction SilentlyContinue) {
+      $Value = & aws ssm get-parameter --name $AdminPasswordParam --with-decryption --query "Parameter.Value" --output text --region $Region 2>$null
+      if ($LASTEXITCODE -eq 0 -and $Value) {
+        return $Value.Trim()
+      }
+      Write-Host "aws CLI could not fetch the admin password (exit $LASTEXITCODE)."
+    }
+  } catch {
+    Write-Host "aws CLI could not fetch the admin password: $($_.Exception.Message)"
+  }
+
+  Write-Host "Could not fetch the admin password from SSM Parameter Store; leaving local admin credentials unchanged."
+  return $null
 }
 
 function Set-LocalAdminCredential {
