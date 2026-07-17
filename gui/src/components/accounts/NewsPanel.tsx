@@ -2,6 +2,7 @@ import { createEffect, createResource, createSignal, For, onCleanup, Show } from
 import { api } from '../../lib/api';
 import Button from '../Button';
 import { formatRelative } from '../../utils/date';
+import { isOffline } from '../../lib/offline';
 
 // Per-account News tab. Read-only until the user refreshes — a refresh fetches
 // Google News headlines and re-ranks them on the local LLM, which can take
@@ -42,7 +43,7 @@ export default function NewsPanel(props: { accountId: number }) {
 
   // Pick up an in-flight refresh started elsewhere (the morning job, another tab).
   createEffect(() => {
-    if (status() === 'refreshing') poll();
+    if (status() === 'refreshing' && !isOffline()) poll();
   });
 
   const refresh = async () => {
@@ -82,7 +83,7 @@ export default function NewsPanel(props: { accountId: number }) {
           <button type="button" class="press press-ghost press-sm" onClick={() => setShowPrompt((v) => !v)}>
             {showPrompt() ? 'Hide ranking prompt' : 'Ranking prompt'}
           </button>
-          <Button variant="primary" size="sm" disabled={isRefreshing()} onClick={refresh}>
+          <Button variant="primary" size="sm" disabled={isRefreshing() || isOffline()} onClick={refresh} title={isOffline() ? 'Reconnect to refresh news' : undefined}>
             {isRefreshing() ? 'Refreshing…' : 'Refresh'}
           </Button>
         </div>

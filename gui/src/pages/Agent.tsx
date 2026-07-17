@@ -22,6 +22,7 @@ import type {
     AgentLocationState,
 } from "../types/agent";
 import { formatRelative } from "../utils/date";
+import { apiFetch } from "../lib/offline";
 
 const DEFAULT_LIMIT = 5;
 const EXPANDED_LIMIT = 50;
@@ -120,7 +121,7 @@ export default function Agent() {
                 const params = new URLSearchParams();
                 if (q) params.set("search", q);
                 params.set("limit", String(limit));
-                const res = await fetch(
+                const res = await apiFetch(
                     `/api/agent/sessions?${params.toString()}`,
                 );
                 if (!res.ok) return { total: 0, sessions: [] };
@@ -162,7 +163,7 @@ export default function Agent() {
         e.stopPropagation();
         if (!confirm(`Delete "${title}"? This cannot be undone.`)) return;
         try {
-            const res = await fetch(`/api/agent/sessions/${id}`, {
+            const res = await apiFetch(`/api/agent/sessions/${id}`, {
                 method: "DELETE",
             });
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -191,7 +192,7 @@ export default function Agent() {
         if (running() || loadingSession()) return;
         setLoadingSession(true);
         try {
-            const res = await fetch(`/api/agent/sessions/${id}`);
+            const res = await apiFetch(`/api/agent/sessions/${id}`);
             if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
             const data = (await res.json()) as {
                 id: string;
@@ -234,7 +235,7 @@ export default function Agent() {
         abortController = new AbortController();
 
         try {
-            const res = await fetch("/api/agent/query", {
+            const res = await apiFetch("/api/agent/query", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({

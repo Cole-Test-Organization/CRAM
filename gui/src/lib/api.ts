@@ -1,3 +1,5 @@
+import { apiFetch } from './offline';
+
 const BASE = '/api';
 
 // ── Notes-import job shapes (bulk directory/zip → meetings) ───────────────
@@ -219,13 +221,13 @@ export type ProvisioningTunnel = {
 export type ProvisioningRdpTunnel = ProvisioningTunnel;
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await apiFetch(`${BASE}${path}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
 }
 
 async function post<T>(path: string, data: any): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await apiFetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -235,7 +237,7 @@ async function post<T>(path: string, data: any): Promise<T> {
 }
 
 async function patch<T>(path: string, data: any): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await apiFetch(`${BASE}${path}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -245,7 +247,7 @@ async function patch<T>(path: string, data: any): Promise<T> {
 }
 
 async function put<T>(path: string, data: any): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await apiFetch(`${BASE}${path}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
@@ -255,7 +257,7 @@ async function put<T>(path: string, data: any): Promise<T> {
 }
 
 async function del<T = void>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: 'DELETE' });
+  const res = await apiFetch(`${BASE}${path}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   const text = await res.text();
   return (text ? JSON.parse(text) : undefined) as T;
@@ -708,7 +710,7 @@ export const api = {
   // A missing row (404) means "no profile yet" — surfaced as null so the GUI
   // can render the empty form without spamming the console.
   getAccountDetails: async (accountId: number) => {
-    const res = await fetch(`${BASE}/accounts/${accountId}/details`);
+    const res = await apiFetch(`${BASE}/accounts/${accountId}/details`);
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
@@ -731,7 +733,7 @@ export const api = {
   importNotesZip: async (file: File) => {
     // Raw octet-stream like the backup upload — the API unpacks text entries
     // server-side. No Content-Type juggling, no multipart.
-    const res = await fetch(`${BASE}/notes-import/upload-zip`, {
+    const res = await apiFetch(`${BASE}/notes-import/upload-zip`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream' },
       body: file,
@@ -866,7 +868,7 @@ export const api = {
   importBackup: async (file: File) => {
     // Send the file as a raw octet-stream — the API streams it straight to disk
     // without buffering, so multi-GB dumps don't OOM the request handler.
-    const res = await fetch(
+    const res = await apiFetch(
       `/api/backup/import?filename=${encodeURIComponent(file.name)}`,
       {
         method: 'POST',

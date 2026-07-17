@@ -617,6 +617,74 @@
     padding: 0 12px;
   }
 
+  .sync-status {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    min-width: 0;
+    min-height: 34px;
+    padding: 6px 9px;
+    border: 2px solid var(--color-surf-500);
+    background: color-mix(in srgb, var(--color-surf-500) 10%, var(--color-base-950));
+    color: var(--color-surf-300);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    text-align: left;
+    cursor: pointer;
+  }
+  .sync-status:hover {
+    background: color-mix(in srgb, var(--color-surf-500) 18%, var(--color-base-950));
+  }
+  .sync-status:focus-visible {
+    outline: 2px solid var(--color-surf-200);
+    outline-offset: 2px;
+  }
+  .sync-status-offline {
+    border-color: var(--color-amber-500);
+    background: color-mix(in srgb, var(--color-amber-500) 12%, var(--color-base-950));
+    color: var(--color-amber-300);
+  }
+  .sync-status-error {
+    border-color: var(--color-scarlet-500);
+    color: var(--color-scarlet-300);
+  }
+  .sync-status-dot {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 auto;
+    background: currentColor;
+    box-shadow: 1px 1px 0 var(--color-base-950);
+  }
+  .sync-status-dot-pulse {
+    animation: sync-pulse 900ms steps(2, end) infinite;
+  }
+  .offline-notice {
+    position: fixed;
+    left: 50%;
+    bottom: 18px;
+    z-index: 100;
+    width: min(520px, calc(100vw - 32px));
+    transform: translateX(-50%);
+    padding: 12px 14px;
+    border: 2px solid var(--color-amber-300);
+    background: var(--color-base-950);
+    color: var(--color-amber-200);
+    box-shadow: 3px 3px 0 var(--color-amber-300);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.4;
+  }
+
+  @keyframes sync-pulse {
+    50% { opacity: 0.3; }
+  }
+
   /* Off-canvas drawer panel — below md, sidebar is absolutely positioned
      and slides in from the left. At md: and above the drawer class is
      effectively a no-op (component uses md:translate-x-0 on the <aside>). */

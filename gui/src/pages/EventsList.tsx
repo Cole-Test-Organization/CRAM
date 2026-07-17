@@ -35,6 +35,54 @@ function truncate(s: string | null, max = 200): string {
   return s.slice(0, max).trimEnd() + '…';
 }
 
+type EventFilters = {
+  view: 'all' | 'with_contacts';
+  search: string;
+  mode: string;
+  city: string;
+  country: string;
+  tags: string;
+  has_location: boolean;
+  after: string;
+  before: string;
+  sort: string;
+  order: 'asc' | 'desc';
+};
+
+export function filterAndSortEvents(items: any[], filters: EventFilters): any[] {
+  const query = filters.search.trim().toLowerCase();
+  const city = filters.city.toLowerCase();
+  const country = filters.country.toLowerCase();
+  const filtered = items.filter((event) => {
+    if (filters.mode && event.mode !== filters.mode) return false;
+    if (filters.after && event.start_date && event.start_date < filters.after) return false;
+    if (filters.before && event.start_date && event.start_date > filters.before) return false;
+    if (filters.view === 'with_contacts') return true;
+    if (city && String(event.city || '').toLowerCase() !== city) return false;
+    if (country && String(event.country || '').toLowerCase() !== country) return false;
+    if (filters.has_location && !event.city) return false;
+    if (filters.tags) {
+      const tags = Array.isArray(event.tags) ? event.tags : String(event.tags || '').split(',');
+      if (!tags.includes(filters.tags)) return false;
+    }
+    if (query && ![event.title, event.summary, event.location_raw]
+      .some((value) => String(value || '').toLowerCase().includes(query))) return false;
+    return true;
+  });
+
+  const key = filters.view === 'with_contacts' ? 'start_date' : filters.sort;
+  const direction = filters.view === 'with_contacts' || filters.order === 'asc' ? 1 : -1;
+  return filtered.sort((a, b) => {
+    const left = a[key];
+    const right = b[key];
+    if (left == null && right == null) return (Number(a.id) - Number(b.id)) * direction;
+    if (left == null) return 1;
+    if (right == null) return -1;
+    const compared = String(left).localeCompare(String(right));
+    return (compared || (Number(a.id) - Number(b.id))) * direction;
+  });
+}
+
 export default function EventsList() {
   const [view, setView] = createSignal<'all' | 'with_contacts'>('all');
 
@@ -69,33 +117,30 @@ export default function EventsList() {
     order: order(),
   }));
 
-  const [data] = createResource(filterParams, async (params) => {
-    if (params.view === 'with_contacts') {
+  // The server request is intentionally stable: download the complete event
+  // collection once, then apply interactive filters locally so every filter
+  // remains usable against the same offline snapshot (even on a later date).
+  const dataSource = createMemo(() => ({
+    view: view(),
+    mode: view() === 'with_contacts' ? (mode() || 'in_person') : '',
+  }));
+  const [data] = createResource(dataSource, async (source) => {
+    if (source.view === 'with_contacts') {
       const { events } = await api.getUpcomingEventsWithContacts({
-        mode: params.mode || 'in_person',
-        after: params.after || undefined,
-        before: params.before || undefined,
-        limit: 100,
+        mode: source.mode,
+        limit: 10000,
       });
       return { events, total: events.length };
     }
     return api.getEvents({
-      search: params.search || undefined,
-      mode: params.mode || undefined,
-      city: params.city || undefined,
-      country: params.country || undefined,
-      tags: params.tags || undefined,
-      has_location: params.has_location || undefined,
-      after: params.after || undefined,
-      before: params.before || undefined,
-      sort: params.sort,
-      order: params.order,
-      limit: 200,
+      sort: 'start_date',
+      order: 'asc',
+      limit: 10000,
     });
   });
 
-  const events = () => data()?.events || [];
-  const total = () => data()?.total || 0;
+  const events = createMemo(() => filterAndSortEvents(data()?.events || [], filterParams()));
+  const total = () => events().length;
 
   const clearFilters = () => {
     setSearchInput('');
