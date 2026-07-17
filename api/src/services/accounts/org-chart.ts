@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { withUser } from '../../db/connection.js';
-import { badRequest, notFound } from '../../lib/http-error.js';
+import { badRequest, conflict, notFound } from '../../lib/http-error.js';
 
 const NODE_COLS = [
   'c.id',
@@ -33,15 +33,18 @@ export class OrgChartService {
       await this._assertAccount(client, accountId);
       await this._assertEligibleContact(client, accountId, contactId, 'contact_id');
 
-      if (reportsToContactId == null) {
+      if (reportsToContactId != null) {
+        await this._assertEdge(client, accountId, contactId, reportsToContactId);
+        // Selecting an unassigned manager is an intentional chart placement:
+        // materialize that manager as a top-level node in the same transaction.
         await client.query(
-          'DELETE FROM account_contact_reporting WHERE account_id = $1 AND contact_id = $2',
-          [accountId, contactId],
+          `INSERT INTO account_contact_reporting (account_id, contact_id, reports_to_contact_id)
+           VALUES ($1, $2, NULL)
+           ON CONFLICT (account_id, contact_id) DO NOTHING`,
+          [accountId, reportsToContactId],
         );
-        return this._fetchChart(client, accountId);
       }
 
-      await this._assertEdge(client, accountId, contactId, reportsToContactId);
       await client.query(
         `INSERT INTO account_contact_reporting (account_id, contact_id, reports_to_contact_id)
          VALUES ($1, $2, $3)
@@ -53,11 +56,38 @@ export class OrgChartService {
     });
   }
 
-  async replace(userId: number, accountId: number, edges: OrgChartEdgeInput[]) {
+  async remove(userId: number, accountId: number, contactId: number) {
+    return withUser(userId, async (client) => {
+      await this._assertAccount(client, accountId);
+      await this._assertEligibleContact(client, accountId, contactId, 'contact_id');
+
+      const directReport = (await client.query(
+        `SELECT 1
+         FROM account_contact_reporting
+         WHERE account_id = $1 AND reports_to_contact_id = $2
+         LIMIT 1`,
+        [accountId, contactId],
+      )).rows[0];
+      if (directReport) {
+        throw conflict('Reassign this contact\'s direct reports before removing them from the org chart.');
+      }
+
+      await client.query(
+        'DELETE FROM account_contact_reporting WHERE account_id = $1 AND contact_id = $2',
+        [accountId, contactId],
+      );
+      return this._fetchChart(client, accountId);
+    });
+  }
+
+  async replace(userId: number, accountId: number, edges: OrgChartEdgeInput[], rootContactIds: number[] = []) {
     return withUser(userId, async (client) => {
       await this._assertAccount(client, accountId);
       if (!Array.isArray(edges)) {
         throw badRequest('edges must be an array of { contact_id, reports_to_contact_id } rows.');
+      }
+      if (!Array.isArray(rootContactIds)) {
+        throw badRequest('root_contact_ids must be an array of contact ids.');
       }
 
       const eligibleIds = await this._eligibleContactIds(client, accountId);
@@ -83,14 +113,38 @@ export class OrgChartService {
         byContact.set(contactId, managerId);
       }
 
+      const explicitRoots = new Set<number>();
+      for (const rawContactId of rootContactIds) {
+        const contactId = Number(rawContactId);
+        if (!Number.isInteger(contactId)) {
+          throw badRequest('root_contact_ids must contain only numeric contact ids.');
+        }
+        if (!eligibleIds.has(contactId)) {
+          throw badRequest(`root contact_id=${contactId} is not an external contact linked to account_id=${accountId}.`);
+        }
+        if (explicitRoots.has(contactId)) {
+          throw badRequest(`Duplicate root contact_id=${contactId}.`);
+        }
+        if (byContact.has(contactId)) {
+          throw badRequest(`contact_id=${contactId} cannot be both a root and a report.`);
+        }
+        explicitRoots.add(contactId);
+      }
+
       this._assertNoCycles(byContact);
 
       await client.query('DELETE FROM account_contact_reporting WHERE account_id = $1', [accountId]);
-      if (byContact.size) {
+      const memberIds = new Set(explicitRoots);
+      for (const [contactId, managerId] of byContact.entries()) {
+        memberIds.add(contactId);
+        memberIds.add(managerId);
+      }
+
+      if (memberIds.size) {
         const values: any[] = [];
         const placeholders: string[] = [];
-        for (const [contactId, managerId] of byContact.entries()) {
-          values.push(accountId, contactId, managerId);
+        for (const contactId of memberIds) {
+          values.push(accountId, contactId, byContact.get(contactId) ?? null);
           const start = values.length - 2;
           placeholders.push(`($${start}, $${start + 1}, $${start + 2})`);
         }
@@ -181,8 +235,10 @@ export class OrgChartService {
   }
 
   async _fetchChart(client: PoolClient, accountId: number) {
-    const nodes = (await client.query(
-      `SELECT ${NODE_COLS.join(', ')}, acr.reports_to_contact_id
+    const rows = (await client.query(
+      `SELECT ${NODE_COLS.join(', ')},
+              acr.contact_id IS NOT NULL AS in_org_chart,
+              acr.reports_to_contact_id
        FROM contacts c
        JOIN account_contacts ac ON ac.contact_id = c.id
        LEFT JOIN account_contact_reporting acr
@@ -193,6 +249,10 @@ export class OrgChartService {
       [accountId],
     )).rows;
 
+    const contacts = rows.map(({ in_org_chart: _inOrgChart, reports_to_contact_id: _managerId, ...contact }) => contact);
+    const nodes = rows
+      .filter((row) => row.in_org_chart)
+      .map(({ in_org_chart: _inOrgChart, ...node }) => node);
     const nodeIds = new Set(nodes.map((node) => Number(node.id)));
     const edges = nodes
       .filter((node) => node.reports_to_contact_id != null && nodeIds.has(Number(node.reports_to_contact_id)))
@@ -203,8 +263,12 @@ export class OrgChartService {
 
     return {
       account_id: accountId,
+      contacts,
       nodes,
       edges,
+      root_contact_ids: nodes
+        .filter((node) => node.reports_to_contact_id == null)
+        .map((node) => Number(node.id)),
     };
   }
 }

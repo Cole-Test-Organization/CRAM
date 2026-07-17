@@ -1,54 +1,62 @@
-// Behavior tests for OrgChartPanel — the account org chart, rendered as a
-// node-based flow chart (cards on a canvas, SVG connectors) rather than an
-// indented list. The guards that earn their keep:
-//   1. the tidy-tree layout puts reports in the layer BELOW their manager and
-//      draws one connector per reporting edge — the "it looks like a DAG" core;
-//   2. the manager dropdown omits the node itself and its descendants, the
-//      invariant that stops a reporting cycle from ever being created;
-//   3. changing a dropdown PATCHes through the api and re-lays-out from the
-//      response (a contact promoted to Root visibly moves to the top layer).
-
-import { render, screen, fireEvent, waitFor } from '@solidjs/testing-library';
+import { fireEvent, render, screen, waitFor } from '@solidjs/testing-library';
 import { within } from '@testing-library/dom';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MemoryRouter, Route } from '@solidjs/router';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import OrgChartPanel from './OrgChartPanel';
-import type { OrgChart, OrgChartNode } from '../../lib/types';
+import type { OrgChart, OrgChartContact, OrgChartNode } from '../../lib/types';
 
 const apiMock = vi.hoisted(() => ({
   getOrgChart: vi.fn<() => Promise<any>>(),
   setOrgChartManager: vi.fn<() => Promise<any>>(),
+  removeOrgChartContact: vi.fn<() => Promise<any>>(),
 }));
 vi.mock('../../lib/api', () => ({ api: apiMock }));
 
-const mkNode = (id: number, full_name: string, over: Partial<OrgChartNode> = {}): OrgChartNode => ({
+const mkContact = (id: number, full_name: string, over: Partial<OrgChartContact> = {}): OrgChartContact => ({
   id,
   full_name,
-  company: null,
+  company: 'Analytical Engines',
   title: null,
   email: null,
   phone: null,
   linkedin: null,
   kind: 'account',
-  reports_to_contact_id: null,
   created_at: '2026-01-01T00:00:00Z',
   updated_at: '2026-01-01T00:00:00Z',
   ...over,
 });
 
-// Ada ← Grace ← Katherine chain, plus Margaret as an independent second root.
+const mkNode = (
+  id: number,
+  full_name: string,
+  reports_to_contact_id: number | null,
+  over: Partial<OrgChartNode> = {},
+): OrgChartNode => ({
+  ...mkContact(id, full_name, over),
+  reports_to_contact_id,
+});
+
+const contacts = (): OrgChartContact[] => [
+  mkContact(1, 'Ada Lovelace', { title: 'Senior Manager' }),
+  mkContact(2, 'Grace Hopper', { title: 'Manager' }),
+  mkContact(3, 'Katherine Johnson', { title: 'Engineer' }),
+  mkContact(4, 'Margaret Hamilton', { title: 'Architect' }),
+  mkContact(5, 'Dorothy Vaughan', { title: 'Director' }),
+];
+
 const baseChart = (): OrgChart => ({
   account_id: 7,
+  contacts: contacts(),
   nodes: [
-    mkNode(1, 'Ada Lovelace', { title: 'CEO' }),
-    mkNode(2, 'Grace Hopper', { title: 'VP Engineering', reports_to_contact_id: 1 }),
-    mkNode(3, 'Katherine Johnson', { title: 'Engineer', reports_to_contact_id: 2 }),
-    mkNode(4, 'Margaret Hamilton', { title: 'Director' }),
+    mkNode(1, 'Ada Lovelace', null, { title: 'Senior Manager' }),
+    mkNode(2, 'Grace Hopper', 1, { title: 'Manager' }),
+    mkNode(3, 'Katherine Johnson', 2, { title: 'Engineer' }),
   ],
   edges: [
     { contact_id: 2, reports_to_contact_id: 1 },
     { contact_id: 3, reports_to_contact_id: 2 },
   ],
+  root_contact_ids: [1],
 });
 
 beforeEach(() => {
@@ -56,69 +64,125 @@ beforeEach(() => {
   apiMock.getOrgChart.mockResolvedValue(baseChart());
 });
 
-// <A> needs a router context, so mount the panel under a catch-all route.
 async function setup() {
   const utils = render(() => (
     <MemoryRouter>
       <Route path="*" component={() => <OrgChartPanel accountId={7} />} />
     </MemoryRouter>
   ));
-  await screen.findByRole('link', { name: 'Ada Lovelace' });
-  const card = (id: number) => utils.container.querySelector(`[data-org-node="${id}"]`) as HTMLElement;
-  const top = (id: number) => parseInt(card(id).style.top, 10);
-  const left = (id: number) => parseInt(card(id).style.left, 10);
-  return { ...utils, card, top, left };
+  await screen.findByRole('searchbox', { name: 'Search account contacts' });
+  return utils;
 }
 
-describe('OrgChartPanel — flow chart layout', () => {
-  it('positions reports in the layer below their manager and draws one connector per edge', async () => {
-    const { container, top, left } = await setup();
+describe('OrgChartPanel', () => {
+  it('renders the explicit chart first without treating unassigned contacts as roots or using a horizontal canvas', async () => {
+    const { container } = await setup();
+    const panel = container.querySelector('[data-org-chart-panel]')!;
+    const chart = container.querySelector('[data-org-chart]')!;
+    const index = container.querySelector('[data-contact-index]')!;
 
-    // Both roots share the top layer; each report sits strictly below its manager.
-    expect(top(1)).toBe(0);
-    expect(top(4)).toBe(0);
-    expect(top(2)).toBeGreaterThan(top(1));
-    expect(top(3)).toBeGreaterThan(top(2));
-
-    // The two trees occupy separate columns instead of a shared indent gutter.
-    expect(left(4)).not.toBe(left(1));
-
-    // One SVG connector per reporting edge (Grace→Ada, Katherine→Grace).
-    const edges = container.querySelectorAll('[data-org-edge]');
-    expect(edges.length).toBe(2);
-    for (const edge of edges) expect(edge.getAttribute('d')).toMatch(/^M /);
+    expect(panel.firstElementChild).toBe(chart);
+    expect(chart.nextElementSibling).toBe(index);
+    expect(chart.querySelector('[data-org-node="1"]')).not.toBeNull();
+    expect(chart.querySelector('[data-org-node="2"]')).not.toBeNull();
+    expect(chart.querySelector('[data-org-node="3"]')).not.toBeNull();
+    expect(chart.querySelector('[data-org-node="4"]')).toBeNull();
+    expect(chart.querySelector('[data-org-node="5"]')).toBeNull();
+    expect(chart.querySelectorAll('[data-org-edge]')).toHaveLength(2);
+    expect(chart.querySelector('[data-org-branch="1"] [data-org-node="2"]')).not.toBeNull();
+    expect(chart.querySelector('[data-org-branch="2"] [data-org-node="3"]')).not.toBeNull();
+    expect(container.innerHTML).not.toContain('overflow-x-auto');
   });
 
-  it('omits self and descendants from the manager dropdown so cycles cannot be created', async () => {
-    await setup();
+  it('lists every account contact below and filters only that index', async () => {
+    const { container } = await setup();
+    expect(container.querySelectorAll('[data-contact-index-row]')).toHaveLength(5);
 
-    const optionsFor = (name: string) =>
-      within(screen.getByRole('combobox', { name: `Manager for ${name}` }))
-        .getAllByRole('option')
-        .map((option) => option.textContent);
-
-    // Ada manages Grace who manages Katherine — none of the three may become her manager.
-    expect(optionsFor('Ada Lovelace')).toEqual(['Root', 'Margaret Hamilton']);
-    expect(optionsFor('Grace Hopper')).toEqual(['Root', 'Ada Lovelace', 'Margaret Hamilton']);
-    // A leaf can report to anyone but herself.
-    expect(optionsFor('Katherine Johnson')).toEqual(['Root', 'Ada Lovelace', 'Grace Hopper', 'Margaret Hamilton']);
-  });
-
-  it('PATCHes a manager change and re-lays-out from the response', async () => {
-    const promoted = baseChart();
-    promoted.edges = [{ contact_id: 2, reports_to_contact_id: 1 }];
-    promoted.nodes[2].reports_to_contact_id = null;
-    apiMock.setOrgChartManager.mockResolvedValue(promoted);
-
-    const { top } = await setup();
-    expect(top(3)).toBeGreaterThan(0);
-
-    fireEvent.change(screen.getByRole('combobox', { name: 'Manager for Katherine Johnson' }), {
-      target: { value: '' },
+    fireEvent.input(screen.getByRole('searchbox', { name: 'Search account contacts' }), {
+      target: { value: 'architect' },
     });
 
-    expect(apiMock.setOrgChartManager).toHaveBeenCalledWith(7, 3, null);
-    // Katherine is now a root: her card moves up to the top layer.
-    await waitFor(() => expect(top(3)).toBe(0));
+    expect(container.querySelectorAll('[data-contact-index-row]')).toHaveLength(1);
+    expect(container.querySelector('[data-contact-index-row="4"]')).not.toBeNull();
+    expect(container.querySelector('[data-org-node="1"]')).not.toBeNull();
+    expect(container.querySelector('[data-org-node="3"]')).not.toBeNull();
+  });
+
+  it('prevents cycles and blocks removing a manager who still has direct reports', async () => {
+    await setup();
+    const optionValues = (name: string) => within(screen.getByRole('combobox', { name: `Placement for ${name}` }))
+      .getAllByRole('option')
+      .map((option) => (option as HTMLOptionElement).value);
+
+    expect(optionValues('Ada Lovelace')).toEqual(['unassigned', 'root', 'manager:4', 'manager:5']);
+    expect(optionValues('Grace Hopper')).toEqual(['unassigned', 'root', 'manager:1', 'manager:4', 'manager:5']);
+    expect(optionValues('Katherine Johnson')).toEqual(['unassigned', 'root', 'manager:1', 'manager:2', 'manager:4', 'manager:5']);
+
+    const adaUnassigned = within(screen.getByRole('combobox', { name: 'Placement for Ada Lovelace' }))
+      .getByRole('option', { name: /Not in chart/ }) as HTMLOptionElement;
+    const katherineUnassigned = within(screen.getByRole('combobox', { name: 'Placement for Katherine Johnson' }))
+      .getByRole('option', { name: 'Not in chart' }) as HTMLOptionElement;
+    expect(adaUnassigned.disabled).toBe(true);
+    expect(katherineUnassigned.disabled).toBe(false);
+  });
+
+  it('moves an entire reporting chain when its top manager is placed under a director', async () => {
+    const moved = baseChart();
+    moved.nodes = [
+      mkNode(1, 'Ada Lovelace', 5, { title: 'Senior Manager' }),
+      mkNode(2, 'Grace Hopper', 1, { title: 'Manager' }),
+      mkNode(3, 'Katherine Johnson', 2, { title: 'Engineer' }),
+      mkNode(5, 'Dorothy Vaughan', null, { title: 'Director' }),
+    ];
+    moved.edges = [
+      { contact_id: 1, reports_to_contact_id: 5 },
+      { contact_id: 2, reports_to_contact_id: 1 },
+      { contact_id: 3, reports_to_contact_id: 2 },
+    ];
+    moved.root_contact_ids = [5];
+    apiMock.setOrgChartManager.mockResolvedValue(moved);
+
+    const { container } = await setup();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Placement for Ada Lovelace' }), {
+      target: { value: 'manager:5' },
+    });
+
+    expect(apiMock.setOrgChartManager).toHaveBeenCalledWith(7, 1, 5);
+    await waitFor(() => {
+      const directorBranch = container.querySelector('[data-org-branch="5"]');
+      expect(directorBranch?.querySelector('[data-org-node="1"]')).not.toBeNull();
+      expect(directorBranch?.querySelector('[data-org-node="2"]')).not.toBeNull();
+      expect(directorBranch?.querySelector('[data-org-node="3"]')).not.toBeNull();
+    });
+  });
+
+  it('can remove a leaf from the chart without removing it from the contact index', async () => {
+    const removed = baseChart();
+    removed.nodes = removed.nodes.filter((node) => node.id !== 3);
+    removed.edges = removed.edges.filter((edge) => edge.contact_id !== 3);
+    apiMock.removeOrgChartContact.mockResolvedValue(removed);
+
+    const { container } = await setup();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Placement for Katherine Johnson' }), {
+      target: { value: 'unassigned' },
+    });
+
+    expect(apiMock.removeOrgChartContact).toHaveBeenCalledWith(7, 3);
+    await waitFor(() => expect(container.querySelector('[data-org-chart] [data-org-node="3"]')).toBeNull());
+    expect(container.querySelector('[data-contact-index-row="3"]')).not.toBeNull();
+    expect(container.querySelector('[data-contact-placement="3"]')?.textContent).toContain('Not in chart');
+  });
+
+  it('shows an empty chart while keeping unassigned contacts available below', async () => {
+    const empty = baseChart();
+    empty.nodes = [];
+    empty.edges = [];
+    empty.root_contact_ids = [];
+    apiMock.getOrgChart.mockResolvedValue(empty);
+
+    const { container } = await setup();
+    expect(screen.getByText('No reporting structure yet. Assign contacts from the index below.')).toBeTruthy();
+    expect(container.querySelectorAll('[data-org-node]')).toHaveLength(0);
+    expect(container.querySelectorAll('[data-contact-index-row]')).toHaveLength(5);
   });
 });

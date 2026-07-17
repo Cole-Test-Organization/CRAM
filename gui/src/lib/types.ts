@@ -183,7 +183,7 @@ export interface Contact {
   kind: 'account' | 'partner' | 'internal';
 }
 
-export interface OrgChartNode {
+export interface OrgChartContact {
   id: number;
   full_name: string | null;
   company: string | null;
@@ -192,9 +192,12 @@ export interface OrgChartNode {
   phone: string | null;
   linkedin: string | null;
   kind: 'account' | 'partner' | 'internal';
-  reports_to_contact_id: number | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface OrgChartNode extends OrgChartContact {
+  reports_to_contact_id: number | null;
 }
 
 export interface OrgChartEdge {
@@ -204,8 +207,10 @@ export interface OrgChartEdge {
 
 export interface OrgChart {
   account_id: number;
+  contacts: OrgChartContact[];
   nodes: OrgChartNode[];
   edges: OrgChartEdge[];
+  root_contact_ids: number[];
 }
 
 export interface MeetingSummary {

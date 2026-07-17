@@ -431,18 +431,19 @@ export function registerTools(server: McpServer, services: Services, resolveUser
 
   server.tool(
     'org_chart',
-    'Manage account-scoped org charts. Contacts are global people and account links are many-to-many, so reporting relationships live on the account/contact membership, not the contact record. Actions: get (returns every external contact linked to the account as nodes plus reporting edges), set_manager (set one contact\'s manager, or pass reports_to_contact_id=null to make the contact a root), replace (replace the full edge set; contacts omitted from edges become roots). Only external account contacts participate; internal support-team contacts are excluded. Writes reject contacts not linked to the account, self-reports, duplicate managers, and cycles.',
+    'Manage account-scoped org charts. Contacts are global people and account links are many-to-many, so chart membership and reporting relationships live on the account/contact membership, not the contact record. Actions: get (returns the full eligible contact pool separately from explicit chart nodes and edges), set_manager (place one contact under a manager, or pass reports_to_contact_id=null to make them explicitly top-level), remove (take a leaf out of the chart without unlinking the contact from the account; direct reports must be reassigned first), replace (replace the full chart using edges plus optional root_contact_ids; contacts omitted from both are unassigned). Selecting an unassigned manager intentionally adds that manager as top-level. Only external account contacts participate; internal support-team contacts are excluded. Writes reject contacts not linked to the account, self-reports, duplicate managers, and cycles.',
     {
-      action: z.enum(['get', 'set_manager', 'replace']),
+      action: z.enum(['get', 'set_manager', 'remove', 'replace']),
       account_id: z.number().describe('Account ID whose org chart is being managed.'),
-      contact_id: z.number().optional().describe('Contact ID to update for set_manager. Must be linked to account_id and not kind=internal.'),
-      reports_to_contact_id: z.number().nullable().optional().describe('Manager contact ID for set_manager; pass null to clear and make this contact a root.'),
+      contact_id: z.number().optional().describe('Contact ID to update for set_manager or remove. Must be linked to account_id and not kind=internal.'),
+      reports_to_contact_id: z.number().nullable().optional().describe('Manager contact ID for set_manager; pass null to place this contact explicitly at the top level.'),
+      root_contact_ids: z.array(z.number()).optional().describe('Explicit top-level contacts for replace. A contact omitted from both this array and edges is not in the chart.'),
       edges: z.array(z.object({
         contact_id: z.number(),
         reports_to_contact_id: z.number(),
-      })).optional().describe('Full replacement edge set for replace. Contacts omitted from edges are roots.'),
+      })).optional().describe('Full replacement edge set for replace. Edge endpoints become chart members; unrelated contacts remain unassigned.'),
     },
-    async ({ action, account_id, contact_id, reports_to_contact_id, edges }) => {
+    async ({ action, account_id, contact_id, reports_to_contact_id, root_contact_ids, edges }) => {
       const userId = await resolveUserId();
       switch (action) {
         case 'get':
@@ -450,12 +451,15 @@ export function registerTools(server: McpServer, services: Services, resolveUser
           return callService(() => orgChartService.getByAccountId(userId, account_id));
         case 'set_manager':
           if (!account_id || !contact_id) return errorResponse('set_manager requires account_id and contact_id.');
-          if (reports_to_contact_id === undefined) return errorResponse('set_manager requires reports_to_contact_id. Pass a contact id to set a manager, or null to make the contact a root.');
+          if (reports_to_contact_id === undefined) return errorResponse('set_manager requires reports_to_contact_id. Pass a contact id to set a manager, or null to make the contact explicitly top-level.');
           return callService(() => orgChartService.setManager(userId, account_id, contact_id, reports_to_contact_id));
+        case 'remove':
+          if (!account_id || !contact_id) return errorResponse('remove requires account_id and contact_id. Reassign any direct reports first.');
+          return callService(() => orgChartService.remove(userId, account_id, contact_id));
         case 'replace':
           if (!account_id) return errorResponse('replace requires account_id.');
-          if (!Array.isArray(edges)) return errorResponse('replace requires edges: [{ contact_id, reports_to_contact_id }]. Pass [] to clear the chart.');
-          return callService(() => orgChartService.replace(userId, account_id, edges));
+          if (!Array.isArray(edges)) return errorResponse('replace requires edges: [{ contact_id, reports_to_contact_id }]. Pass [] with optional root_contact_ids to create a roots-only chart, or [] alone to clear it.');
+          return callService(() => orgChartService.replace(userId, account_id, edges, root_contact_ids || []));
         default:
           return errorResponse(`Unknown action: ${action}`);
       }

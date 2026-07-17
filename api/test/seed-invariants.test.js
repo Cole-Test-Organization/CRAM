@@ -39,6 +39,17 @@ describe('Seed invariants', () => {
     assert.equal(listFrom((await get('/contacts?kind=internal')).body).length, SEED.internalContacts);
   });
 
+  it('org chart: Acme has two explicit members and one associated contact left unassigned', async () => {
+    const account = await get('/accounts/by-slug/acme-manufacturing');
+    assert.equal(account.status, 200);
+    const chart = await get(`/accounts/${account.body.id}/org-chart`);
+    assert.equal(chart.status, 200);
+    assert.equal(chart.body.contacts.length, 3);
+    assert.deepEqual(new Set(chart.body.nodes.map((node) => node.full_name)), new Set(['Diane Yu', 'Marcus Tate']));
+    assert.deepEqual(chart.body.root_contact_ids, [chart.body.nodes.find((node) => node.full_name === 'Diane Yu').id]);
+    assert.ok(!chart.body.nodes.some((node) => node.full_name === 'Priya Shah'));
+  });
+
   it('meetings: 34 total = 31 account + 3 internal, sorted date desc', async () => {
     const all = listFrom((await get('/meetings?limit=1000')).body);
     assert.equal(all.length, SEED.meetings);

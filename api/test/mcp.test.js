@@ -66,7 +66,7 @@ describe('MCP — tool set + parity', () => {
     for (const a of ['list', 'create', 'update', 'delete', 'add_task', 'update_task', 'delete_task', 'link_contact', 'unlink_contact']) {
       assert.ok(actionsOf('threads').includes(a), `threads tool missing action "${a}"`);
     }
-    for (const a of ['get', 'set_manager', 'replace']) {
+    for (const a of ['get', 'set_manager', 'remove', 'replace']) {
       assert.ok(actionsOf('org_chart').includes(a), `org_chart tool missing action "${a}"`);
     }
   });

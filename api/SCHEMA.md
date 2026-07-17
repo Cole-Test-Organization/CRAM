@@ -4,7 +4,7 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-07-12T20:47:53.502Z
+- **Generated:** 2026-07-17T04:52:36.670Z
 - **Tables:** 40
 - **Enums:** 0
 - **Views:** 0
@@ -66,7 +66,7 @@
 |---|---|---|---|---|
 | `account_id` | `bigint` | NO | — | **PK** |
 | `contact_id` | `bigint` | NO | — | **PK** |
-| `reports_to_contact_id` | `bigint` | NO | — |  |
+| `reports_to_contact_id` | `bigint` | YES | — |  |
 | `created_at` | `timestamp with time zone` | NO | `now()` |  |
 | `updated_at` | `timestamp with time zone` | NO | `now()` |  |
 
@@ -76,6 +76,7 @@
 
 - `account_id`, `contact_id` → `public.account_contacts`(`account_id`, `contact_id`) — ON DELETE CASCADE
 - `account_id`, `reports_to_contact_id` → `public.account_contacts`(`account_id`, `contact_id`) — ON DELETE CASCADE
+- `account_id`, `reports_to_contact_id` → `public.account_contact_reporting`(`account_id`, `contact_id`) — ON DELETE CASCADE
 
 **Check constraints:**
 
@@ -89,7 +90,7 @@
 
 - `account_contact_reporting_isolation` — ALL, PERMISSIVE, roles: public
   - USING: `(EXISTS ( SELECT 1    FROM accounts a   WHERE (a.id = account_contact_reporting.account_id)))`
-  - WITH CHECK: `((EXISTS ( SELECT 1    FROM accounts a   WHERE (a.id = account_contact_reporting.account_id))) AND (EXISTS ( SELECT 1    FROM account_contacts ac   WHERE ((ac.account_id = account_contact_reporting.account_id) AND (ac.contact_id = account_contact_reporting.contact_id)))) AND (EXISTS ( SELECT 1    FROM account_contacts ac   WHERE ((ac.account_id = account_contact_reporting.account_id) AND (ac.contact_id = account_contact_reporting.reports_to_contact_id)))))`
+  - WITH CHECK: `((EXISTS ( SELECT 1    FROM accounts a   WHERE (a.id = account_contact_reporting.account_id))) AND (EXISTS ( SELECT 1    FROM account_contacts ac   WHERE ((ac.account_id = account_contact_reporting.account_id) AND (ac.contact_id = account_contact_reporting.contact_id)))) AND ((reports_to_contact_id IS NULL) OR (EXISTS ( SELECT 1    FROM account_contacts ac   WHERE ((ac.account_id = account_contact_reporting.account_id) AND (ac.contact_id = account_contact_reporting.reports_to_contact_id))))))`
 
 ---
 

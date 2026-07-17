@@ -353,8 +353,14 @@ export const api = {
       reports_to_contact_id: reportsToContactId,
     }),
 
-  replaceOrgChart: (accountId: number, edges: import('./types').OrgChartEdge[]) =>
-    put<import('./types').OrgChart>(`/accounts/${accountId}/org-chart`, { edges }),
+  removeOrgChartContact: (accountId: number, contactId: number) =>
+    del<import('./types').OrgChart>(`/accounts/${accountId}/org-chart/contacts/${contactId}`),
+
+  replaceOrgChart: (accountId: number, edges: import('./types').OrgChartEdge[], rootContactIds: number[] = []) =>
+    put<import('./types').OrgChart>(`/accounts/${accountId}/org-chart`, {
+      edges,
+      root_contact_ids: rootContactIds,
+    }),
 
   createContact: (accountId: number, data: any) =>
     post<any>(`/accounts/${accountId}/contacts`, data),
