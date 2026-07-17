@@ -15,6 +15,9 @@ export default function AgentLLMSettings() {
     const [location, setLocation] = createSignal<"device" | "lan">("device");
     const [agentModel, setAgentModel] = createSignal("");
     const [agentLocalUrl, setAgentLocalUrl] = createSignal("");
+    const [agentApiKey, setAgentApiKey] = createSignal("");
+    const [agentApiKeyDirty, setAgentApiKeyDirty] = createSignal(false);
+    const [hasSavedAgentApiKey, setHasSavedAgentApiKey] = createSignal(false);
     const [agentSaving, setAgentSaving] = createSignal(false);
     const [agentMsg, setAgentMsg] = createSignal<{
         kind: "ok" | "err";
@@ -27,6 +30,11 @@ export default function AgentLLMSettings() {
         const url = s.local_base_url || "";
         setAgentModel(s.model || "");
         setAgentLocalUrl(url);
+        // The API key is write-only. A blank field means "preserve" until the
+        // user types a replacement or explicitly chooses Clear.
+        setAgentApiKey("");
+        setAgentApiKeyDirty(false);
+        setHasSavedAgentApiKey(s.has_local_api_key);
         // No URL, or the on-device URL → "this device"; anything else is LAN/remote.
         setLocation(!url || url === DEVICE_URL ? "device" : "lan");
     });
@@ -39,11 +47,20 @@ export default function AgentLLMSettings() {
             // persists whatever address the user typed.
             const url =
                 location() === "device" ? DEVICE_URL : agentLocalUrl().trim();
-            await api.patchAgentSettings({
+            const payload: {
+                provider: "local";
+                model: string | null;
+                local_base_url: string | null;
+                local_api_key?: string | null;
+            } = {
                 provider: "local",
                 model: agentModel().trim() || null,
                 local_base_url: url || null,
-            });
+            };
+            if (agentApiKeyDirty()) {
+                payload.local_api_key = agentApiKey().trim() || null;
+            }
+            await api.patchAgentSettings(payload);
             setAgentLocalUrl(url);
             await refetchAgentSettings();
             setAgentMsg({ kind: "ok", text: "Agent settings saved" });
@@ -65,9 +82,10 @@ export default function AgentLLMSettings() {
                 The in-app agent and background workers (contact enrichment
                 formatter, etc.) run on a <strong>local LLM</strong>. By default
                 that's <strong>Ollama running on this device</strong> — the
-                machine hosting the app. No API keys, and nothing leaves your
-                network. Point it at another machine on your LAN instead, or set
-                a specific model, below. Stored server-side per user.
+                machine hosting the app. Point it at another OpenAI-compatible
+                server, choose a model, and add its bearer token if required.
+                Settings are stored server-side per user; tokens are encrypted
+                and write-only.
             </p>
 
             <Show
@@ -162,13 +180,63 @@ export default function AgentLLMSettings() {
                                 <code class="text-surf-300">
                                     {"{url}/v1/chat/completions"}
                                 </code>
-                                . Set{" "}
-                                <code class="text-surf-300">LOCAL_API_KEY</code>{" "}
-                                on the server if your endpoint requires a bearer
-                                token.
+                                . The saved bearer token below is sent to this
+                                server on model discovery, capability probes, and
+                                completions.
                             </span>
                         </label>
                     </Show>
+
+                    <div class="flex flex-col gap-1">
+                        <label
+                            for="agent-local-api-key"
+                            class="text-[11px] uppercase tracking-wider text-base-300"
+                        >
+                            API key / bearer token
+                        </label>
+                        <input
+                            id="agent-local-api-key"
+                            type="password"
+                            class="input-vintage font-mono"
+                            value={agentApiKey()}
+                            onInput={(e) => {
+                                setAgentApiKey(e.currentTarget.value);
+                                setAgentApiKeyDirty(true);
+                            }}
+                            autocomplete="new-password"
+                            placeholder={
+                                hasSavedAgentApiKey() && !agentApiKeyDirty()
+                                    ? "Encrypted token saved — enter a replacement"
+                                    : "Paste the token value"
+                            }
+                        />
+                        <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between mt-1">
+                            <span class="text-[10px] text-base-500">
+                                {hasSavedAgentApiKey() && !agentApiKeyDirty()
+                                    ? "An encrypted token is saved. Leave this blank to keep it."
+                                    : agentApiKeyDirty() && !agentApiKey().trim()
+                                      ? "The saved token will be removed when you save."
+                                      : "Sent as Authorization: Bearer <token>. The plaintext is never returned."}
+                            </span>
+                            <Show
+                                when={
+                                    hasSavedAgentApiKey() ||
+                                    agentApiKey().length > 0
+                                }
+                            >
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => {
+                                        setAgentApiKey("");
+                                        setAgentApiKeyDirty(true);
+                                    }}
+                                >
+                                    Clear token
+                                </Button>
+                            </Show>
+                        </div>
+                    </div>
 
                     <Show when={agentMsg()}>
                         {(msg) => (

@@ -4,7 +4,7 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-07-17T04:52:36.670Z
+- **Generated:** 2026-07-17T16:43:07.522Z
 - **Tables:** 40
 - **Enums:** 0
 - **Views:** 0
@@ -1273,12 +1273,21 @@
 | `local_base_url` | `text` | YES | — |  |
 | `updated_at` | `timestamp with time zone` | NO | `now()` |  |
 | `system_prompt` | `text` | YES | — |  |
+| `local_api_key_ciphertext` | `bytea` | YES | — |  |
+| `local_api_key_iv` | `bytea` | YES | — |  |
+| `local_api_key_auth_tag` | `bytea` | YES | — |  |
+| `local_api_key_algo` | `text` | YES | — |  |
+| `local_api_key_key_version` | `integer` | YES | — |  |
 
 **Primary key:** `user_id`
 
 **Foreign keys:**
 
 - `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Check constraints:**
+
+- `user_agent_settings_local_api_key_encrypted_check`: `CHECK ((((local_api_key_ciphertext IS NULL) AND (local_api_key_iv IS NULL) AND (local_api_key_auth_tag IS NULL) AND (local_api_key_algo IS NULL) AND (local_api_key_key_version IS NULL)) OR ((local_api_key_ciphertext IS NOT NULL) AND (local_api_key_iv IS NOT NULL) AND (local_api_key_auth_tag IS NOT NULL) AND (local_api_key_algo IS NOT NULL) AND (local_api_key_key_version IS NOT NULL))))`
 
 **Row-Level Security:** enabled (forced)
 

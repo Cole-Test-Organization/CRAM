@@ -401,6 +401,8 @@ Long-lived user preferences/rules/facts injected into the agent's system prompt 
 ### System Prompt
 Distinct from memories: the **system prompt** is your single base block of instructions/persona, not a list of discrete facts. It's user-configured and applied to you automatically each turn — you never fetch it to use it. If the user explicitly asks to change it ("change your system prompt to…", "reset your instructions"), use ${ref('agent_settings.update')} with \`system_prompt\` (null or empty reverts to the built-in default). ${ref('agent_settings.get')} returns \`default_system_prompt\` — the built-in default rendered live — if you need to show or restore it. **Never rewrite your own base instructions on your own initiative**, and don't write the current date into it — that's injected for you every turn.
 
+The local LLM's bearer token is also user-owned, write-only configuration. Only set or clear \`local_api_key\` through ${ref('agent_settings.update')} when the user explicitly asks. Omit the field to preserve the encrypted token; null or empty clears it. ${ref('agent_settings.get')} returns only \`has_local_api_key\`, never plaintext. Never repeat a supplied token in your response or place it in memories, notes, logs, or the system prompt.
+
 ### Events
 The events table is the public event calendar (currently scraped from \`paloaltonetworks.com/resources/event-calendar\`) — **global**, no per-user scoping. When the user asks about an event ("when is X", "where is the Cortex Partner Day"), query this table — don't ask them for a link. For travel planning, prefer ${ref('events.upcoming_with_contacts')} which filters to events with at least one of the caller's contacts in that city.
 ${todoistEnabled ? `

@@ -372,10 +372,12 @@ export class NewsService {
 
     let model: string;
     let baseUrl: string;
+    let apiKey: string | null;
     try {
       const eff = await this.agentSettingsService.getEffective(userId);
       model = eff.model;
       baseUrl = eff.local_base_url;
+      apiKey = eff.local_api_key;
     } catch (err) {
       logger.warn({ accountId, err: errMessage(err) }, 'agent settings unresolved; using feed order');
       return articles;
@@ -386,7 +388,7 @@ export class NewsService {
     const userPrompt = `Headlines (JSON):\n${JSON.stringify(payload)}\n\nReturn ONLY {"ranked": [ids best-to-worst]}.`;
 
     try {
-      const text = await this.rankCompletion(model, baseUrl, system, userPrompt);
+      const text = await this.rankCompletion(model, baseUrl, apiKey, system, userPrompt);
       const parsed = parseLooseJson<{ ranked?: unknown }>(text);
       const order = Array.isArray(parsed?.ranked) ? parsed!.ranked : null;
       if (!order) {
@@ -408,6 +410,7 @@ export class NewsService {
   private async rankCompletion(
     model: string,
     baseUrl: string,
+    apiKey: string | null,
     system: string,
     userPrompt: string,
   ): Promise<string> {
@@ -417,7 +420,7 @@ export class NewsService {
       system,
       messages,
       think: false,
-      providerConfig: { baseUrl },
+      providerConfig: { baseUrl, apiKey },
       timeoutMs: LLM_TIMEOUT_MS,
     });
     if (native != null) return native; // Ollama answered (native endpoint present)
@@ -428,7 +431,7 @@ export class NewsService {
       messages,
       mcpTools: [],
       think: false,
-      providerConfig: { baseUrl },
+      providerConfig: { baseUrl, apiKey },
       timeoutMs: LLM_TIMEOUT_MS,
     });
     return (turn?.content || [])

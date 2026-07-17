@@ -1,6 +1,11 @@
-import { describe, it } from 'node:test';
+import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { get, post, put, patch } from './helpers.js';
+import { getDefaultUserId } from '../src/auth.js';
+import { closeDb, withUser } from '../src/db/connection.js';
+import { AgentSettingsService } from '../src/services/agent/agent-settings.js';
+
+after(() => closeDb());
 
 // The "outside-dependency" resources. We exercise ONLY the safe, deterministic
 // parts — input validation, enqueue/response shape, read-only endpoints — and
@@ -26,6 +31,54 @@ describe('Agent — validation + read-only (no LLM)', () => {
 
   it('PATCH /agent/settings rejects an invalid provider (400)', async () => {
     assert.equal((await patch('/agent/settings', { provider: 'openai' })).status, 400);
+  });
+
+  it('stores the local LLM bearer token encrypted and exposes only its presence', async (t) => {
+    const secret = 'zzz-test-llm-bearer-token-plaintext';
+    const original = (await get('/agent/settings')).body;
+    t.after(() => patch('/agent/settings', {
+      model: original.model,
+      local_api_key: null,
+    }));
+
+    const saved = await patch('/agent/settings', {
+      model: 'zzz-test-secure-model',
+      local_api_key: `Bearer ${secret}`,
+    });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.body.has_local_api_key, true);
+    assert.ok(!('local_api_key' in saved.body));
+
+    const read = await get('/agent/settings');
+    assert.equal(read.status, 200);
+    assert.equal(read.body.has_local_api_key, true);
+    assert.ok(!('local_api_key' in read.body));
+
+    const userId = await getDefaultUserId();
+    const encrypted = await withUser(userId, async (client) => (
+      await client.query(
+        `SELECT local_api_key_ciphertext, local_api_key_iv,
+                local_api_key_auth_tag, local_api_key_algo,
+                local_api_key_key_version
+         FROM user_agent_settings`,
+      )
+    ).rows[0]);
+    assert.ok(Buffer.isBuffer(encrypted.local_api_key_ciphertext));
+    assert.ok(Buffer.isBuffer(encrypted.local_api_key_iv));
+    assert.ok(Buffer.isBuffer(encrypted.local_api_key_auth_tag));
+    assert.equal(encrypted.local_api_key_algo, 'aes-256-gcm');
+    assert.equal(encrypted.local_api_key_key_version, 1);
+    assert.equal(encrypted.local_api_key_ciphertext.includes(Buffer.from(secret)), false);
+
+    const effective = await new AgentSettingsService().getEffective(userId);
+    assert.equal(effective.local_api_key, secret);
+
+    const cleared = await patch('/agent/settings', {
+      model: original.model,
+      local_api_key: null,
+    });
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.body.has_local_api_key, false);
   });
 });
 

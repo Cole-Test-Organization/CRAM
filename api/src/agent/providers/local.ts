@@ -7,14 +7,17 @@
 // event, so blocks are emitted via onBlock at end-of-stream. The GUI sees no
 // incremental output for a local-provider turn — acceptable for now.
 //
-// Env: LOCAL_BASE_URL (required, e.g. http://192.168.1.50:8080),
-//      LOCAL_API_KEY (optional, sent as Bearer if set).
+// Env: LOCAL_BASE_URL (required unless a per-user baseUrl is supplied).
+// Bearer tokens are never read from env: the encrypted per-user setting is
+// decrypted by AgentSettingsService and supplied in providerConfig for the
+// duration of the outbound request.
 //
 // TLS: we use an undici dispatcher with rejectUnauthorized:false so HTTPS
 // endpoints with self-signed or wrong-hostname certs work on a LAN. HTTP URLs
 // are unaffected. This is deliberate for personal/LAN use — DO NOT reuse this
 // dispatcher for any provider that hits a public endpoint.
 
+import { createHash } from 'node:crypto';
 import { Agent } from 'undici';
 
 // A single emitted block in a turn's `content`. Kept exported and permissive so
@@ -32,6 +35,11 @@ export interface StreamTurnUsage {
   contextMax: number | null;
 }
 
+export interface LocalProviderConfig {
+  baseUrl?: string | null;
+  apiKey?: string | null;
+}
+
 // Public shape of a completed turn. `content` is intentionally `any[]` so the
 // callers' own casts (e.g. `as { content?: Array<{ type?; text? }> }`) remain
 // valid in both directions.
@@ -47,7 +55,7 @@ export interface StreamTurnArgs {
   messages: any[];
   mcpTools: any[];
   onBlock?: (block: ContentBlock) => void;
-  providerConfig?: { baseUrl?: string | null } | null;
+  providerConfig?: LocalProviderConfig | null;
   timeoutMs?: number;
   // Whether to let a thinking-capable model reason before answering. Defaults to
   // true (the interactive agent wants it). Pass false for latency-sensitive,
@@ -87,8 +95,21 @@ function getInsecureDispatcher() {
 // means "we tried and got nothing" — still cached to avoid retry storms.
 const contextSizeCache = new Map<string, number | null>();
 
-function cacheKey(baseUrl: string, model?: string) {
-  return `${baseUrl}|${model || ''}`;
+function credentialScope(apiKey?: string | null) {
+  // Cache authenticated probes separately without retaining the plaintext token
+  // as a Map key. This also prevents an unauthenticated miss from masking a
+  // successful probe immediately after the user saves a bearer token.
+  return apiKey
+    ? createHash('sha256').update(apiKey).digest('hex').slice(0, 16)
+    : 'anonymous';
+}
+
+function cacheKey(baseUrl: string, model?: string, apiKey?: string | null) {
+  return `${baseUrl}|${model || ''}|${credentialScope(apiKey)}`;
+}
+
+function authHeaders(apiKey?: string | null): Record<string, string> {
+  return apiKey ? { Authorization: `Bearer ${apiKey}` } : {};
 }
 
 // List the model ids the configured server has available, via the
@@ -99,13 +120,13 @@ function cacheKey(baseUrl: string, model?: string) {
 const MODELS_TTL_MS = 60_000;
 const modelsCache = new Map<string, { at: number; models: string[] }>();
 
-export async function listModels(baseUrl: string): Promise<string[]> {
+export async function listModels(baseUrl: string, apiKey?: string | null): Promise<string[]> {
   if (!baseUrl) return [];
   const root = baseUrl.replace(/\/+$/, '');
-  const hit = modelsCache.get(root);
+  const requestKey = cacheKey(root, undefined, apiKey);
+  const hit = modelsCache.get(requestKey);
   if (hit && Date.now() - hit.at < MODELS_TTL_MS) return hit.models;
-  const headers: Record<string, string> = {};
-  if (process.env.LOCAL_API_KEY) headers['Authorization'] = `Bearer ${process.env.LOCAL_API_KEY}`;
+  const headers = authHeaders(apiKey);
   let models: string[] = [];
   try {
     const res = await fetch(`${root}/v1/models`, {
@@ -121,7 +142,7 @@ export async function listModels(baseUrl: string): Promise<string[]> {
   } catch {
     models = [];
   }
-  modelsCache.set(root, { at: Date.now(), models });
+  modelsCache.set(requestKey, { at: Date.now(), models });
   return models;
 }
 
@@ -143,14 +164,16 @@ export async function ollamaChat({
   model: string;
   system?: string;
   messages: { role: string; content: string }[];
-  providerConfig?: { baseUrl?: string | null } | null;
+  providerConfig?: LocalProviderConfig | null;
   think?: boolean;
   timeoutMs?: number;
 }): Promise<string | null> {
   const baseUrl = providerConfig?.baseUrl || process.env.LOCAL_BASE_URL;
   if (!baseUrl) throw new Error('No local LLM base URL — set LOCAL_BASE_URL or pass providerConfig.baseUrl');
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (process.env.LOCAL_API_KEY) headers['Authorization'] = `Bearer ${process.env.LOCAL_API_KEY}`;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...authHeaders(providerConfig?.apiKey),
+  };
   const msgs = system ? [{ role: 'system', content: system }, ...messages] : messages;
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/chat`, {
     method: 'POST',
@@ -247,8 +270,8 @@ async function probeOllama(baseUrl: string, headers: Record<string, string>, mod
   }
 }
 
-async function fetchContextSize(baseUrl: string, headers: Record<string, string>, model?: string): Promise<number | null> {
-  const key = cacheKey(baseUrl, model);
+async function fetchContextSize(baseUrl: string, headers: Record<string, string>, model?: string, apiKey?: string | null): Promise<number | null> {
+  const key = cacheKey(baseUrl, model, apiKey);
   if (contextSizeCache.has(key)) return contextSizeCache.get(key)!;
   let n = await probeLlamaCpp(baseUrl, headers);
   if (n == null) n = await probeOllama(baseUrl, headers, model);
@@ -403,10 +426,10 @@ async function streamTurnOnce({ model, system, messages, mcpTools, onBlock, prov
   if (!baseUrl) throw new Error('No local LLM base URL — set LOCAL_BASE_URL env or pass localBaseUrl in the request');
 
   const url = `${baseUrl.replace(/\/$/, '')}/v1/chat/completions`;
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (process.env.LOCAL_API_KEY) {
-    headers['Authorization'] = `Bearer ${process.env.LOCAL_API_KEY}`;
-  }
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...authHeaders(providerConfig?.apiKey),
+  };
 
   const openaiMessages = toOpenAIMessages(system, messages);
   const tools = toOpenAITools(mcpTools);
@@ -606,7 +629,7 @@ async function streamTurnOnce({ model, system, messages, mcpTools, onBlock, prov
 
   let usageOut: StreamTurnUsage | null = null;
   if (usage) {
-    const contextMax = await fetchContextSize(baseUrl, headers, model);
+    const contextMax = await fetchContextSize(baseUrl, headers, model, providerConfig?.apiKey);
     usageOut = {
       promptTokens: usage.prompt_tokens ?? null,
       completionTokens: usage.completion_tokens ?? null,

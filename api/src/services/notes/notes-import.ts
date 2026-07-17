@@ -292,12 +292,13 @@ export class NotesImportService {
     }
     const baseUrl = settings?.local_base_url || process.env.LOCAL_BASE_URL || null;
     const model = settings?.model || process.env.LOCAL_MODEL || 'local';
+    const apiKey = settings?.local_api_key || null;
 
     for (const file of job._files!) {
       job.stage = `extracting ${job.processed + 1}/${job.total}`;
       let result;
       try {
-        const extracted = await this._extract(file, { baseUrl, model });
+        const extracted = await this._extract(file, { baseUrl, model, apiKey });
         result = await this._writeOne(job.userId, file, extracted);
       } catch (err) {
         result = { path: file.path, ok: false, outcome: 'error', error: (err as Error).message || String(err) };
@@ -315,7 +316,7 @@ export class NotesImportService {
 
   // Extract metadata for one file. Uses the injected test extractor if present,
   // otherwise the local LLM (one-shot, no tools, with a JSON reprompt).
-  async _extract(file: NoteFile, { baseUrl, model }: { baseUrl: string | null; model: string }) {
+  async _extract(file: NoteFile, { baseUrl, model, apiKey }: { baseUrl: string | null; model: string; apiKey?: string | null }) {
     if (this.extractor) {
       return normalizeExtraction(await this.extractor(file, { baseUrl, model }));
     }
@@ -334,7 +335,7 @@ Return ONLY the JSON object specified in the system prompt.`;
 
     const messages: any[] = [{ role: 'user', content: userPrompt }];
     for (let attempt = 0; attempt < 2; attempt++) {
-      const text = await this._callLLM({ system: EXTRACT_SYSTEM_PROMPT, messages, model, baseUrl });
+      const text = await this._callLLM({ system: EXTRACT_SYSTEM_PROMPT, messages, model, baseUrl, apiKey });
       const parsed = parseLooseJson(text);
       if (parsed) return normalizeExtraction(parsed);
       // Content (not transport) failure — model answered but JSON was unusable.
@@ -351,13 +352,13 @@ Return ONLY the JSON object specified in the system prompt.`;
   // Local LLM call with timeout + retry-with-backoff on transport failures.
   // Lifted from contact-enrichment — same resilience needs against a flaky LAN
   // inference box.
-  async _callLLM({ system, messages, model, baseUrl }: { system: string; messages: any[]; model: string; baseUrl: string | null }) {
+  async _callLLM({ system, messages, model, baseUrl, apiKey }: { system: string; messages: any[]; model: string; baseUrl: string | null; apiKey?: string | null }) {
     let lastErr: any = null;
     for (let attempt = 1; attempt <= LLM_MAX_ATTEMPTS; attempt++) {
       try {
         const { content } = await localProvider.streamTurn({
           model, system, messages, mcpTools: [],
-          providerConfig: { baseUrl }, timeoutMs: LLM_TIMEOUT_MS,
+          providerConfig: { baseUrl, apiKey }, timeoutMs: LLM_TIMEOUT_MS,
         }) as { content?: Array<{ type?: string; text?: string }> };
         const text = (content || []).filter((b) => b?.type === 'text').map((b) => b.text).join('').trim();
         if (!text) throw new Error('local LLM returned an empty response');
