@@ -74,6 +74,23 @@ async function setup() {
   return utils;
 }
 
+function placementCombobox(name: string) {
+  return screen.getByRole('combobox', { name: `Placement for ${name}` }) as HTMLInputElement;
+}
+
+function openPlacement(name: string) {
+  const combobox = placementCombobox(name);
+  fireEvent.focus(combobox);
+  return {
+    combobox,
+    listbox: screen.getByRole('listbox', { name: `Placement options for ${name}` }),
+  };
+}
+
+function optionValues(listbox: HTMLElement) {
+  return within(listbox).getAllByRole('option').map((option) => option.getAttribute('data-placement-value'));
+}
+
 describe('OrgChartPanel', () => {
   it('renders the explicit chart first without treating unassigned contacts as roots or using a horizontal canvas', async () => {
     const { container } = await setup();
@@ -108,22 +125,35 @@ describe('OrgChartPanel', () => {
     expect(container.querySelector('[data-org-node="3"]')).not.toBeNull();
   });
 
-  it('prevents cycles and blocks removing a manager who still has direct reports', async () => {
-    await setup();
-    const optionValues = (name: string) => within(screen.getByRole('combobox', { name: `Placement for ${name}` }))
-      .getAllByRole('option')
-      .map((option) => (option as HTMLOptionElement).value);
+  it('uses a searchable picker that prioritizes chart members, sorts the rest, and keeps cycle protections', async () => {
+    const { container } = await setup();
+    expect(container.querySelectorAll('select')).toHaveLength(0);
 
-    expect(optionValues('Ada Lovelace')).toEqual(['unassigned', 'root', 'manager:4', 'manager:5']);
-    expect(optionValues('Grace Hopper')).toEqual(['unassigned', 'root', 'manager:1', 'manager:4', 'manager:5']);
-    expect(optionValues('Katherine Johnson')).toEqual(['unassigned', 'root', 'manager:1', 'manager:2', 'manager:4', 'manager:5']);
+    const ada = openPlacement('Ada Lovelace');
+    expect(optionValues(ada.listbox)).toEqual(['unassigned', 'root', 'manager:5', 'manager:4']);
+    expect((ada.listbox.querySelector('[data-placement-value="unassigned"]') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.keyDown(ada.combobox, { key: 'Escape' });
 
-    const adaUnassigned = within(screen.getByRole('combobox', { name: 'Placement for Ada Lovelace' }))
-      .getByRole('option', { name: /Not in chart/ }) as HTMLOptionElement;
-    const katherineUnassigned = within(screen.getByRole('combobox', { name: 'Placement for Katherine Johnson' }))
-      .getByRole('option', { name: 'Not in chart' }) as HTMLOptionElement;
-    expect(adaUnassigned.disabled).toBe(true);
-    expect(katherineUnassigned.disabled).toBe(false);
+    const grace = openPlacement('Grace Hopper');
+    expect(optionValues(grace.listbox)).toEqual(['unassigned', 'root', 'manager:1', 'manager:5', 'manager:4']);
+    expect(within(grace.listbox).getByRole('group', { name: 'In org chart' })).toBeTruthy();
+    expect(within(grace.listbox).getByRole('group', { name: 'Other account contacts' })).toBeTruthy();
+
+    fireEvent.input(grace.combobox, { target: { value: 'director' } });
+    expect(optionValues(grace.listbox)).toEqual(['manager:5']);
+    expect(within(grace.listbox).getByRole('option', { name: /Dorothy Vaughan/ })).toBeTruthy();
+    fireEvent.keyDown(grace.combobox, { key: 'Escape' });
+
+    const katherine = openPlacement('Katherine Johnson');
+    expect(optionValues(katherine.listbox)).toEqual([
+      'unassigned',
+      'root',
+      'manager:1',
+      'manager:2',
+      'manager:5',
+      'manager:4',
+    ]);
+    expect((katherine.listbox.querySelector('[data-placement-value="unassigned"]') as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('moves an entire reporting chain when its top manager is placed under a director', async () => {
@@ -143,9 +173,9 @@ describe('OrgChartPanel', () => {
     apiMock.setOrgChartManager.mockResolvedValue(moved);
 
     const { container } = await setup();
-    fireEvent.change(screen.getByRole('combobox', { name: 'Placement for Ada Lovelace' }), {
-      target: { value: 'manager:5' },
-    });
+    const { combobox, listbox } = openPlacement('Ada Lovelace');
+    fireEvent.input(combobox, { target: { value: 'Dorothy' } });
+    fireEvent.click(within(listbox).getByRole('option', { name: /Dorothy Vaughan/ }));
 
     expect(apiMock.setOrgChartManager).toHaveBeenCalledWith(7, 1, 5);
     await waitFor(() => {
@@ -163,9 +193,9 @@ describe('OrgChartPanel', () => {
     apiMock.removeOrgChartContact.mockResolvedValue(removed);
 
     const { container } = await setup();
-    fireEvent.change(screen.getByRole('combobox', { name: 'Placement for Katherine Johnson' }), {
-      target: { value: 'unassigned' },
-    });
+    const { combobox, listbox } = openPlacement('Katherine Johnson');
+    fireEvent.input(combobox, { target: { value: 'Not in chart' } });
+    fireEvent.click(within(listbox).getByRole('option', { name: /Not in chart/ }));
 
     expect(apiMock.removeOrgChartContact).toHaveBeenCalledWith(7, 3);
     await waitFor(() => expect(container.querySelector('[data-org-chart] [data-org-node="3"]')).toBeNull());
