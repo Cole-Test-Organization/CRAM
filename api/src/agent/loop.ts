@@ -66,6 +66,7 @@ function stringifyMcpResult(result: any) {
  * @param {string} [args.sessionId]  resume an existing session if provided
  * @param {string} [args.provider]   override default provider
  * @param {string} [args.model]      override default model
+ * @param {string} [args.localApiKey] decrypted per-user bearer token; never log
  * @param {string[]} [args.allowedTools]  restrict MCP tools the model sees.
  *   undefined → all tools; [] → no tools (forces a text-only answer);
  *   ['x','y'] → only those tool names are exposed.
@@ -82,6 +83,7 @@ export async function runAgent({
     provider,
     model,
     localBaseUrl,
+    localApiKey,
     allowedTools,
     send,
     signal,
@@ -94,6 +96,7 @@ export async function runAgent({
     provider?: string;
     model?: string;
     localBaseUrl?: string;
+    localApiKey?: string;
     allowedTools?: string[];
     send: (evt: any) => void;
     signal?: AbortSignal;
@@ -164,7 +167,7 @@ export async function runAgent({
         : DEFAULT_PROVIDER;
     const providerImpl = getProvider(providerName);
 
-    const providerConfig = { baseUrl: localBaseUrl };
+    const providerConfig = { baseUrl: localBaseUrl, apiKey: localApiKey };
 
     let iter = 0;
     let stopReason = null;

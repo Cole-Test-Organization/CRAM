@@ -61,6 +61,10 @@ const serverEnv = {
   // and could fire the daily news refresh (external Google News + local LLM).
   // The scheduler is exercised directly in news.test.js instead.
   SCHEDULER_ENABLED: 'false',
+  // Throwaway AES master key for tests that prove write-only settings are
+  // encrypted in the isolated database. This is not an LLM bearer token.
+  PROVISIONING_SECRETS_KEY:
+    process.env.PROVISIONING_SECRETS_KEY || Buffer.alloc(32, 7).toString('base64'),
 };
 
 let apiProc = null;
@@ -150,7 +154,7 @@ async function main() {
 
   // 5 — run the integration suite against the live, seeded API.
   console.log('▸ running api/test…\n');
-  await run('npm', ['--prefix', apiDir, 'test'], { ...process.env, API_URL: API_BASE });
+  await run('npm', ['--prefix', apiDir, 'test'], { ...serverEnv, API_URL: API_BASE });
 }
 
 main()

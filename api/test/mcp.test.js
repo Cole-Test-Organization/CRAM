@@ -69,6 +69,9 @@ describe('MCP — tool set + parity', () => {
     for (const a of ['get', 'set_manager', 'remove', 'replace']) {
       assert.ok(actionsOf('org_chart').includes(a), `org_chart tool missing action "${a}"`);
     }
+    const agentSettingsData = tools.find((t) => t.name === 'agent_settings')
+      ?.inputSchema?.properties?.data?.properties || {};
+    assert.ok(agentSettingsData.local_api_key, 'agent_settings tool missing write-only local_api_key');
   });
 
   it('parity: the accounts status filter is reachable over MCP (5 partners)', async () => {

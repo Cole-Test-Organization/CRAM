@@ -70,14 +70,13 @@ export default async function agentRoutes(fastify: FastifyInstance, { agentSetti
     const { prompt, notes, mentions, sessionId, allowedTools } = request.body;
     let { provider, model, localBaseUrl } = request.body;
 
-    // Resolve unspecified fields from the user's saved settings (with env
-    // fallback baked into the service). Request body still wins per-call.
-    if (!provider || !model || !localBaseUrl) {
-      const effective = await agentSettingsService.getEffective(request.userId);
-      provider     = provider     || effective.provider;
-      model        = model        || effective.model;
-      localBaseUrl = localBaseUrl || effective.local_base_url || undefined;
-    }
+    // Resolve the saved settings for every call. The request body may override
+    // non-secret fields, but the bearer token is intentionally never accepted on
+    // this query endpoint: it comes only from the encrypted per-user setting.
+    const effective = await agentSettingsService.getEffective(request.userId);
+    provider     = provider     || effective.provider;
+    model        = model        || effective.model;
+    localBaseUrl = localBaseUrl || effective.local_base_url || undefined;
 
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -105,6 +104,7 @@ export default async function agentRoutes(fastify: FastifyInstance, { agentSetti
         provider,
         model,
         localBaseUrl,
+        localApiKey: effective.local_api_key || undefined,
         allowedTools,
         send,
         signal: abort.signal,
@@ -184,13 +184,14 @@ export default async function agentRoutes(fastify: FastifyInstance, { agentSetti
     }
   });
 
-  // Per-user agent provider config (provider, model, local server URL).
+  // Per-user agent provider config (provider, model, local server URL, and a
+  // write-only encrypted bearer token).
   // Replaces the browser-localStorage state the GUI used to keep. Reading it
   // server-side lets background workers (contact enrichment, etc.) call the
   // same provider the user has configured for the in-app agent.
   fastify.get('/agent/settings', {
     schema: {
-      description: 'Get the calling user\'s agent config: LLM fields (provider, model, local_base_url) and the agent\'s base `system_prompt`. Empty provider/URL fall through to env-backed defaults (AGENT_PROVIDER / LOCAL_BASE_URL), which ship pointed at a local LLM — Ollama on the device itself. An empty model is resolved from the models the configured server actually has installed (not an env var). `system_prompt` is null until the user customizes it; `default_system_prompt` is always the built-in default rendered live (what a null system_prompt resolves to), so the UI can show it and offer a reset.',
+      description: 'Get the calling user\'s agent config: LLM fields (provider, model, local_base_url), whether an encrypted local-LLM bearer token is saved (`has_local_api_key`), and the agent\'s base `system_prompt`. The token itself is write-only and is never returned. Empty provider/URL fall through to defaults, which ship pointed at Ollama on the device itself. An empty model is resolved from the models the authenticated server actually exposes. `system_prompt` is null until the user customizes it; `default_system_prompt` is always the built-in default rendered live.',
       tags: ['agent'],
       response: {
         200: {
@@ -199,6 +200,7 @@ export default async function agentRoutes(fastify: FastifyInstance, { agentSetti
             provider:              { type: ['string', 'null'] },
             model:                 { type: ['string', 'null'] },
             local_base_url:        { type: ['string', 'null'] },
+            has_local_api_key:     { type: 'boolean' },
             system_prompt:         { type: ['string', 'null'] },
             default_system_prompt: { type: 'string' },
             updated_at:            { type: ['string', 'null'] },
@@ -210,9 +212,9 @@ export default async function agentRoutes(fastify: FastifyInstance, { agentSetti
     return agentSettingsService.get(request.userId);
   });
 
-  fastify.patch<{ Body: { provider?: string | null; model?: string | null; local_base_url?: string | null; system_prompt?: string | null } }>('/agent/settings', {
+  fastify.patch<{ Body: { provider?: string | null; model?: string | null; local_base_url?: string | null; local_api_key?: string | null; system_prompt?: string | null } }>('/agent/settings', {
     schema: {
-      description: 'Update the agent config. Pass any subset of `provider`, `model`, `local_base_url`, `system_prompt`. Pass null on a field to clear it (the server default then applies). Provider must be: local (an OpenAI-compatible inference server, by default Ollama on the device). local_base_url has its trailing slash stripped before storage. `system_prompt` is the agent\'s base instructions/persona — set it to customize, or null/empty to revert to the built-in default (do not bake the current date into it; the agent loop injects today\'s date automatically).',
+      description: 'Update the agent config. Pass any subset of `provider`, `model`, `local_base_url`, write-only `local_api_key`, and `system_prompt`. `local_api_key` is encrypted with AES-256-GCM before it reaches Postgres and is sent as `Authorization: Bearer <token>` to the configured LLM; pass null/empty to remove it. The plaintext token is never returned. Provider must be local (an OpenAI-compatible inference server). local_base_url has its trailing slash stripped before storage. `system_prompt` is the agent\'s base instructions/persona — set it to customize, or null/empty to revert to the built-in default.',
       tags: ['agent'],
       body: {
         type: 'object',
@@ -220,6 +222,7 @@ export default async function agentRoutes(fastify: FastifyInstance, { agentSetti
           provider:       { type: ['string', 'null'], enum: ['local', null] },
           model:          { type: ['string', 'null'] },
           local_base_url: { type: ['string', 'null'] },
+          local_api_key:  { type: ['string', 'null'], maxLength: 8192, description: 'Write-only bearer token value. A leading "Bearer " prefix is accepted and stripped. Omit to preserve the saved token; null/empty clears it.' },
           system_prompt:  { type: ['string', 'null'] },
         },
         additionalProperties: false,
