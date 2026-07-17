@@ -1,5 +1,13 @@
 import { A } from '@solidjs/router';
-import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
+import {
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+  For,
+  onCleanup,
+  Show,
+} from 'solid-js';
 import { api } from '../../lib/api';
 import type { OrgChartContact, OrgChartNode } from '../../lib/types';
 
@@ -14,12 +22,274 @@ type BranchProps = {
   ancestors?: ReadonlySet<number>;
 };
 
+type PlacementOption = {
+  value: string;
+  label: string;
+  searchText: string;
+  group: 'placement' | 'chart' | 'other';
+  meta?: string;
+  disabled?: boolean;
+};
+
+type PlacementPickerProps = {
+  contact: OrgChartContact;
+  value: string;
+  valueLabel: string;
+  candidates: OrgChartContact[];
+  chartContactIds: ReadonlySet<number>;
+  directReportCount: number;
+  disabled: boolean;
+  onChange: (value: string) => void;
+};
+
 function personLabel(person: OrgChartContact) {
   return person.full_name || person.email || `Contact ${person.id}`;
 }
 
 function personMeta(person: OrgChartContact) {
   return [person.title, person.email].filter(Boolean);
+}
+
+function PlacementPicker(props: PlacementPickerProps) {
+  const [open, setOpen] = createSignal(false);
+  const [query, setQuery] = createSignal('');
+  const [activeValue, setActiveValue] = createSignal<string | null>(null);
+  let rootRef: HTMLDivElement | undefined;
+  let inputRef: HTMLInputElement | undefined;
+
+  const contactLabel = () => personLabel(props.contact);
+  const listboxId = `org-placement-options-${props.contact.id}`;
+  const optionId = (value: string) => `${listboxId}-${value.replace(/[^a-z0-9-]/gi, '-')}`;
+
+  const options = createMemo<PlacementOption[]>(() => [
+    {
+      value: 'unassigned',
+      label: 'Not in chart',
+      searchText: 'not in chart remove unassigned',
+      group: 'placement',
+      meta: props.directReportCount ? 'Reassign direct reports first' : 'Remove from chart',
+      disabled: props.directReportCount > 0,
+    },
+    {
+      value: 'root',
+      label: 'Top level',
+      searchText: 'top level root no manager',
+      group: 'placement',
+      meta: 'No manager',
+    },
+    ...props.candidates.map((candidate): PlacementOption => {
+      const inChart = props.chartContactIds.has(candidate.id);
+      return {
+        value: `manager:${candidate.id}`,
+        label: personLabel(candidate),
+        searchText: [
+          personLabel(candidate),
+          candidate.title,
+          candidate.email,
+          candidate.company,
+        ].filter(Boolean).join(' '),
+        group: inChart ? 'chart' : 'other',
+        meta: personMeta(candidate).join(' · '),
+      };
+    }),
+  ]);
+
+  const filteredOptions = createMemo(() => {
+    const normalized = query().trim().toLocaleLowerCase();
+    if (!normalized) return options();
+    return options().filter((option) => option.searchText.toLocaleLowerCase().includes(normalized));
+  });
+
+  const optionGroups = createMemo(() => {
+    const visible = filteredOptions();
+    return [
+      { key: 'placement', label: 'Placement', options: visible.filter((option) => option.group === 'placement') },
+      { key: 'chart', label: 'In org chart', options: visible.filter((option) => option.group === 'chart') },
+      { key: 'other', label: 'Other account contacts', options: visible.filter((option) => option.group === 'other') },
+    ].filter((group) => group.options.length > 0);
+  });
+
+  const enabledOptions = () => filteredOptions().filter((option) => !option.disabled);
+
+  const closePicker = () => {
+    setOpen(false);
+    setQuery('');
+    setActiveValue(null);
+  };
+
+  const openPicker = () => {
+    if (props.disabled || open()) return;
+    setQuery('');
+    setActiveValue(props.value);
+    setOpen(true);
+  };
+
+  const selectOption = (option: PlacementOption) => {
+    if (option.disabled || props.disabled) return;
+    closePicker();
+    inputRef?.blur();
+    props.onChange(option.value);
+  };
+
+  const moveActive = (direction: 1 | -1) => {
+    const available = enabledOptions();
+    if (!available.length) return;
+    const currentIndex = available.findIndex((option) => option.value === activeValue());
+    const nextIndex = currentIndex < 0
+      ? (direction === 1 ? 0 : available.length - 1)
+      : (currentIndex + direction + available.length) % available.length;
+    const nextValue = available[nextIndex].value;
+    setActiveValue(nextValue);
+    queueMicrotask(() => document.getElementById(optionId(nextValue))?.scrollIntoView?.({ block: 'nearest' }));
+  };
+
+  createEffect(() => {
+    if (!open()) return;
+    const available = enabledOptions();
+    if (!available.some((option) => option.value === activeValue())) {
+      setActiveValue(available[0]?.value || null);
+    }
+  });
+
+  createEffect(() => {
+    if (props.disabled && open()) closePicker();
+  });
+
+  createEffect(() => {
+    if (!open()) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!rootRef?.contains(event.target as Node)) closePicker();
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    onCleanup(() => document.removeEventListener('pointerdown', closeOnOutsidePointer));
+  });
+
+  return (
+    <div
+      ref={rootRef}
+      class="relative"
+      onFocusOut={(event) => {
+        const next = event.relatedTarget as Node | null;
+        if (!next || !rootRef?.contains(next)) closePicker();
+      }}
+    >
+      <div class="relative">
+        <input
+          ref={inputRef}
+          class="input-vintage w-full pr-9"
+          type="text"
+          role="combobox"
+          value={open() ? query() : props.valueLabel}
+          placeholder={open() ? 'Search people or placements...' : undefined}
+          readOnly={!open()}
+          disabled={props.disabled}
+          autocomplete="off"
+          aria-label={`Placement for ${contactLabel()}`}
+          aria-expanded={open()}
+          aria-controls={listboxId}
+          aria-autocomplete="list"
+          aria-activedescendant={open() && activeValue() ? optionId(activeValue()!) : undefined}
+          title={props.directReportCount ? 'Reassign direct reports before removing this manager from the chart.' : undefined}
+          onFocus={openPicker}
+          onClick={openPicker}
+          onInput={(event) => setQuery(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              event.preventDefault();
+              closePicker();
+              inputRef?.blur();
+              return;
+            }
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+              event.preventDefault();
+              if (!open()) openPicker();
+              moveActive(event.key === 'ArrowDown' ? 1 : -1);
+              return;
+            }
+            if (event.key === 'Enter' && open()) {
+              event.preventDefault();
+              const option = enabledOptions().find((candidate) => candidate.value === activeValue());
+              if (option) selectOption(option);
+            }
+          }}
+        />
+        <svg
+          aria-hidden="true"
+          class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-surf-400"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path d={open() ? 'm6 15 6-6 6 6' : 'm6 9 6 6 6-6'} />
+        </svg>
+      </div>
+
+      <Show when={open()}>
+        <div
+          id={listboxId}
+          role="listbox"
+          aria-label={`Placement options for ${contactLabel()}`}
+          class="absolute left-0 right-0 z-50 mt-1 max-h-[min(360px,60svh)] overflow-y-auto border-2 border-base-500 bg-base-900 shadow-[4px_4px_0_0_var(--color-base-600)]"
+        >
+          <Show
+            when={filteredOptions().length > 0}
+            fallback={(
+              <div class="p-4 text-center text-[12px] normal-case tracking-normal text-base-300">
+                No people or placements match “{query().trim()}”.
+              </div>
+            )}
+          >
+            <For each={optionGroups()}>
+              {(group) => (
+                <div role="group" aria-label={group.label}>
+                  <div class="sticky top-0 border-y border-base-700 bg-base-800 px-3 py-1.5 text-[9px] font-bold uppercase tracking-widest text-surf-300 first:border-t-0">
+                    {group.label}
+                  </div>
+                  <For each={group.options}>
+                    {(option) => (
+                      <button
+                        id={optionId(option.value)}
+                        type="button"
+                        role="option"
+                        data-placement-value={option.value}
+                        aria-selected={option.value === props.value}
+                        aria-disabled={option.disabled || undefined}
+                        disabled={option.disabled}
+                        class="press-row min-h-11 w-full gap-3 border-b border-base-700 text-left normal-case tracking-normal last:border-b-0 disabled:cursor-not-allowed disabled:opacity-45"
+                        classList={{
+                          'bg-base-700 border-l-surf-400': option.value === activeValue(),
+                        }}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onMouseEnter={() => {
+                          if (!option.disabled) setActiveValue(option.value);
+                        }}
+                        onClick={() => selectOption(option)}
+                      >
+                        <span class="min-w-0 flex-1">
+                          <span class="block break-words text-[13px] font-semibold text-base-50">{option.label}</span>
+                          <Show when={option.meta}>
+                            <span class="mt-0.5 block break-words text-[10px] text-base-300">{option.meta}</span>
+                          </Show>
+                        </span>
+                        <Show when={option.value === props.value || option.group !== 'placement'}>
+                          <span class="shrink-0 text-[9px] font-bold uppercase tracking-wider text-base-300">
+                            {option.value === props.value ? 'Current' : option.group === 'chart' ? 'In chart' : 'Add as top level'}
+                          </span>
+                        </Show>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              )}
+            </For>
+          </Show>
+        </div>
+      </Show>
+    </div>
+  );
 }
 
 function OrgBranch(props: BranchProps) {
@@ -158,7 +428,12 @@ export default function OrgChartPanel(props: Props) {
   const managerOptions = (contactId: number) => {
     const disallowed = descendantsOf(contactId);
     disallowed.add(contactId);
-    return contacts().filter((candidate) => !disallowed.has(candidate.id));
+    return contacts()
+      .filter((candidate) => !disallowed.has(candidate.id))
+      .sort((a, b) => {
+        const chartRank = Number(nodeIds().has(b.id)) - Number(nodeIds().has(a.id));
+        return chartRank || personLabel(a).localeCompare(personLabel(b));
+      });
   };
 
   const setPlacement = async (contact: OrgChartContact, rawValue: string) => {
@@ -282,29 +557,19 @@ export default function OrgChartPanel(props: Props) {
                           </Show>
                         </div>
 
-                        <label class="flex w-full min-w-0 flex-col gap-1 text-[10px] uppercase tracking-wider text-base-300 md:w-[280px]">
-                          Placement
-                          <select
-                            class="input-vintage w-full cursor-pointer"
+                        <div class="flex w-full min-w-0 flex-col gap-1 text-[10px] uppercase tracking-wider text-base-300 md:w-[280px]">
+                          <span>Placement</span>
+                          <PlacementPicker
+                            contact={contact}
                             value={placementValue(contact.id)}
+                            valueLabel={placementLabel(contact.id)}
+                            candidates={managerOptions(contact.id)}
+                            chartContactIds={nodeIds()}
+                            directReportCount={directReportCount()}
                             disabled={savingId() !== null}
-                            aria-label={`Placement for ${personLabel(contact)}`}
-                            title={directReportCount() ? 'Reassign direct reports before removing this manager from the chart.' : undefined}
-                            onChange={(event) => setPlacement(contact, event.currentTarget.value)}
-                          >
-                            <option value="unassigned" disabled={directReportCount() > 0}>
-                              Not in chart{directReportCount() ? ' — reassign reports first' : ''}
-                            </option>
-                            <option value="root">Top level</option>
-                            <For each={managerOptions(contact.id)}>
-                              {(candidate) => (
-                                <option value={`manager:${candidate.id}`}>
-                                  {personLabel(candidate)}{nodeIds().has(candidate.id) ? '' : ' — add as top level'}
-                                </option>
-                              )}
-                            </For>
-                          </select>
-                        </label>
+                            onChange={(value) => void setPlacement(contact, value)}
+                          />
+                        </div>
                       </div>
                     );
                   }}
