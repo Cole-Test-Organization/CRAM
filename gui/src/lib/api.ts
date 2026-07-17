@@ -220,6 +220,8 @@ export type ProvisioningTunnel = {
 
 export type ProvisioningRdpTunnel = ProvisioningTunnel;
 
+const OPPORTUNITY_PAGE_SIZE = 500;
+
 async function get<T>(path: string): Promise<T> {
   const res = await apiFetch(`${BASE}${path}`);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -261,6 +263,33 @@ async function del<T = void>(path: string): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   const text = await res.text();
   return (text ? JSON.parse(text) : undefined) as T;
+}
+
+async function getAllOpportunityPages(params: {
+  account_id?: number;
+  stage?: string;
+  sort?: string;
+  order?: 'asc' | 'desc';
+} = {}): Promise<{ opportunities: any[]; total: number }> {
+  const opportunities: any[] = [];
+  let total = 0;
+
+  do {
+    const qs = new URLSearchParams();
+    if (params.account_id) qs.set('account_id', String(params.account_id));
+    if (params.stage) qs.set('stage', params.stage);
+    if (params.sort) qs.set('sort', params.sort);
+    if (params.order) qs.set('order', params.order);
+    qs.set('limit', String(OPPORTUNITY_PAGE_SIZE));
+    if (opportunities.length) qs.set('offset', String(opportunities.length));
+
+    const page = await get<{ opportunities: any[]; total: number }>(`/opportunities?${qs.toString()}`);
+    opportunities.push(...page.opportunities);
+    total = page.total;
+    if (!page.opportunities.length) break;
+  } while (opportunities.length < total);
+
+  return { opportunities, total };
 }
 
 export const api = {
@@ -601,6 +630,8 @@ export const api = {
     const q = qs.toString();
     return get<{ opportunities: any[]; total: number }>(`/opportunities${q ? '?' + q : ''}`);
   },
+
+  getAllOpportunities: getAllOpportunityPages,
 
   getOpportunitiesByAccount: (accountId: number) =>
     get<any[]>(`/accounts/${accountId}/opportunities`),

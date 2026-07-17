@@ -1,4 +1,4 @@
-const SHELL_CACHE = 'cram-shell-v1';
+const SHELL_CACHE = 'cram-shell-v2';
 const API_CACHE = 'cram-api-v1';
 const SHELL_PREFIX = 'cram-shell-';
 
@@ -73,18 +73,21 @@ async function navigationResponse(request) {
     }
     return response;
   } catch {
-    return (await cache.match(request)) || (await cache.match('/')) || (await cache.match('/index.html')) || Response.error();
+    return (await cache.match(request, { ignoreVary: true }))
+      || (await cache.match('/', { ignoreVary: true }))
+      || (await cache.match('/index.html', { ignoreVary: true }))
+      || Response.error();
   }
 }
 
 async function apiResponse(request) {
   const cache = await caches.open(API_CACHE);
   try {
-    const response = await fetch(request);
+    const response = await fetch(request, { cache: 'no-store' });
     if (response.status < 500) await cache.put(request, response.clone());
     return response;
   } catch {
-    const cached = await cache.match(request);
+    const cached = await cache.match(request, { ignoreVary: true });
     if (cached) {
       const headers = new Headers(cached.headers);
       headers.set('X-CRAM-Offline', 'true');
@@ -108,7 +111,7 @@ async function apiResponse(request) {
 
 async function staticResponse(request) {
   const cache = await caches.open(SHELL_CACHE);
-  const cached = await cache.match(request);
+  const cached = await cache.match(request, { ignoreVary: true });
   if (cached) return cached;
   const response = await fetch(request);
   if (response.ok) await cache.put(request, response.clone());

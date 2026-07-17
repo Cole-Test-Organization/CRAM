@@ -30,10 +30,9 @@ export default function OpportunitiesList(props: Props = {}) {
   // One complete, stable collection is cached for offline use. Account/stage
   // filtering stays client-side so changing a filter never requires a network
   // round-trip or a separately cached query URL.
-  const [data, { refetch }] = createResource(() => api.getOpportunities({
+  const [data, { refetch }] = createResource(() => api.getAllOpportunities({
     sort: 'created_at',
     order: 'desc',
-    limit: 100000,
   }));
 
   const filtered = createMemo(() => {

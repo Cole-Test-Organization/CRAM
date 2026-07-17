@@ -5,6 +5,7 @@ const LAST_SYNC_STORAGE_KEY = 'cram.offline-sync.v1';
 const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const FOREGROUND_SYNC_STALE_MS = 60 * 1000;
 const SYNC_CONCURRENCY = 6;
+const OPPORTUNITY_PAGE_SIZE = 500;
 
 export type SyncPhase = 'idle' | 'syncing' | 'ready' | 'error';
 
@@ -298,6 +299,24 @@ async function mapWithConcurrency<T>(items: T[], limit: number, worker: (item: T
   await Promise.all(runners);
 }
 
+async function fetchOpportunitiesForSync(): Promise<{ opportunities: any[]; paths: string[] }> {
+  const pathForOffset = (offset: number) =>
+    `/api/opportunities?sort=created_at&order=desc&limit=${OPPORTUNITY_PAGE_SIZE}${offset ? `&offset=${offset}` : ''}`;
+  const firstPath = pathForOffset(0);
+  const first = await fetchForSync<{ opportunities: any[]; total: number }>(firstPath);
+  const paths = [firstPath];
+  const opportunities = [...(first.opportunities || [])];
+
+  for (let offset = OPPORTUNITY_PAGE_SIZE; offset < first.total; offset += OPPORTUNITY_PAGE_SIZE) {
+    const path = pathForOffset(offset);
+    paths.push(path);
+    const page = await fetchForSync<{ opportunities: any[] }>(path);
+    opportunities.push(...(page.opportunities || []));
+  }
+
+  return { opportunities, paths };
+}
+
 let activeSync: Promise<void> | null = null;
 
 export function syncNow(): Promise<void> {
@@ -316,14 +335,13 @@ export function syncNow(): Promise<void> {
       const accountsAllPath = '/api/accounts?sort=name';
       const contactsAllPath = '/api/contacts';
       const meetingsAllPath = '/api/meetings?limit=100000';
-      const opportunitiesAllPath = '/api/opportunities?sort=created_at&order=desc&limit=100000';
       const eventsAllPath = '/api/events?sort=start_date&order=asc&limit=10000';
 
       const [accountsResult, contacts, meetings, opportunitiesResult, eventsResult] = await Promise.all([
         fetchForSync<{ accounts: any[] }>(accountsAllPath),
         fetchForSync<any[]>(contactsAllPath),
         fetchForSync<any[]>(meetingsAllPath),
-        fetchForSync<{ opportunities: any[] }>(opportunitiesAllPath),
+        fetchOpportunitiesForSync(),
         fetchForSync<{ events: any[] }>(eventsAllPath),
       ]);
 
@@ -338,7 +356,7 @@ export function syncNow(): Promise<void> {
         '/api/contacts/companies',
         meetingsAllPath,
         '/api/meetings?limit=15',
-        opportunitiesAllPath,
+        ...opportunitiesResult.paths,
         '/api/products?limit=500',
         '/api/product-categories?limit=500',
         '/api/vendors?include_deleted=true',
@@ -357,7 +375,7 @@ export function syncNow(): Promise<void> {
         accountsAllPath,
         contactsAllPath,
         meetingsAllPath,
-        opportunitiesAllPath,
+        ...opportunitiesResult.paths,
         eventsAllPath,
       ].includes(path));
       await mapWithConcurrency(remainingCollections, SYNC_CONCURRENCY, cachePath);
@@ -366,7 +384,7 @@ export function syncNow(): Promise<void> {
         accounts: accountsResult.accounts || [],
         contacts: contacts || [],
         meetings: meetings || [],
-        opportunities: opportunitiesResult.opportunities || [],
+        opportunities: opportunitiesResult.opportunities,
         events: eventsResult.events || [],
       };
       const detailPaths = buildDetailSyncPaths(snapshot);
