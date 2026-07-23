@@ -1,7 +1,7 @@
 // Portable JSON import/export for accounts (plus their details, contacts,
 // meetings, opportunities, and partner shells). Different from the existing
-// markdown export under /api/export — those produce human-readable tar.gz
-// bundles; these produce JSON suitable for re-importing into another tenant.
+// document export under /api/export — those routes produce human-readable ZIP
+// files; these produce JSON suitable for re-importing into another tenant.
 
 import type { FastifyInstance } from 'fastify';
 import type { ImportExportService } from '../../services/import-export/import-export.js';

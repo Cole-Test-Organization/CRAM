@@ -114,6 +114,13 @@ export default function AccountDetail() {
                   </div>
                 </div>
                 <div class="flex gap-3 flex-wrap">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    href={api.accountDriveExportUrl(account().slug)}
+                    download={`${account().slug}-google-drive.zip`}
+                    title="Download a ZIP to unzip and upload as a folder to Google Drive. Includes an overview, contacts, and one editable Word document per meeting."
+                  >Export for Drive</Button>
                   <Button variant="ghost" size="sm" onClick={async () => {
                     try {
                       const bundle = await api.exportAccountBundle(account().slug);
@@ -129,7 +136,7 @@ export default function AccountDetail() {
                     } catch (err: any) {
                       alert(`Export failed: ${err?.message || err}`);
                     }
-                  }} title="Download a portable JSON bundle (account + details + contacts + meetings + opportunities + partner shells)">Export JSON</Button>
+                  }} title="Download a portable JSON bundle for moving this account into another SE Operating System instance">Export JSON</Button>
                   <Button variant="ghost" size="sm" onClick={() => setAccountModalOpen(true)} title="Edit account details">Edit</Button>
                   <Button variant="danger" size="sm" onClick={deleteAccount} title="Delete account">Delete</Button>
                 </div>

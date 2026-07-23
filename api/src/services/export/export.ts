@@ -1,5 +1,11 @@
 import type { PoolClient } from 'pg';
 import { withUser } from '../../db/connection.js';
+import { badRequest, notFound } from '../../lib/http-error.js';
+
+export type ExportFile = {
+  path: string;
+  content: string;
+};
 
 // Kept in lock-step with the account_details migration.
 const VENDOR_ARRAY_COLS = [
@@ -32,11 +38,40 @@ export class ExportService {
    * Export a single account as markdown files.
    * Returns an array of { path, content } objects.
    */
-  async exportAccount(userId: number, slug: string) {
+  async exportAccount(userId: number, slug: string): Promise<ExportFile[] | null> {
     return withUser(userId, (client) => this._exportAccount(client, slug));
   }
 
-  async _exportAccount(client: PoolClient, slug: string) {
+  /**
+   * Export a caller-selected set of accounts into one document bundle.
+   * Fails the whole request when any slug is missing so a downloaded archive
+   * can never look complete while silently omitting an account.
+   */
+  async exportAccounts(userId: number, slugs: string[]): Promise<ExportFile[]> {
+    if (!Array.isArray(slugs) || slugs.length === 0) {
+      throw badRequest('slugs must be a non-empty array of account slugs.');
+    }
+
+    const normalized = slugs.map((slug) => typeof slug === 'string' ? slug.trim() : '');
+    if (normalized.some((slug) => !slug)) {
+      throw badRequest('Every entry in slugs must be a non-empty account slug.');
+    }
+    const uniqueSlugs = [...new Set(normalized)];
+
+    return withUser(userId, async (client) => {
+      const allFiles: ExportFile[] = [];
+      for (const slug of uniqueSlugs) {
+        const files = await this._exportAccount(client, slug);
+        if (!files) {
+          throw notFound(`Account not found: ${slug}`);
+        }
+        allFiles.push(...files);
+      }
+      return allFiles;
+    });
+  }
+
+  async _exportAccount(client: PoolClient, slug: string): Promise<ExportFile[] | null> {
     const acct = (await client.query(
       `SELECT id, slug, name, status, last_contact,
               relationship_summary, active_deals,
@@ -77,7 +112,7 @@ export class ExportService {
       WHERE ac.account_id = $1 AND c.kind <> 'internal' ORDER BY c.full_name
     `, [acct.id])).rows;
     const meetings = (await client.query(
-      `SELECT id, account_id, date, title, filename, body, created_at, updated_at,
+      `SELECT id, account_id, date, starts_at, ends_at, location, title, filename, body, created_at, updated_at,
               (SELECT string_agg(COALESCE(c.full_name, ma.display_name), ', '
                         ORDER BY (ma.contact_id IS NULL), c.full_name, ma.display_name)
                  FROM meeting_attendees ma LEFT JOIN contacts c ON c.id = ma.contact_id
@@ -104,7 +139,7 @@ export class ExportService {
       `, [p.id])).rows;
     }
 
-    const files = [];
+    const files: ExportFile[] = [];
 
     files.push({
       path: `${slug}/_account.md`,
@@ -120,7 +155,7 @@ export class ExportService {
 
     for (const m of meetings) {
       files.push({
-        path: `${slug}/${m.filename}`,
+        path: `${slug}/meetings/${m.filename}`,
         content: renderMeetingMd(m),
       });
     }
@@ -128,7 +163,7 @@ export class ExportService {
     return files;
   }
 
-  async exportAll(userId: number) {
+  async exportAll(userId: number): Promise<ExportFile[]> {
     return withUser(userId, async (client) => {
       const slugs = (await client.query('SELECT slug FROM accounts ORDER BY name')).rows.map(r => r.slug);
       const allFiles = [];
@@ -139,7 +174,7 @@ export class ExportService {
       }
 
       const internal = (await client.query(
-        `SELECT id, date, title, filename, body, created_at, updated_at,
+        `SELECT id, date, starts_at, ends_at, location, title, filename, body, created_at, updated_at,
                 (SELECT string_agg(COALESCE(c.full_name, ma.display_name), ', '
                           ORDER BY (ma.contact_id IS NULL), c.full_name, ma.display_name)
                    FROM meeting_attendees ma LEFT JOIN contacts c ON c.id = ma.contact_id
@@ -148,7 +183,7 @@ export class ExportService {
       )).rows;
       for (const n of internal) {
         allFiles.push({
-          path: `internal/${n.filename}`,
+          path: `internal/meetings/${n.filename}`,
           content: renderInternalMd(n),
         });
       }
@@ -261,17 +296,30 @@ function renderContactsMd(accountName: string, contacts: any[]) {
 function renderMeetingMd(m: any) {
   const titlePart = m.title ? ` - ${m.title.replace(/-/g, ' ')}` : '';
   const lines = [`# ${m.date}${titlePart}\n`];
+  if (m.starts_at) lines.push(`**Starts:** ${isoTimestamp(m.starts_at)}`);
+  if (m.ends_at) lines.push(`**Ends:** ${isoTimestamp(m.ends_at)}`);
+  if (m.location) lines.push(`**Location:** ${m.location}`);
   if (m.attendees) lines.push(`**Attendees:** ${m.attendees}\n`);
+  else if (lines.length > 1) lines.push('');
   lines.push('## Notes\n');
-  lines.push(m.body);
+  lines.push(m.body || '');
   return lines.join('\n');
 }
 
 function renderInternalMd(n: any) {
   const titlePart = n.title ? ` - ${n.title.replace(/-/g, ' ')}` : '';
   const lines = [`# ${n.date}${titlePart}\n`];
+  if (n.starts_at) lines.push(`**Starts:** ${isoTimestamp(n.starts_at)}`);
+  if (n.ends_at) lines.push(`**Ends:** ${isoTimestamp(n.ends_at)}`);
+  if (n.location) lines.push(`**Location:** ${n.location}`);
   if (n.attendees) lines.push(`**Attendees:** ${n.attendees}\n`);
+  else if (lines.length > 1) lines.push('');
   lines.push('## Notes\n');
-  lines.push(n.body);
+  lines.push(n.body || '');
   return lines.join('\n');
+}
+
+function isoTimestamp(value: Date | string) {
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toISOString();
 }

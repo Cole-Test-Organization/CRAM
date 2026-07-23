@@ -5,8 +5,7 @@
 
 import { todayLocalDate } from '../utils/date';
 
-export function downloadTextFile(content: string, filename: string): void {
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+export function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -15,6 +14,10 @@ export function downloadTextFile(content: string, filename: string): void {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+export function downloadTextFile(content: string, filename: string): void {
+  downloadBlob(new Blob([content], { type: 'text/plain;charset=utf-8' }), filename);
 }
 
 export async function copyTextToClipboard(text: string): Promise<void> {

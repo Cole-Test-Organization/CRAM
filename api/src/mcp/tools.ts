@@ -681,14 +681,24 @@ export function registerTools(server: McpServer, services: Services, resolveUser
 
   server.tool(
     'export_markdown',
-    'Export an account\'s full data as readable markdown. Returns the account summary, contacts, and all meeting notes. Useful for getting a comprehensive view of an account.',
+    'Export one account, a selected set of accounts, or every account as readable documents: account summaries, contacts, and meeting notes. MCP returns the lossless markdown contents inline. The matching HTTP endpoints download Google Drive-ready ZIP archives with editable .docx files: GET /api/export/accounts/:slug, POST /api/export/accounts with slugs[], or GET /api/export/all.',
     {
-      slug: z.string().describe('Account slug to export'),
+      slug: z.string().min(1).optional().describe('One account slug to export. Use exactly one of slug, slugs, or all=true.'),
+      slugs: z.array(z.string()).min(1).optional().describe('Selected account slugs to export together. Use exactly one of slug, slugs, or all=true.'),
+      all: z.boolean().optional().describe('Set true to export every account plus internal meeting notes. Use exactly one of slug, slugs, or all=true.'),
     },
-    async ({ slug }) => {
+    async ({ slug, slugs, all }) => {
       const userId = await resolveUserId();
+      const modeCount = Number(Boolean(slug)) + Number(Boolean(slugs)) + Number(all === true);
+      if (modeCount !== 1) {
+        return errorResponse('Provide exactly one export scope: slug for one account, slugs for a selected account bundle, or all=true for every account plus internal notes.');
+      }
       return callService(async () => {
-        const files = await exportService.exportAccount(userId, slug);
+        const files = all === true
+          ? await exportService.exportAll(userId)
+          : slugs
+            ? await exportService.exportAccounts(userId, slugs)
+            : await exportService.exportAccount(userId, slug!);
         if (!files) return null;
         return files.map(f => `--- ${f.path} ---\n${f.content}`).join('\n\n');
       }, { notFoundMsg: `No account with slug "${slug}". Use the accounts tool (action="list" for all slugs, or search type="accounts" for fuzzy matching by name) — slugs are exact.` });

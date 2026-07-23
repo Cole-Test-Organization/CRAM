@@ -1,12 +1,45 @@
-import { gzipSync } from 'zlib';
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import type { ExportService } from '../../services/export/export.js';
+import type { ExportFile, ExportService } from '../../services/export/export.js';
+import { buildDriveArchive } from '../../services/export/drive-archive.js';
 
 export default async function exportRoutes(fastify: FastifyInstance, { exportService }: { exportService: ExportService }) {
-  // Export a single account as a tar.gz
+  // Export a caller-selected set of accounts as one Drive-ready zip.
+  fastify.post<{ Body: { slugs: string[] } }>('/export/accounts', {
+    schema: {
+      description: 'Export one or more selected accounts as a single .zip. The archive contains one folder per account, with an overview, contacts (when present), and one editable .docx document per meeting.',
+      tags: ['export'],
+      body: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['slugs'],
+        properties: {
+          slugs: {
+            type: 'array',
+            minItems: 1,
+            uniqueItems: true,
+            items: { type: 'string', minLength: 1 },
+          },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    try {
+      const files = await exportService.exportAccounts(request.userId, request.body.slugs);
+      return sendDriveZip(reply, driveArchiveFilename(request.body.slugs), files);
+    } catch (err) {
+      const error = err as { statusCode?: number; message?: string };
+      if (error.statusCode) {
+        reply.code(error.statusCode);
+        return { error: error.message };
+      }
+      throw err;
+    }
+  });
+
+  // Export a single account as a Drive-ready zip of Word documents.
   fastify.get<{ Params: { slug: string } }>('/export/accounts/:slug', {
     schema: {
-      description: 'Export a single account as a .tar.gz archive of markdown files.',
+      description: 'Export a single account as a .zip that unpacks into a Google Drive-ready folder. Contains an account overview, contacts (when present), and one editable .docx document per meeting.',
       tags: ['export'],
       params: {
         type: 'object',
@@ -20,70 +53,31 @@ export default async function exportRoutes(fastify: FastifyInstance, { exportSer
       reply.code(404);
       return { error: 'Account not found' };
     }
-    return sendTar(reply, `${request.params.slug}.tar.gz`, files);
+    return sendDriveZip(reply, `${request.params.slug}-google-drive.zip`, files);
   });
 
   // Export everything
   fastify.get('/export/all', {
     schema: {
-      description: 'Export all accounts and internal notes as a .tar.gz archive.',
+      description: 'Export all accounts and internal notes as a .zip of Google Drive-friendly .docx documents.',
       tags: ['export'],
     },
   }, async (request, reply) => {
     const files = await exportService.exportAll(request.userId);
-    return sendTar(reply, 'all-notes.tar.gz', files);
+    return sendDriveZip(reply, 'all-accounts-google-drive.zip', files);
   });
 }
 
-/**
- * Build a tar archive in memory and stream it gzipped.
- * Uses a minimal tar implementation (no external dep needed).
- */
-function sendTar(reply: FastifyReply, filename: string, files: { path: string; content: string }[]) {
-  reply.header('Content-Type', 'application/gzip');
+async function sendDriveZip(reply: FastifyReply, filename: string, files: ExportFile[]) {
+  reply.header('Content-Type', 'application/zip');
   reply.header('Content-Disposition', `attachment; filename="${filename}"`);
-
-  const chunks: Buffer[] = [];
-
-  for (const file of files) {
-    const content = Buffer.from(file.content, 'utf-8');
-    const header = createTarHeader(file.path, content.length);
-    chunks.push(header);
-    chunks.push(content);
-    const remainder = content.length % 512;
-    if (remainder > 0) {
-      chunks.push(Buffer.alloc(512 - remainder, 0));
-    }
-  }
-
-  chunks.push(Buffer.alloc(1024, 0));
-
-  const tarBuffer = Buffer.concat(chunks);
-
-  const gzipped = gzipSync(tarBuffer);
-  return reply.send(gzipped);
+  return reply.send(await buildDriveArchive(files));
 }
 
-function createTarHeader(name: string, size: number) {
-  const header = Buffer.alloc(512, 0);
-
-  header.write(name.slice(0, 100), 0, 100, 'utf-8');
-  header.write('0000644\0', 100, 8, 'utf-8');
-  header.write('0001000\0', 108, 8, 'utf-8');
-  header.write('0001000\0', 116, 8, 'utf-8');
-  header.write(size.toString(8).padStart(11, '0') + '\0', 124, 12, 'utf-8');
-  const mtime = Math.floor(Date.now() / 1000).toString(8).padStart(11, '0') + '\0';
-  header.write(mtime, 136, 12, 'utf-8');
-  header.write('0', 156, 1, 'utf-8');
-  header.write('ustar\0', 257, 6, 'utf-8');
-  header.write('00', 263, 2, 'utf-8');
-
-  header.write('        ', 148, 8, 'utf-8');
-  let checksum = 0;
-  for (let i = 0; i < 512; i++) {
-    checksum += header[i];
+function driveArchiveFilename(slugs: string[]) {
+  if (slugs.length === 1) {
+    const slug = slugs[0].replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '') || 'account';
+    return `${slug}-google-drive.zip`;
   }
-  header.write(checksum.toString(8).padStart(6, '0') + '\0 ', 148, 8, 'utf-8');
-
-  return header;
+  return `accounts-google-drive-${new Date().toISOString().slice(0, 10)}.zip`;
 }

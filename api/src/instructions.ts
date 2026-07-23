@@ -84,8 +84,9 @@ const REFS: Record<string, OpRef> = {
   'todoist.close':         { http: 'POST /api/todoist/tasks/:id/close',   mcp: { tool: 'todoist_tasks', action: 'close' } },
 
   // export
-  'export.account':  { http: 'GET /api/export/accounts/:slug',  mcp: { tool: 'export_markdown' } },
-  'export.all':      { http: 'GET /api/export/all',             mcp: null },
+  'export.account':  { http: 'GET /api/export/accounts/:slug',  mcp: { tool: 'export_markdown', note: 'with slug' } },
+  'export.accounts': { http: 'POST /api/export/accounts',       mcp: { tool: 'export_markdown', note: 'with slugs' } },
+  'export.all':      { http: 'GET /api/export/all',             mcp: { tool: 'export_markdown', note: 'with all=true' } },
 
   // import / export — portable JSON for cross-tenant moves
   'import_export.export':         { http: 'POST /api/import-export/export',          mcp: { tool: 'import_export', action: 'export' } },
@@ -368,6 +369,9 @@ Attendees named in a note become **unlinked attendees** (recorded, not turned in
 - Typed firmographics + numeric counts + one \`bigint[]\` column per security category (\`firewall_ids\`, \`edr_ids\`, \`siem_ids\`, \`idp_ids\`, etc.) referencing \`vendor_products.id\`. Multi-vendor reality (e.g. Cisco FTD *and* Meraki firewalls) is modeled by multiple IDs in one array.
 - \`technical_notes\` is the prose lane for nuance that doesn't compress into a column ("Cisco FTD used as VPN only", "SSL decryption sized but rollout deferred").
 - **No generic analytics endpoint.** For ad-hoc queries ("accounts >$10M running CrowdStrike Falcon"), resolve product IDs via ${ref('vendor_products.list')} and surface them with the user's thresholds — they run the actual query in psql.
+
+### Account Document Export
+Use ${ref('export.account')} for one account, ${ref('export.accounts')} for a selected set, or ${ref('export.all')} for everything when the user wants a human-readable handoff rather than a round-trippable database transfer. The HTTP forms download a ZIP that unpacks into one folder per account, each with an overview, contacts (when present), and one editable Word document per meeting; unzip it before using Google Drive's Folder upload. The MCP form returns the same source content inline as markdown because MCP does not carry the binary archive. For moving data into another SE Operating System instance, use the separate ${ref('import_export.export')} portable JSON bundle instead.
 
 ### Threads & Tasks
 A **thread** is an open workstream with one account — the relationship-level "where do we stand" record ("Firewall refresh POV", "MSA redlines"). A **task** is one concrete step inside a thread, with an optional assignee (any of the user's contacts; omit/null = "no one") and an optional \`due_date\`. Use threads to track what's in flight on an account; tasks for the individual steps and who owes them.

@@ -2,6 +2,7 @@ import { createResource, createSignal, For, Show } from 'solid-js';
 import { api } from '../lib/api';
 import Button from '../components/Button';
 import NotesImportPanel from '../components/NotesImportPanel';
+import { downloadBlob } from '../lib/textExport';
 import { formatDateTime, todayLocalDate } from '../utils/date';
 
 type ImportResult = {
@@ -17,23 +18,11 @@ type ImportResult = {
   }>;
 };
 
-function downloadJson(filename: string, data: any) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
 export default function ImportExport() {
   const [accountsData] = createResource(() => api.getAccounts({ sort: 'name' }));
   const [selected, setSelected] = createSignal<Set<string>>(new Set());
   const [filter, setFilter] = createSignal('');
-  const [exporting, setExporting] = createSignal(false);
+  const [exporting, setExporting] = createSignal<'drive' | 'json' | null>(null);
   const [importing, setImporting] = createSignal(false);
   const [importResult, setImportResult] = createSignal<ImportResult | null>(null);
   const [importError, setImportError] = createSignal('');
@@ -54,19 +43,33 @@ export default function ImportExport() {
   const selectAll = () => setSelected(new Set(filtered().map((a: any) => a.slug)));
   const clearAll = () => setSelected(new Set<string>());
 
-  const doExport = async () => {
+  const doJsonExport = async () => {
     const slugs = [...selected()];
     if (slugs.length === 0) return;
-    setExporting(true);
+    setExporting('json');
     try {
       const bundle = await api.exportBundle(slugs);
       const date = todayLocalDate();
       const name = slugs.length === 1 ? `${slugs[0]}.json` : `accounts-export-${date}.json`;
-      downloadJson(name, bundle);
+      downloadBlob(new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' }), name);
     } catch (err: any) {
       alert(`Export failed: ${err.message || err}`);
     } finally {
-      setExporting(false);
+      setExporting(null);
+    }
+  };
+
+  const doDriveExport = async () => {
+    const slugs = [...selected()];
+    if (slugs.length === 0) return;
+    setExporting('drive');
+    try {
+      const archive = await api.exportDriveBundle(slugs);
+      downloadBlob(archive.blob, archive.filename);
+    } catch (err: any) {
+      alert(`Export failed: ${err.message || err}`);
+    } finally {
+      setExporting(null);
     }
   };
 
@@ -105,9 +108,10 @@ export default function ImportExport() {
       <h2 class="text-[18px] font-bold uppercase tracking-widest text-surf-300 mb-4 pb-2 border-b-2 border-base-600 font-[family-name:var(--font-display)]">Account bundles</h2>
 
       <p class="text-base-300 text-[13px] mb-6">
-        Portable JSON bundles for moving accounts between tenants. Each bundle carries the account record, its
-        technical profile, contacts, meetings, opportunities, and linked partner shells (partner record + partner
-        contacts only). Importing is an idempotent merge — existing rows are updated, new ones created.
+        Select any set of accounts once, then export a Google Drive folder bundle for human-readable handoff or a
+        portable JSON bundle for moving data between tenants. Drive bundles contain an overview, contacts, and one
+        editable Word document per meeting for each account. JSON bundles also carry technical profiles,
+        opportunities, and linked partner shells and can be imported below.
       </p>
 
       <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
@@ -153,9 +157,24 @@ export default function ImportExport() {
             </Show>
           </div>
 
-          <Button variant="primary" disabled={selected().size === 0 || exporting()} onClick={doExport}>
-            {exporting() ? 'Exporting...' : `Export ${selected().size || ''} as JSON`}
-          </Button>
+          <div class="flex flex-col gap-3 md:flex-row md:flex-wrap">
+            <Button
+              variant="primary"
+              class="w-full md:w-auto"
+              disabled={selected().size === 0 || Boolean(exporting())}
+              onClick={doDriveExport}
+            >
+              {exporting() === 'drive' ? 'Building Drive bundle...' : `Export ${selected().size || ''} for Drive`}
+            </Button>
+            <Button
+              variant="secondary"
+              class="w-full md:w-auto"
+              disabled={selected().size === 0 || Boolean(exporting())}
+              onClick={doJsonExport}
+            >
+              {exporting() === 'json' ? 'Building JSON bundle...' : `Export ${selected().size || ''} as JSON`}
+            </Button>
+          </div>
         </div>
 
         {/* === IMPORT === */}

@@ -72,6 +72,10 @@ describe('MCP — tool set + parity', () => {
     const agentSettingsData = tools.find((t) => t.name === 'agent_settings')
       ?.inputSchema?.properties?.data?.properties || {};
     assert.ok(agentSettingsData.local_api_key, 'agent_settings tool missing write-only local_api_key');
+    const exportScope = tools.find((t) => t.name === 'export_markdown')?.inputSchema?.properties || {};
+    for (const scope of ['slug', 'slugs', 'all']) {
+      assert.ok(exportScope[scope], `export_markdown tool missing scope "${scope}"`);
+    }
   });
 
   it('parity: the accounts status filter is reachable over MCP (5 partners)', async () => {
@@ -81,6 +85,24 @@ describe('MCP — tool set + parity', () => {
     const accts = data.accounts || data;
     assert.equal(accts.length, 5);
     assert.ok(accts.every((a) => a.status === 'partner'));
+  });
+
+  it('parity: selected-account document bundles are reachable over MCP', async () => {
+    const res = await session.client.callTool({
+      name: 'export_markdown',
+      arguments: { slugs: ['acme-manufacturing', 'riverstone-health'] },
+    });
+    assert.ok(!res.isError, textOf(res));
+    const text = JSON.parse(textOf(res));
+    assert.match(text, /--- acme-manufacturing\/_account\.md ---/);
+    assert.match(text, /--- riverstone-health\/_account\.md ---/);
+
+    const allRes = await session.client.callTool({
+      name: 'export_markdown',
+      arguments: { all: true },
+    });
+    assert.ok(!allRes.isError, textOf(allRes));
+    assert.match(JSON.parse(textOf(allRes)), /--- acme-manufacturing\/_account\.md ---/);
   });
 });
 

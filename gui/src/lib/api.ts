@@ -756,6 +756,36 @@ export const api = {
   deleteAccountDetails: (accountId: number) => del(`/accounts/${accountId}/details`),
   getVendorHeatmap: (accountId: number) => get<import('./types').VendorHeatmap>(`/accounts/${accountId}/vendor-heatmap`),
 
+  // Human-readable account folder: overview, contacts, and one Word document
+  // per meeting. The response is an attachment, so callers use this URL on a
+  // normal download link instead of trying to parse it as JSON.
+  accountDriveExportUrl: (slug: string) =>
+    `/api/export/accounts/${encodeURIComponent(slug)}`,
+
+  exportDriveBundle: async (slugs: string[]) => {
+    const res = await apiFetch(`${BASE}/export/accounts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slugs }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      let message = `${res.status} ${res.statusText}`;
+      try { message = JSON.parse(body).error || message; } catch {}
+      throw new Error(message);
+    }
+
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = /filename="([^"]+)"/i.exec(disposition);
+    const fallback = slugs.length === 1
+      ? `${slugs[0]}-google-drive.zip`
+      : 'accounts-google-drive.zip';
+    return {
+      blob: await res.blob(),
+      filename: match?.[1] || fallback,
+    };
+  },
+
   // Portable import/export (JSON bundles for cross-tenant moves).
   exportBundle: (slugs: string[]) => post<any>('/import-export/export', { slugs }),
   exportAccountBundle: (slug: string) => get<any>(`/import-export/accounts/${encodeURIComponent(slug)}`),

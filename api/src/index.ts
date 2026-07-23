@@ -193,7 +193,7 @@ await fastify.register(swagger, {
       { name: 'notes', description: 'Timestamped markdown notes attached to an account, contact, or opportunity' },
       { name: 'news', description: 'Per-account news headlines (Google News RSS, ranked by the configured local LLM); manual refresh + a daily auto-refresh for starred (favorite) accounts' },
       { name: 'threads', description: 'Open workstreams per account, each with tasks (assignee + due date) and a contact pool' },
-      { name: 'export', description: 'Markdown export' },
+      { name: 'export', description: 'Human-readable account exports (Drive-ready DOCX folders over HTTP; markdown over MCP)' },
       { name: 'import-export', description: 'Portable JSON bundles for moving accounts between tenants' },
       { name: 'notes-import', description: 'Bulk-import a notes directory (or .zip with text/.docx/text-PDF conversion): per-file local-LLM extraction → account resolution → meetings, with parked/triage fallback' },
       { name: 'calendar-import', description: 'Ingest a day of Google Calendar events (forwarded via tunnel): domain-classify attendees → contacts + account, one meeting per non-declined event' },

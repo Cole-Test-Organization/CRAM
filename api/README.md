@@ -149,8 +149,9 @@ Full interactive docs: `http://localhost:3200/docs` (Swagger UI). LLM-friendly m
 | `GET` | `/health` | DB record counts (scoped to current user) and uptime |
 | `GET` | `/docs` | Swagger UI |
 | `GET` | `/agent` | Markdown API reference for LLM agents |
-| `GET` | `/export/accounts/:slug` | Export an account as tar.gz |
-| `GET` | `/export/all` | Export everything as tar.gz |
+| `GET` | `/export/accounts/:slug` | Export an account as a Drive-ready ZIP of Word documents |
+| `POST` | `/export/accounts` | Export selected account slugs as one Drive-ready ZIP, with one folder per account |
+| `GET` | `/export/all` | Export everything as a ZIP of Word documents |
 
 ## PATCH merge strategy
 
@@ -189,6 +190,8 @@ JSON fields (`channel_partners`, `pa_team`, `environment`) are stored as `JSONB`
 The MCP server (`src/mcp/server.js`) is a separate process that exposes the API as tools for LLM agents. It listens on `:3100` at `/mcp` and is started automatically by both the dev entrypoint and the prod entrypoint, so `docker compose --profile dev` or `--profile prod` gives you a working MCP endpoint with no extra setup. If you're running outside Docker, start it with `npm run mcp`. Until per-session auth lands, every MCP tool call operates as the default user.
 
 Tools: `accounts`, `contacts`, `meetings`, `internal_notes`, `search`, `todoist_tasks`, `export_markdown`. Each tool dispatches on an `action` arg (`list`/`get`/`create`/`update`/`delete`).
+
+`export_markdown` accepts exactly one scope: `slug` for one account, `slugs` for a selected multi-account bundle, or `all=true` for every account plus internal notes. The matching HTTP export routes return the same source content as Drive-ready Word-document ZIPs.
 
 ## Testing
 

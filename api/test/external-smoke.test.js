@@ -1,6 +1,7 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { get, post, put, patch } from './helpers.js';
+import AdmZip from 'adm-zip';
+import { BASE, get, post, put, patch } from './helpers.js';
 import { getDefaultUserId } from '../src/auth.js';
 import { closeDb, withUser } from '../src/db/connection.js';
 import { AgentSettingsService } from '../src/services/agent/agent-settings.js';
@@ -127,9 +128,43 @@ describe('Backup — settings + validation (no pg_dump)', () => {
   });
 });
 
-describe('Export — read-only markdown bundles', () => {
-  it('GET a seeded account export (200); unknown slug 404', async () => {
-    assert.equal((await get('/export/accounts/acme-manufacturing')).status, 200);
+describe('Export — Google Drive document folders', () => {
+  it('GET a seeded account export returns a Drive-ready zip; unknown slug 404', async () => {
+    const response = await fetch(`${BASE}/export/accounts/acme-manufacturing`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') || '', /^application\/zip/);
+    assert.match(response.headers.get('content-disposition') || '', /acme-manufacturing-google-drive\.zip/);
+
+    const zip = new AdmZip(Buffer.from(await response.arrayBuffer()));
+    const names = zip.getEntries().filter((entry) => !entry.isDirectory).map((entry) => entry.entryName);
+    assert.ok(names.includes('acme-manufacturing/Account Overview.docx'));
+    assert.ok(names.includes('acme-manufacturing/Contacts.docx'));
+    assert.ok(names.includes('acme-manufacturing/README.txt'));
+    assert.ok(names.some((name) => /^acme-manufacturing\/Meetings\/.+\.docx$/.test(name)));
+
     assert.equal((await get('/export/accounts/zzz-nope-99999')).status, 404);
+  });
+
+  it('POST selected account slugs returns one zip with one folder per account', async () => {
+    const response = await fetch(`${BASE}/export/accounts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slugs: ['acme-manufacturing', 'riverstone-health'] }),
+    });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-disposition') || '', /accounts-google-drive-\d{4}-\d{2}-\d{2}\.zip/);
+
+    const zip = new AdmZip(Buffer.from(await response.arrayBuffer()));
+    assert.ok(zip.getEntry('acme-manufacturing/Account Overview.docx'));
+    assert.ok(zip.getEntry('riverstone-health/Account Overview.docx'));
+    assert.ok(zip.getEntry('README.txt'));
+
+    const incomplete = await fetch(`${BASE}/export/accounts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slugs: ['acme-manufacturing', 'zzz-nope-99999'] }),
+    });
+    assert.equal(incomplete.status, 404);
+    assert.deepEqual(await incomplete.json(), { error: 'Account not found: zzz-nope-99999' });
   });
 });
