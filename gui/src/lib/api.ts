@@ -177,6 +177,14 @@ export type ProvisioningReconciliationReport = {
   };
 };
 
+// A report read back from storage rather than produced by a live sweep. checkedAt
+// is still when the cloud was actually asked — that is what decides staleness.
+export type StoredProvisioningReconciliationReport = ProvisioningReconciliationReport & {
+  scope: string;
+  source: 'manual' | 'scheduled';
+  storedAt: string;
+};
+
 export type ProvisioningSecretSummary = {
   name: string;
   description: string | null;
@@ -1033,6 +1041,17 @@ export const api = {
       ...(options?.deployment ? { deployment: options.deployment } : {}),
       ...(options?.includeDestroyed ? { includeDestroyed: true } : {}),
     }),
+
+  // Stored report from the last sweep — one row read, no cloud calls. Null until
+  // a run has completed. Use this for display; reconcileProvisioning re-sweeps.
+  lastProvisioningReconcile: (options?: { deployment?: string }) => {
+    const q = new URLSearchParams();
+    if (options?.deployment) q.set('deployment', options.deployment);
+    const query = q.toString();
+    return get<StoredProvisioningReconciliationReport | null>(
+      `/provisioning/reconcile/latest${query ? `?${query}` : ''}`,
+    );
+  },
   getProvisioningResource: (id: string) =>
     get<ProvisioningResource>(`/provisioning/resources/${encodeURIComponent(id)}`),
   refreshProvisioningPowerState: (id: string) =>

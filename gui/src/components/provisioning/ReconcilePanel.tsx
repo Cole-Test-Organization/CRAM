@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { createMemo, createResource, createSignal, For, Show } from 'solid-js';
 import Button from '../Button';
 import StatusBadge from '../StatusBadge';
 import {
@@ -7,13 +7,19 @@ import {
   type ProvisioningCredentialState,
   type ProvisioningReconciledResource,
   type ProvisioningReconciliationReport,
+  type StoredProvisioningReconciliationReport,
 } from '../../lib/api';
-import { formatDateTime } from '../../utils/date';
+import { formatDateTime, formatRelative } from '../../utils/date';
 
 // Broker state only records what the broker itself provisioned, so anything torn down
-// outside it (console, CLI sweep, an expired lab) keeps reading as live. This panel runs
+// outside it (console, CLI sweep, an expired lab) keeps reading as live. This panel shows
 // the drift check and keeps the two failure modes visually distinct: an expired cloud
 // login is a credentials problem and proves nothing about the machines.
+//
+// A live sweep costs one cloud CLI call per resource, serially, so this renders the LAST
+// STORED report (a background task refreshes it on an interval) and surfaces how old that
+// answer is. "Check now" forces a fresh sweep for when the operator knows something just
+// changed. Applying stays manual — the timer never writes lifecycle state.
 
 const CREDENTIAL_TONE: Record<ProvisioningCredentialState, 'surf' | 'amber' | 'scarlet' | 'base'> = {
   ok: 'surf',
@@ -38,12 +44,28 @@ export default function ReconcilePanel(props: {
   /** Called after an apply so the caller can refresh its resource list. */
   onApplied?: () => void;
 }) {
-  const [report, setReport] = createSignal<ProvisioningReconciliationReport | null>(null);
+  // Live result of a sweep this session, if one has been run. Null means "show the
+  // stored report instead" — which is the normal case on load.
+  const [fresh, setFresh] = createSignal<ProvisioningReconciliationReport | null>(null);
   const [error, setError] = createSignal('');
   const [busy, setBusy] = createSignal('');
   const [expanded, setExpanded] = createSignal(false);
 
   const scope = () => (props.deployment ? { deployment: props.deployment } : undefined);
+
+  // Cheap read of the last stored sweep — one indexed row, no cloud calls, so it is
+  // safe to do on mount. A failure here is not worth an error banner: the panel just
+  // falls back to its "nothing checked yet" state and the button still works.
+  const [stored, { refetch: refetchStored }] = createResource(
+    () => props.deployment ?? '',
+    (deployment) =>
+      api
+        .lastProvisioningReconcile(deployment ? { deployment } : undefined)
+        .catch(() => null) as Promise<StoredProvisioningReconciliationReport | null>,
+  );
+
+  const report = (): ProvisioningReconciliationReport | null => fresh() ?? stored() ?? null;
+  const isStored = () => !fresh() && Boolean(stored());
 
   const run = async (mode: 'check' | 'apply') => {
     setBusy(mode);
@@ -52,8 +74,11 @@ export default function ReconcilePanel(props: {
       const next = mode === 'apply'
         ? await api.applyProvisioningReconcile(scope())
         : await api.reconcileProvisioning(scope());
-      setReport(next);
+      setFresh(next);
       setExpanded(true);
+      // The run was persisted server-side; keep the stored copy in step so a later
+      // remount shows this result rather than the pre-sweep one.
+      void refetchStored();
       if (mode === 'apply') props.onApplied?.();
     } catch (err: any) {
       setError(err?.message || 'Reconciliation failed');
@@ -79,7 +104,11 @@ export default function ReconcilePanel(props: {
           <div class="text-base-400 text-[12px] mt-1">
             <Show
               when={report()}
-              fallback="Check whether these credentials still work and whether the tracked resources still exist."
+              fallback={
+                stored.loading
+                  ? 'Loading the last drift check...'
+                  : 'No drift check has run yet. Check now to ask each cloud what still exists.'
+              }
             >
               {(r) => (
                 <span>
@@ -87,7 +116,15 @@ export default function ReconcilePanel(props: {
                   <Show when={r().summary.markedDestroyed}>
                     {' '}· {r().summary.markedDestroyed} marked destroyed
                   </Show>
-                  {' '}· {formatDateTime(r().checkedAt)}
+                  {' '}·{' '}
+                  <span title={formatDateTime(r().checkedAt)}>
+                    checked {formatRelative(r().checkedAt)}
+                  </span>
+                  <Show when={isStored()}>
+                    <span class="text-base-500">
+                      {' '}({stored()?.source === 'scheduled' ? 'background sweep' : 'last manual check'})
+                    </span>
+                  </Show>
                 </span>
               )}
             </Show>
@@ -95,7 +132,7 @@ export default function ReconcilePanel(props: {
         </div>
         <div class="flex gap-2 flex-wrap">
           <Button variant="ghost" size="sm" disabled={Boolean(busy())} onClick={() => run('check')}>
-            {busy() === 'check' ? 'Checking...' : 'Check'}
+            {busy() === 'check' ? 'Checking...' : 'Check now'}
           </Button>
           <Show when={staleCount() > 0}>
             <Button

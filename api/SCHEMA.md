@@ -4,8 +4,8 @@
 
 - **Database:** `crm`
 - **Postgres:** 16.13
-- **Generated:** 2026-07-17T16:43:07.522Z
-- **Tables:** 40
+- **Generated:** 2026-07-25T17:55:53.399Z
+- **Tables:** 41
 - **Enums:** 0
 - **Views:** 0
 
@@ -40,6 +40,7 @@
 - [`provisioned_resources`](#provisioned_resources)
 - [`provisioning_job_logs`](#provisioning_job_logs)
 - [`provisioning_jobs`](#provisioning_jobs)
+- [`provisioning_reconcile_reports`](#provisioning_reconcile_reports)
 - [`provisioning_secrets`](#provisioning_secrets)
 - [`resource_profiles`](#resource_profiles)
 - [`scheduled_task_runs`](#scheduled_task_runs)
@@ -1020,6 +1021,42 @@
 **Row-Level Security:** enabled (forced)
 
 - `provisioning_jobs_isolation` — ALL, PERMISSIVE, roles: public
+  - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+  - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
+
+---
+
+### `provisioning_reconcile_reports`
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `bigint` | NO | `nextval('provisioning_reconcile_reports_id_seq'::regclass)` | **PK** |
+| `user_id` | `bigint` | NO | — |  |
+| `scope` | `text` | NO | `''::text` |  |
+| `source` | `text` | NO | `'manual'::text` |  |
+| `applied` | `boolean` | NO | `false` |  |
+| `checked_at` | `timestamp with time zone` | NO | — |  |
+| `summary` | `jsonb` | NO | — |  |
+| `report` | `jsonb` | NO | — |  |
+| `created_at` | `timestamp with time zone` | NO | `now()` |  |
+
+**Primary key:** `id`
+
+**Foreign keys:**
+
+- `user_id` → `public.users`(`id`) — ON DELETE CASCADE
+
+**Check constraints:**
+
+- `provisioning_reconcile_reports_source`: `CHECK ((source = ANY (ARRAY['manual'::text, 'scheduled'::text])))`
+
+**Indexes:**
+
+- `idx_provisioning_reconcile_reports_latest` — `CREATE INDEX idx_provisioning_reconcile_reports_latest ON public.provisioning_reconcile_reports USING btree (user_id, scope, checked_at DESC)`
+
+**Row-Level Security:** enabled (forced)
+
+- `provisioning_reconcile_reports_isolation` — ALL, PERMISSIVE, roles: public
   - USING: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
   - WITH CHECK: `(user_id = (current_setting('app.current_user_id'::text, true))::bigint)`
 

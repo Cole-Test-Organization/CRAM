@@ -163,6 +163,22 @@ scheduler.register({
   },
 });
 
+// Background cloud drift sweep. Reconciling costs one cloud CLI call per tracked
+// resource (serially), so the GUI reads the stored report rather than sweeping on
+// every page load. Deliberately read-only: writing resources back as `destroyed`
+// stays an explicit operator action, so a transient provider hiccup on a timer can
+// never quietly rewrite lifecycle state. Set RECONCILE_INTERVAL_MINUTES=0 to disable.
+const reconcileIntervalMinutes = Number(process.env.RECONCILE_INTERVAL_MINUTES ?? 15);
+if (Number.isFinite(reconcileIntervalMinutes) && reconcileIntervalMinutes > 0) {
+  scheduler.register({
+    name: 'provisioning-reconcile',
+    schedule: { kind: 'interval', everyMinutes: reconcileIntervalMinutes },
+    handler: async () => {
+      await provisioningService.reconcile({ apply: false }, 'scheduled');
+    },
+  });
+}
+
 fastify.decorate('searchService', searchService);
 
 await fastify.register(cors);

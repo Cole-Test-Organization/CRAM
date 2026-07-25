@@ -135,9 +135,20 @@ export default async function provisioningRoutes(
     catch (err) { return fail(reply, err); }
   });
 
+  fastify.get<{ Querystring: { deployment?: string } }>('/provisioning/reconcile/latest', {
+    schema: {
+      description: 'The stored report from the last reconciliation at this scope — a single indexed row read, no cloud calls. Returns null when no run has completed yet. A background sweep refreshes it on an interval (RECONCILE_INTERVAL_MINUTES, default 15), so prefer this for display and use `checkedAt` to show how stale the answer is; GET /provisioning/reconcile forces a fresh (slow) sweep. `source` is "scheduled" or "manual"; a deployment-scoped run is stored separately from a whole-broker one and never answers for it.',
+      tags: [TAG],
+      querystring: { type: 'object', properties: { deployment: { type: 'string', description: 'Read the stored report for this deployment slug. Omit for the whole-broker report.' } } },
+    },
+  }, async (request, reply) => {
+    try { return await provisioningService.lastReconcile(request.query.deployment ?? null); }
+    catch (err) { return fail(reply, err); }
+  });
+
   fastify.get<{ Querystring: { deployment?: string; includeDestroyed?: boolean } }>('/provisioning/reconcile', {
     schema: {
-      description: 'Dry-run drift report: for every tracked resource, ask its provider whether the resource still exists. Distinguishes expired credentials (`credentials-invalid` — says nothing about the infrastructure) from resources the provider confirms are gone (`missing`, and `stale:true` when broker state still shows them live). Writes nothing — POST the same path to apply.',
+      description: 'Dry-run drift report: for every tracked resource, ask its provider whether the resource still exists. Distinguishes expired credentials (`credentials-invalid` — says nothing about the infrastructure) from resources the provider confirms are gone (`missing`, and `stale:true` when broker state still shows them live). Writes no resource state — POST the same path to apply. SLOW: one cloud CLI call per resource, serially, so do not call it per page load — the run is stored, and GET /provisioning/reconcile/latest returns the last one instantly.',
       tags: [TAG],
       querystring: { type: 'object', properties: { deployment: { type: 'string', description: 'Limit to one deployment slug.' }, includeDestroyed: { type: 'boolean', description: 'Also probe records already marked destroyed.' } } },
     },

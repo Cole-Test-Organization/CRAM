@@ -115,3 +115,17 @@ export interface ReconcileOptions {
   /** Limit to one deployment slug. */
   deployment?: string | null;
 }
+
+/** What triggered a stored run: an operator's click, or the background sweep. */
+export type ReconcileReportSource = 'manual' | 'scheduled';
+
+/**
+ * A persisted report as served to readers. `checkedAt` is still when the cloud
+ * was actually asked — the value that decides whether this answer is stale.
+ */
+export interface StoredReconciliationReport extends ReconciliationReport {
+  /** Deployment the run was limited to; '' for a whole-broker sweep. */
+  scope: string;
+  source: ReconcileReportSource;
+  storedAt: string;
+}

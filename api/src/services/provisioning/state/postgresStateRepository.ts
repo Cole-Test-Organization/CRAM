@@ -2,7 +2,14 @@ import type { PoolClient } from "pg";
 import { withUser } from "../../../db/connection.js";
 import type { BrokerEventBus } from "../events.js";
 import { nowIso } from "../utils/index.js";
-import type { BrokerState, JobRecord, ResourceRecord } from "../types/index.js";
+import type {
+  BrokerState,
+  JobRecord,
+  ReconcileReportSource,
+  ReconciliationReport,
+  ResourceRecord,
+  StoredReconciliationReport,
+} from "../types/index.js";
 import { normalizeResourceRecord, StateRepository } from "./stateRepository.js";
 
 // Postgres-backed StateRepository (Phase 2 of the broker migration). It extends the
@@ -24,6 +31,10 @@ import { normalizeResourceRecord, StateRepository } from "./stateRepository.js";
 //     pg-backend work renames the concept to a workspace per resource.
 //   - All queries run under withUser(); forced RLS scopes them to this user, so the
 //     explicit user_id is only needed where a column requires it.
+// Retained reconcile runs per (user, scope). Enough to diff a drift report
+// against the previous one without unbounded growth on a short interval.
+const RECONCILE_HISTORY_LIMIT = 20;
+
 export class PostgresStateRepository extends StateRepository {
   constructor(
     private readonly userId: number,
@@ -193,6 +204,72 @@ export class PostgresStateRepository extends StateRepository {
       );
     }
     return res.rows[0].id;
+  }
+
+  // ── reconciliation reports ──────────────────────────────────────────────────
+  // A reconcile run costs one cloud CLI call per resource, so its result is
+  // persisted and served to readers instead of being recomputed per request.
+  // Scopes are stored separately ('' = whole broker) so a deployment-scoped run
+  // never answers a whole-broker question.
+
+  async saveReconcileReport(
+    report: ReconciliationReport,
+    { scope = "", source = "manual" }: { scope?: string; source?: ReconcileReportSource } = {},
+  ): Promise<void> {
+    await withUser(this.userId, async (c) => {
+      await c.query(
+        `INSERT INTO provisioning_reconcile_reports
+           (user_id, scope, source, applied, checked_at, summary, report)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          this.userId,
+          scope,
+          source,
+          report.applied === true,
+          report.checkedAt,
+          JSON.stringify(report.summary),
+          JSON.stringify(report),
+        ],
+      );
+      // Bounded history: enough to compare a drift report against the previous
+      // run, not enough to grow without limit on a short interval.
+      await c.query(
+        `DELETE FROM provisioning_reconcile_reports
+          WHERE user_id = $1 AND scope = $2
+            AND id NOT IN (
+              SELECT id FROM provisioning_reconcile_reports
+               WHERE user_id = $1 AND scope = $2
+               ORDER BY checked_at DESC
+               LIMIT ${RECONCILE_HISTORY_LIMIT}
+            )`,
+        [this.userId, scope],
+      );
+    });
+  }
+
+  async latestReconcileReport(scope = ""): Promise<StoredReconciliationReport | null> {
+    return withUser(this.userId, async (c) => {
+      const res = await c.query<{
+        source: string;
+        checked_at: Date | string | null;
+        report: ReconciliationReport;
+      }>(
+        `SELECT source, checked_at, report
+           FROM provisioning_reconcile_reports
+          WHERE user_id = $1 AND scope = $2
+          ORDER BY checked_at DESC
+          LIMIT 1`,
+        [this.userId, scope],
+      );
+      const row = res.rows[0];
+      if (!row) return null;
+      return {
+        ...row.report,
+        scope,
+        source: row.source as ReconcileReportSource,
+        storedAt: toIso(row.checked_at) ?? nowIso(),
+      };
+    });
   }
 }
 

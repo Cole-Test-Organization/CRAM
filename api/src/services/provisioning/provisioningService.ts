@@ -31,9 +31,14 @@ import type {
     DeploymentSummary,
     ProviderCredentialReport,
     ReconcileOptions,
+    ReconcileReportSource,
     ReconciliationReport,
     ResourceRecord,
+    StoredReconciliationReport,
 } from "./types/index.js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ component: "provisioning" });
 
 const NOOP_LOG = () => undefined;
 
@@ -173,10 +178,36 @@ export class ProvisioningService {
     // Dry run by default: it reports drift without touching state. `apply: true`
     // writes vanished resources back as destroyed, which is what removes already
     // spun-down deployments from the resource list.
+    //
+    // Every run is persisted so readers can render the last known answer without
+    // paying for a fresh cloud sweep (one CLI call per resource, serially). A
+    // storage failure must not fail the reconcile itself — the caller already has
+    // the answer they asked for.
     async reconcile(
         options: ReconcileOptions = {},
+        source: ReconcileReportSource = "manual",
     ): Promise<ReconciliationReport> {
-        return this.broker.reconcileResources(options, NOOP_LOG);
+        const report = await this.broker.reconcileResources(options, NOOP_LOG);
+        try {
+            await this.postgresStateRepository.saveReconcileReport(report, {
+                scope: options.deployment || "",
+                source,
+            });
+        } catch (error) {
+            logger.warn(
+                { err: error instanceof Error ? error.message : String(error) },
+                "failed to persist reconciliation report",
+            );
+        }
+        return report;
+    }
+
+    // The stored answer from the last run at this scope, or null if one has never
+    // completed. Cheap — a single indexed row read, no cloud calls.
+    async lastReconcile(
+        deployment?: string | null,
+    ): Promise<StoredReconciliationReport | null> {
+        return this.postgresStateRepository.latestReconcileReport(deployment || "");
     }
 
     // Provider-read-only against the cloud; patches power_state so subscribers see

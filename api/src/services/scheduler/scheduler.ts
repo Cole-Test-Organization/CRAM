@@ -11,8 +11,9 @@
 // where an in-memory setInterval would double-fire.
 //
 // To schedule something new: `scheduler.register({ name, schedule, handler })`
-// in api/src/index.ts before `scheduler.start()`. Today only 'daily' schedules
-// exist; add other `kind`s to Schedule + duePeriodKey() as needed.
+// in api/src/index.ts before `scheduler.start()`. Schedules are 'daily' (a
+// wall-clock time in a timezone) or 'interval' (every N minutes); add other
+// `kind`s to Schedule + duePeriodKey() as needed.
 
 import { getPool } from '../../db/connection.js';
 import { logger as rootLogger } from '../../lib/logger.js';
@@ -26,7 +27,16 @@ export interface DailySchedule {
   tz: string; // IANA zone, e.g. 'America/New_York'
 }
 
-export type Schedule = DailySchedule;
+// Fires once per fixed-length window of wall time. Windows are aligned to the
+// epoch rather than to process start, so every replica agrees on which window is
+// current without coordinating. `everyMinutes` below the poll interval cannot
+// fire more often than the poll does.
+export interface IntervalSchedule {
+  kind: 'interval';
+  everyMinutes: number;
+}
+
+export type Schedule = DailySchedule | IntervalSchedule;
 
 export interface ScheduledTask {
   name: string;
@@ -73,11 +83,19 @@ function wallClock(date: Date, tz: string): { day: string; hour: number; minute:
 }
 
 // The period key identifies "which occurrence" — for a daily task, the local
-// calendar date. Returns the key when the task is due (now is at/after its
-// scheduled wall-clock time for the current period), else null. Because the
-// claim table dedupes, returning the key repeatedly through the day is fine: the
-// first tick past the trigger claims it and the rest no-op. Exported for tests.
+// calendar date; for an interval task, the index of the current window. Returns
+// the key when the task is due (now is at/after its scheduled wall-clock time for
+// the current period), else null. Because the claim table dedupes, returning the
+// key repeatedly through the period is fine: the first tick past the trigger
+// claims it and the rest no-op. Exported for tests.
 export function duePeriodKey(schedule: Schedule, now: Date): string | null {
+  if (schedule.kind === 'interval') {
+    // Guard a zero/negative window, which would divide by zero and claim the same
+    // key forever (task runs once, then never again).
+    const everyMinutes = Math.max(1, Math.floor(schedule.everyMinutes));
+    const window = Math.floor(now.getTime() / (everyMinutes * 60_000));
+    return `every-${everyMinutes}m-${window}`;
+  }
   const { day, hour, minute } = wallClock(now, schedule.tz);
   const nowMinutes = hour * 60 + minute;
   const triggerMinutes = schedule.hour * 60 + schedule.minute;
@@ -93,7 +111,8 @@ export class Scheduler {
 
   constructor(options: SchedulerOptions = {}) {
     // A daily task tolerates up to a minute of lateness; 60s keeps DB chatter
-    // negligible. Override for tests.
+    // negligible. It also bounds interval granularity — an `everyMinutes` under
+    // 1 cannot fire faster than this. Override for tests.
     this.pollMs = options.pollMs ?? 60_000;
   }
 
