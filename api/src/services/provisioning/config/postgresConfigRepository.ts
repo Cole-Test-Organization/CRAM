@@ -5,7 +5,7 @@ import type {
   ResourceConfig,
   TerraformResourceProfile,
 } from "../types/index.js";
-import { ConfigRepository } from "./configRepository.js";
+import { ConfigRepository, type NamedProviderProfile } from "./configRepository.js";
 import { findAppProfile, findConfigProfile } from "./modules/index.js";
 
 // Postgres-backed ConfigRepository (Phase 2 of the broker migration). It implements
@@ -65,6 +65,16 @@ export class PostgresConfigRepository extends ConfigRepository {
       if (!rows.length) return null;
       const config = (rows[0].config ?? {}) as Record<string, unknown>;
       return { type: rows[0].type, ...config } as ProviderConfig;
+    });
+  }
+
+  protected async readProviderProfiles(): Promise<NamedProviderProfile[]> {
+    return withUser(this.userId, async (c) => {
+      const { rows } = await c.query(`SELECT name, type, config FROM provider_profiles ORDER BY name`);
+      return rows.map((row) => ({
+        name: row.name as string,
+        provider: { type: row.type, ...((row.config ?? {}) as Record<string, unknown>) } as ProviderConfig,
+      }));
     });
   }
 

@@ -122,6 +122,61 @@ export type ProvisioningJob = {
   logs?: string[];
 };
 
+// Reconciliation: is the cloud login still good, and does each tracked resource still
+// exist? `credentials-invalid` means the login expired — it says nothing about the box.
+export type ProvisioningCredentialState =
+  'ok' | 'expired' | 'missing' | 'denied' | 'error' | 'unsupported';
+
+export type ProvisioningCredentialReport = {
+  provider: string;
+  scope: string;
+  providerProfiles: string[];
+  state: ProvisioningCredentialState;
+  identity?: string | null;
+  detail?: string | null;
+  remediation?: string | null;
+  checkedAt: string;
+};
+
+export type ProvisioningReconciledStatus =
+  'present' | 'missing' | 'credentials-invalid' | 'unsupported' | 'unknown';
+
+export type ProvisioningReconciledResource = {
+  id: string;
+  hostname: string;
+  name: string | null;
+  deploymentId: string;
+  kind: string | null;
+  provider: string | null;
+  providerResourceId: string | null;
+  credentialScope: string | null;
+  status: ProvisioningReconciledStatus;
+  previousLifecycleStatus: string;
+  lifecycleStatus: string;
+  previousPowerState: string | null;
+  powerState: string | null;
+  stale: boolean;
+  applied: boolean;
+  detail: string | null;
+};
+
+export type ProvisioningReconciliationReport = {
+  checkedAt: string;
+  applied: boolean;
+  credentials: ProvisioningCredentialReport[];
+  resources: ProvisioningReconciledResource[];
+  summary: {
+    checked: number;
+    present: number;
+    missing: number;
+    stale: number;
+    credentialsInvalid: number;
+    unknown: number;
+    unsupported: number;
+    markedDestroyed: number;
+  };
+};
+
 export type ProvisioningSecretSummary = {
   name: string;
   description: string | null;
@@ -313,6 +368,10 @@ export const api = {
 
   patchAccount: (id: number, data: any) =>
     patch<any>(`/accounts/${id}`, data),
+
+  // Bulk-approve auto-created accounts. Omit ids to approve every flagged row.
+  clearAccountReview: (ids?: number[]) =>
+    post<{ approved: number; accounts: any[] }>('/accounts/clear-review', ids?.length ? { ids } : {}),
 
   deleteAccount: (id: number) =>
     del(`/accounts/${id}`),
@@ -959,6 +1018,21 @@ export const api = {
     get<ProvisioningDeploymentDescriptor>(`/provisioning/deployments/${encodeURIComponent(id)}`),
   listProvisioningResources: () =>
     get<ProvisioningResource[]>('/provisioning/resources'),
+  checkProvisioningCredentials: () =>
+    get<ProvisioningCredentialReport[]>('/provisioning/credentials'),
+  // GET is a dry run; POST writes vanished resources back as destroyed.
+  reconcileProvisioning: (options?: { deployment?: string; includeDestroyed?: boolean }) => {
+    const q = new URLSearchParams();
+    if (options?.deployment) q.set('deployment', options.deployment);
+    if (options?.includeDestroyed) q.set('includeDestroyed', 'true');
+    const query = q.toString();
+    return get<ProvisioningReconciliationReport>(`/provisioning/reconcile${query ? `?${query}` : ''}`);
+  },
+  applyProvisioningReconcile: (options?: { deployment?: string; includeDestroyed?: boolean }) =>
+    post<ProvisioningReconciliationReport>('/provisioning/reconcile', {
+      ...(options?.deployment ? { deployment: options.deployment } : {}),
+      ...(options?.includeDestroyed ? { includeDestroyed: true } : {}),
+    }),
   getProvisioningResource: (id: string) =>
     get<ProvisioningResource>(`/provisioning/resources/${encodeURIComponent(id)}`),
   refreshProvisioningPowerState: (id: string) =>

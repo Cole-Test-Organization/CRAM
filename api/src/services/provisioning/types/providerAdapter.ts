@@ -1,5 +1,8 @@
 import type {
   DeploymentConfig,
+  ProviderConfig,
+  ProviderCredentialStatus,
+  ProviderResourceExistence,
   ResourcePowerState,
   ResourceRecord,
   ResourceConfig,
@@ -81,6 +84,36 @@ export interface ProviderPortForward {
 export interface ProviderAdapter {
   readonly type: string;
   readonly requiresBootstrapIso?: boolean;
+
+  /**
+   * Stable key for the credential set this provider config resolves to (account +
+   * region + profile). Reconciliation checks credentials once per scope instead of
+   * once per resource. Defaults to the provider type when not implemented.
+   */
+  credentialScope?(providerConfig: ProviderConfig): string;
+
+  /**
+   * Probe whether this provider config's credentials are currently usable, and say
+   * *how* they fail — expired sessions (the common case for SSO/OAuth logins) must
+   * be distinguishable from absent credentials and from permission denials.
+   * Must resolve rather than throw; a failed probe is a result, not an exception.
+   */
+  checkCredentials?(
+    providerConfig: ProviderConfig,
+    log: LogFn,
+  ): Promise<ProviderCredentialStatus>;
+
+  /**
+   * Ask the provider whether a recorded resource still exists. Distinct from
+   * getResourcePowerState, which throws when the resource is gone: this reports
+   * "missing" as an answer, and flags lookups that failed on credentials so the
+   * caller never mistakes an auth failure for a deleted machine.
+   */
+  describeResource?(
+    context: ProviderGenericResourceContext,
+    record: ResourceRecord,
+    log: LogFn,
+  ): Promise<ProviderResourceExistence>;
 
   supportsPowerControl?(
     context: ProviderGenericResourceContext,

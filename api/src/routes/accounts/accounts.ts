@@ -127,6 +127,23 @@ export default async function accountRoutes(fastify: FastifyInstance, { accounts
     }
   });
 
+  // Bulk-approve auto-created accounts (clear needs_review) in one call.
+  fastify.post<{ Body: { ids?: number[] } }>('/accounts/clear-review', {
+    schema: {
+      description: 'Clear the review flag on auto-created accounts in bulk. Pass ids[] to approve a specific set, or omit the body to approve EVERY account currently flagged (needs_review=true). Returns {approved, accounts:[{id,slug,name}]} — the rows actually changed, so a second call reports approved:0. Use GET /api/accounts?needs_review=true to inspect the queue first; PATCH /api/accounts/:id with needs_review=false is still the single-row path.',
+      tags: ['accounts'],
+      body: {
+        type: 'object',
+        properties: {
+          ids: { type: 'array', items: { type: 'integer' }, description: 'Specific account ids to approve. Omit (or send an empty array) to approve every flagged account.' },
+        },
+      },
+    },
+  }, async (request) => {
+    const ids = Array.isArray(request.body?.ids) ? request.body.ids : null;
+    return accountsService.clearReviewFlags(request.userId, ids);
+  });
+
   // Get account by slug (convenience for agents)
   fastify.get<{ Params: { slug: string } }>('/accounts/by-slug/:slug', {
     schema: {

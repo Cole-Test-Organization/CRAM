@@ -24,6 +24,12 @@ import { withDefaultVmSeriesDeviceCertificate } from "../resources/palo/vm-serie
 // keeps requiredEnv and the seeder in lockstep.
 const BROKER_SECRET_NAMES = new Set<string>(BROKER_SECRET_KEYS);
 
+/** A provider profile paired with the name deployments reference it by. */
+export interface NamedProviderProfile {
+  name: string;
+  provider: ProviderConfig;
+}
+
 /**
  * Read-only source of deployment configuration, abstracted away from storage.
  *
@@ -45,6 +51,9 @@ export abstract class ConfigRepository {
 
   /** Raw provider profile referenced by `providerProfile`, or null when absent. */
   protected abstract readProviderProfile(name: string): Promise<ProviderConfig | null>;
+
+  /** Every provider profile, name included. */
+  protected abstract readProviderProfiles(): Promise<NamedProviderProfile[]>;
 
   /**
    * Reference that today's lifecycle endpoints accept for this deployment
@@ -107,6 +116,11 @@ export abstract class ConfigRepository {
 
   async getProviderProfile(name: string): Promise<ProviderConfig | null> {
     return this.readProviderProfile(name);
+  }
+
+  /** Every configured provider profile, for credential checks across all clouds in use. */
+  async listProviderProfiles(): Promise<NamedProviderProfile[]> {
+    return this.readProviderProfiles();
   }
 
   async getAppProfile<T = unknown>(group: string, name: string): Promise<T | null> {

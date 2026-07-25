@@ -473,6 +473,31 @@ export class AccountsService {
     });
   }
 
+  // Bulk-clear the auto-created flag. Pass ids to approve a specific set, or
+  // omit them to approve every still-flagged account — the "I've eyeballed the
+  // queue, they're all real companies" path, which is otherwise one PATCH per
+  // row. RLS scopes the UPDATE to the caller, and the needs_review = true guard
+  // means the returned count reflects rows actually changed (approving twice
+  // reports 0, not a false success).
+  async clearReviewFlags(userId: number, ids: number[] | null = null) {
+    return withUser(userId, async (client) => {
+      const scoped = Array.isArray(ids) && ids.length;
+      const { rows } = scoped
+        ? await client.query(
+            `UPDATE accounts SET needs_review = false
+             WHERE needs_review = true AND id = ANY($1::bigint[])
+             RETURNING id, slug, name`,
+            [ids]
+          )
+        : await client.query(
+            `UPDATE accounts SET needs_review = false
+             WHERE needs_review = true
+             RETURNING id, slug, name`
+          );
+      return { approved: rows.length, accounts: rows };
+    });
+  }
+
   async delete(userId: number, id: number) {
     return withUser(userId, async (client) => {
       const existing = (await client.query(

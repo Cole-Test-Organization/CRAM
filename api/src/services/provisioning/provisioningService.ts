@@ -29,6 +29,9 @@ import { rowToJobView, type JobSpec, type JobView } from "./jobView.js";
 import type {
     DeploymentDescriptor,
     DeploymentSummary,
+    ProviderCredentialReport,
+    ReconcileOptions,
+    ReconciliationReport,
     ResourceRecord,
 } from "./types/index.js";
 
@@ -157,6 +160,23 @@ export class ProvisioningService {
 
     subscribeEvents(listener: BrokerEventListener): () => void {
         return this.broker.subscribeEvents(listener);
+    }
+
+    // ── reconciliation (are the creds alive? are the machines still there?) ──────
+    // Two separate questions, deliberately: cloud logins here expire often, and an
+    // expired login must never be reported as "the lab is gone".
+
+    async checkCredentials(): Promise<ProviderCredentialReport[]> {
+        return this.broker.checkProviderCredentials(NOOP_LOG);
+    }
+
+    // Dry run by default: it reports drift without touching state. `apply: true`
+    // writes vanished resources back as destroyed, which is what removes already
+    // spun-down deployments from the resource list.
+    async reconcile(
+        options: ReconcileOptions = {},
+    ): Promise<ReconciliationReport> {
+        return this.broker.reconcileResources(options, NOOP_LOG);
     }
 
     // Provider-read-only against the cloud; patches power_state so subscribers see

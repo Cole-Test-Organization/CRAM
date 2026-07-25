@@ -1,4 +1,4 @@
-export { ConfigRepository } from "./configRepository.js";
+export { ConfigRepository, type NamedProviderProfile } from "./configRepository.js";
 export { ModuleConfigRepository } from "./moduleConfigRepository.js";
 export { PostgresConfigRepository } from "./postgresConfigRepository.js";
 export { seedProvisioningConfig, type SeedResult } from "./seed.js";

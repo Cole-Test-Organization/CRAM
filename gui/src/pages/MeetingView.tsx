@@ -264,13 +264,13 @@ export default function MeetingView() {
             <Show when={m().account_id && m().account_needs_review}>
               <div class="panel p-5 mb-4 border-2 border-amber-300 bg-amber-300/5">
                 <div class="flex items-center gap-2 mb-2">
-                  <span class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">Account review</span>
+                  <span class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">Account created</span>
                 </div>
                 <h3 class="text-[14px] font-bold text-base-50 mb-1">
-                  Auto-created account: <span class="text-amber-300">{m().account_name}</span>
+                  New account created for this meeting: <span class="text-amber-300">{m().account_name}</span>
                 </h3>
                 <p class="text-base-300 text-[12px] mb-3">
-                  This account row is flagged for cleanup. The meeting can still be correctly assigned to this account.
+                  No account matched an attendee's email domain, so the importer made this one. The meeting is on the right account — confirm it to stop flagging it, or use Move above if it belongs somewhere else.
                 </p>
                 <div class="flex flex-col gap-2 md:flex-row md:items-center">
                   <Button variant="primary" size="sm" disabled={accountReviewing()} onClick={clearAccountReview}>

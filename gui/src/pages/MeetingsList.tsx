@@ -10,6 +10,7 @@ import SegmentedControl from "../components/SegmentedControl";
 import { createSelection } from "../components/createSelection";
 import MergeModal from "../components/MergeModal";
 import { buildMeetingsExport } from "../lib/meetingExport";
+import { createPersistentSignal } from "../lib/persistentSignal";
 
 type Props = {
     accountId?: number;
@@ -20,9 +21,14 @@ type Props = {
 
 export default function MeetingsList(props: Props = {}) {
     const [filter, setFilter] = createSignal("");
-    const [reviewOnly, setReviewOnly] = createSignal(false);
-    const [kindFilter, setKindFilter] = createSignal<"all" | "external" | "internal">("all");
+    // Filter toggles persist across reloads/navigation — they're a working mode
+    // ("I'm triaging"), not a per-visit choice. The text filter deliberately
+    // isn't sticky: a stale search box reads as an empty list.
+    const [reviewOnly, setReviewOnly] = createPersistentSignal("meetings.reviewOnly", false);
+    const [kindFilter, setKindFilter] = createPersistentSignal<"all" | "external" | "internal">("meetings.kindFilter", "all");
     const [modalOpen, setModalOpen] = createSignal(false);
+    const [markingInternal, setMarkingInternal] = createSignal(false);
+    const [bulkError, setBulkError] = createSignal("");
     const [mergeOpen, setMergeOpen] = createSignal(false);
     const [mergePair, setMergePair] = createSignal<[number, number] | null>(
         null,
@@ -68,6 +74,43 @@ export default function MeetingsList(props: Props = {}) {
         if (!confirm("Delete this meeting?")) return;
         await api.deleteMeeting(id);
         sel.remove(id);
+        refetch();
+        props.onAfterDelete?.();
+    };
+
+    // Meetings in the selection that aren't internal yet — the only ones the
+    // bulk action has anything to do.
+    const selectedExternal = () => {
+        const ids = new Set(sel.idList());
+        return (meetings() || []).filter((m: any) => ids.has(m.id) && !m.internal);
+    };
+
+    // Bulk "these aren't customer-facing". Runs the same per-meeting reassign the
+    // Move panel uses, so it strips the account and clears any review flag.
+    // Sequential: each call can 409 on a filename collision with an existing
+    // internal note, and we want to keep going and report the stragglers.
+    const markSelectedInternal = async () => {
+        const targets = selectedExternal();
+        if (!targets.length || markingInternal()) return;
+        if (!confirm(`Mark ${targets.length} meeting${targets.length === 1 ? "" : "s"} as internal? This removes the account link — attendees and notes stay.`)) return;
+        setMarkingInternal(true);
+        setBulkError("");
+        const failed: string[] = [];
+        for (const m of targets) {
+            try {
+                await api.reassignMeetingAccount(m.id, { internal: true });
+                sel.remove(m.id);
+            } catch (err: any) {
+                failed.push(m.title || m.filename || `#${m.id}`);
+                void err;
+            }
+        }
+        if (failed.length) {
+            setBulkError(
+                `Couldn't convert ${failed.length} of ${targets.length}: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}. Usually a filename clash with an existing internal note — open one and rename it.`,
+            );
+        }
+        setMarkingInternal(false);
         refetch();
         props.onAfterDelete?.();
     };
@@ -175,7 +218,25 @@ export default function MeetingsList(props: Props = {}) {
                         { value: "internal", label: "Internal" },
                     ]}
                 />
+                <Show when={selectedExternal().length}>
+                    <button
+                        class="press press-ghost press-sm md:press-md"
+                        disabled={markingInternal()}
+                        onClick={markSelectedInternal}
+                        title="Remove the account link so these stop showing as customer-facing"
+                    >
+                        {markingInternal()
+                            ? "Marking…"
+                            : `Mark ${selectedExternal().length} internal`}
+                    </button>
+                </Show>
             </SelectionToolbar>
+
+            <Show when={bulkError()}>
+                <div class="text-[11px] text-scarlet-400 mb-3 font-semibold">
+                    {bulkError()}
+                </div>
+            </Show>
 
             <ListRows
                 items={filtered}
@@ -192,8 +253,11 @@ export default function MeetingsList(props: Props = {}) {
                                 </span>
                             </Show>
                             <Show when={m.account_needs_review}>
-                                <span class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">
-                                    Account review
+                                <span
+                                    class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none"
+                                    title="This meeting's account was created automatically during import — not yet confirmed"
+                                >
+                                    Account created
                                 </span>
                             </Show>
                             <Show when={m.internal}>

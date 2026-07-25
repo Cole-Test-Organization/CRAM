@@ -3,12 +3,14 @@ import { A, useNavigate } from '@solidjs/router';
 import { api } from '../lib/api';
 import { AccountFormModal, AccountReviewModal } from '../components/FormModals';
 import Button from '../components/Button';
+import { createPersistentSignal } from '../lib/persistentSignal';
 
 export default function AccountList(props: { type?: 'account' | 'partner' }) {
   const [filter, setFilter] = createSignal('');
-  const [reviewOnly, setReviewOnly] = createSignal(false);
+  const [reviewOnly, setReviewOnly] = createPersistentSignal('accounts.autoCreatedOnly', false);
   const [modalOpen, setModalOpen] = createSignal(false);
   const [reviewAccount, setReviewAccount] = createSignal<any>(null);
+  const [approving, setApproving] = createSignal(false);
   const navigate = useNavigate();
 
   // Accounts list: everything that isn't a partner. Partners list: just partners.
@@ -32,6 +34,32 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
 
   // Accounts flagged for review (e.g. auto-created by importers).
   const reviewCount = () => (data()?.accounts || []).filter((a: any) => a.needs_review).length;
+
+  // Approve exactly the flagged rows currently listed, not every flagged row in
+  // the DB — on the Accounts page that keeps the partner queue out of it, and it
+  // keeps the button's count honest while a text filter is narrowing the list.
+  const pendingReview = () => filtered().filter((a: any) => a.needs_review);
+
+  const approveAll = async () => {
+    const pending = pendingReview();
+    if (!pending.length || approving()) return;
+    if (!confirm(`Approve ${pending.length} auto-created ${pending.length === 1 ? 'account' : 'accounts'}? This clears the flag — it doesn't change any meeting assignments.`)) return;
+    const snapshot = data();
+    const ids = pending.map((a: any) => a.id);
+    setApproving(true);
+    if (snapshot) {
+      const idSet = new Set(ids);
+      mutate({ ...snapshot, accounts: snapshot.accounts.map((a: any) => (idSet.has(a.id) ? { ...a, needs_review: false } : a)) });
+    }
+    try {
+      await api.clearAccountReview(ids);
+      refetch();
+    } catch {
+      if (snapshot) mutate(snapshot);
+    } finally {
+      setApproving(false);
+    }
+  };
 
   const sortRows = (accounts: any[]) =>
     [...accounts].sort((a: any, b: any) => {
@@ -83,10 +111,21 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
           />
         </div>
         <Show when={reviewCount() || reviewOnly()}>
-          <label class="flex items-center gap-2 cursor-pointer text-[11px] uppercase tracking-wider font-semibold text-amber-300 shrink-0 px-1" title="Show only accounts flagged for review">
+          <label class="flex items-center gap-2 cursor-pointer text-[11px] uppercase tracking-wider font-semibold text-amber-300 shrink-0 px-1" title="Show only accounts that were created automatically during import">
             <input type="checkbox" class="accent-amber-300 w-4 h-4 cursor-pointer" checked={reviewOnly()} onChange={(e) => setReviewOnly(e.currentTarget.checked)} />
-            Needs review{reviewCount() ? ` (${reviewCount()})` : ''}
+            Auto-created{reviewCount() ? ` (${reviewCount()})` : ''}
           </label>
+        </Show>
+        <Show when={pendingReview().length}>
+          <button
+            type="button"
+            class="press press-ghost press-sm md:press-md shrink-0"
+            disabled={approving()}
+            onClick={approveAll}
+            title="Clear the auto-created flag on every account listed below"
+          >
+            {approving() ? 'Approving…' : `✓ Approve all (${pendingReview().length})`}
+          </button>
         </Show>
       </div>
 
@@ -151,7 +190,7 @@ function AccountRow(props: { acct: any; onToggleFavorite: (acct: any) => void; o
       <A href={`/accounts/${props.acct.slug}`} class="press-row gap-4 flex-wrap flex-1 min-w-0">
         <span class="flex-1 min-w-[60%] md:min-w-0 font-semibold text-sm text-base-50 flex items-center gap-2 flex-wrap">
           <Show when={props.acct.needs_review}>
-            <span class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none">Review</span>
+            <span class="bg-base-950 border-2 border-amber-300 text-amber-300 text-[10px] px-1.5 py-0.5 uppercase tracking-widest font-bold leading-none" title="Created automatically during import — not yet confirmed">Auto-created</span>
           </Show>
           <span>{props.acct.name}</span>
         </span>

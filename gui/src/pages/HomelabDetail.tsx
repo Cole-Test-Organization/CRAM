@@ -5,6 +5,7 @@ import { createProvisioningEventStream } from '../lib/provisioningEvents';
 import BackLink from '../components/BackLink';
 import Button from '../components/Button';
 import JobMonitor from '../components/provisioning/JobMonitor';
+import ReconcilePanel from '../components/provisioning/ReconcilePanel';
 import StatusBadge from '../components/StatusBadge';
 import { formatDateTime } from '../utils/date';
 import { LaunchModal, ResourceConnections, TunnelEndpoint } from './HomelabCommon';
@@ -253,6 +254,12 @@ export default function HomelabDetail() {
                   onClear={() => setMonitorJobId(null)}
                   onSettled={refreshAll}
                 />
+              </div>
+            </Show>
+
+            <Show when={!d().isTemplate}>
+              <div class="mb-5">
+                <ReconcilePanel deployment={params.id} onApplied={refreshAll} />
               </div>
             </Show>
 

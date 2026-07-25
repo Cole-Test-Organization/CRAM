@@ -83,6 +83,39 @@ describe('Accounts — filters', () => {
   });
 });
 
+describe('Accounts — bulk clear-review', () => {
+  const flagged = async (t) => {
+    const { body } = await post('/accounts', { slug: uniqueSlug(), name: uniqueName('Auto'), needs_review: true });
+    deleteAfter(t, `/accounts/${body.id}`);
+    return body;
+  };
+
+  it('ids[] approves only the listed accounts, and counts rows actually changed', async (t) => {
+    const [a, b, untouched] = [await flagged(t), await flagged(t), await flagged(t)];
+
+    const res = await post('/accounts/clear-review', { ids: [a.id, b.id] });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.approved, 2);
+    assert.deepEqual(res.body.accounts.map((x) => x.id).sort(), [a.id, b.id].sort());
+
+    assert.equal((await get(`/accounts/${a.id}`)).body.needs_review, false);
+    assert.equal((await get(`/accounts/${b.id}`)).body.needs_review, false);
+    assert.equal((await get(`/accounts/${untouched.id}`)).body.needs_review, true);
+
+    // Idempotent: nothing left to change reports 0 rather than a false success.
+    assert.equal((await post('/accounts/clear-review', { ids: [a.id, b.id] })).body.approved, 0);
+  });
+
+  it('an empty body approves every flagged account', async (t) => {
+    const one = await flagged(t);
+    const res = await post('/accounts/clear-review', {});
+    assert.equal(res.status, 200);
+    assert.ok(res.body.approved >= 1);
+    assert.equal((await get(`/accounts/${one.id}`)).body.needs_review, false);
+    assert.equal((await get('/accounts?needs_review=true')).body.accounts.length, 0);
+  });
+});
+
 describe('Accounts — partner link / unlink', () => {
   it('links a partner, lists it, unlinks it', async (t) => {
     const customer = await makeAccount(t, { name: 'ZZZ Customer' });

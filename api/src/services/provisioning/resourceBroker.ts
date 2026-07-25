@@ -15,6 +15,10 @@ import {
 } from "./config/index.js";
 import { SecretResolver } from "./secrets/index.js";
 import {
+    checkProviderCredentials,
+    reconcileResources,
+} from "./reconcile.js";
+import {
     clearSecretOverlay,
     installSecretOverlay,
 } from "./utils/secretSource.js";
@@ -24,6 +28,9 @@ import type {
     DeploymentStepConfig,
     JobRecord,
     ProviderConfig,
+    ProviderCredentialReport,
+    ReconcileOptions,
+    ReconciliationReport,
     ResourceBrokerRunOptions,
     ResourcePowerAction,
     ResourcePowerActionResult,
@@ -700,6 +707,59 @@ export class ResourceBroker {
 
     subscribeEvents(listener: BrokerEventListener): () => void {
         return this.stateRepository.events.subscribe(listener);
+    }
+
+    // ── reconciliation (credentials + drift) ────────────────────────────────────
+    // Reads only against each cloud, so these run inline like power-state refreshes
+    // rather than as lifecycle jobs, and are safe during an active job.
+
+    /** Credential state for every configured provider profile, one probe per scope. */
+    async checkProviderCredentials(
+        log: LogFn = () => undefined,
+    ): Promise<ProviderCredentialReport[]> {
+        const releaseSecrets =
+            await this.primeSecretOverlayForInlineProviderAction();
+        try {
+            return await checkProviderCredentials(
+                await this.config.listProviderProfiles(),
+                log,
+            );
+        } finally {
+            releaseSecrets();
+        }
+    }
+
+    /**
+     * Compare broker state against the providers. With `apply`, records the provider
+     * no longer has are written back as destroyed — which is what clears already
+     * spun-down deployments out of the UI. Never applies under bad credentials.
+     */
+    async reconcileResources(
+        options: ReconcileOptions = {},
+        log: LogFn = () => undefined,
+    ): Promise<ReconciliationReport> {
+        const releaseSecrets =
+            await this.primeSecretOverlayForInlineProviderAction();
+        try {
+            return await reconcileResources(
+                {
+                    listResources: () => this.stateRepository.listResources(),
+                    listProviderProfiles: () =>
+                        this.config.listProviderProfiles(),
+                    resolveContext: async (record) => {
+                        const { provider, context } =
+                            await this.resolveResourcePowerContext(record);
+                        return { provider, context };
+                    },
+                    patchResource: (id, patch) =>
+                        this.stateRepository.patchResource(id, patch),
+                },
+                options,
+                log,
+            );
+        } finally {
+            releaseSecrets();
+        }
     }
 
     async startResource(

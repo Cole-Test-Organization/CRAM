@@ -4,7 +4,7 @@ import type {
   ResourceConfig,
   TerraformResourceProfile,
 } from "../types/index.js";
-import { ConfigRepository } from "./configRepository.js";
+import { ConfigRepository, type NamedProviderProfile } from "./configRepository.js";
 import {
   deployments,
   findAppProfile,
@@ -52,6 +52,13 @@ export class ModuleConfigRepository extends ConfigRepository {
     if (!mod) return null;
     const { name: _name, ...providerConfig } = mod;
     return providerConfig as ProviderConfig;
+  }
+
+  protected async readProviderProfiles(): Promise<NamedProviderProfile[]> {
+    return providerProfiles.map((mod) => {
+      const { name, ...providerConfig } = mod;
+      return { name, provider: providerConfig as ProviderConfig };
+    });
   }
 
   protected async readResourceProfile(name: string): Promise<TerraformResourceProfile | null> {

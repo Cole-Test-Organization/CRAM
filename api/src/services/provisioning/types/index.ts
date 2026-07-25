@@ -9,6 +9,7 @@ export type * from "./panwBootstrapService.js";
 export type * from "./panwSsh.js";
 export type * from "./proxmoxAdapter.js";
 export type * from "./proxmoxDiscovery.js";
+export type * from "./reconciliation.js";
 export type * from "./resource.js";
 export type * from "./resourceBroker.js";
 export type * from "./state.js";

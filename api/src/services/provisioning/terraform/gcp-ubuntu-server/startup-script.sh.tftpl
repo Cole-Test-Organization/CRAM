@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec > >(tee -a /var/log/panw-broker-bootstrap.log) 2>&1
+
+hostnamectl set-hostname "${hostname}"
+mkdir -p /var/lib/panw-broker
+
+export DEBIAN_FRONTEND=noninteractive
+# GCP images run unattended-upgrades on first boot, which holds the dpkg lock.
+for _ in $(seq 1 30); do
+  if apt-get update; then break; fi
+  sleep 10
+done
+apt-get install -y ca-certificates curl gnupg jq unzip ${join(" ", jsondecode(packages_json))}
+
+curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+apt-get install -y nodejs
+
+commands='${base64encode(join("\n", jsondecode(commands_json)))}'
+if [ -n "$commands" ]; then
+  printf "%s" "$commands" | base64 -d > /tmp/panw-broker-bootstrap-extra.sh
+  chmod +x /tmp/panw-broker-bootstrap-extra.sh
+  /tmp/panw-broker-bootstrap-extra.sh
+fi
+
+curl -fsSL --max-time 20 https://ifconfig.me/ip | tee /var/lib/panw-broker/public-ip.txt || true
+
+# Koi enrollment (optional), identical in contract to the AWS stack: the broker inlines the
+# artifact from resource.koi.scriptPath as base64, it runs once here after egress is confirmed,
+# and it writes a koi.success/koi.failed marker. A Koi failure aborts before bootstrap.success
+# is written so the deploy surfaces the real reason instead of a timeout.
+KOI_SCRIPT_B64='${koi_script_inline_b64}'
+if [ -n "$KOI_SCRIPT_B64" ]; then
+  KOI_ROOT=/var/lib/panw-broker
+  KOI_SCRIPT="$KOI_ROOT/koi-script"
+  KOI_LOG="$KOI_ROOT/koi.log"
+  rm -f "$KOI_ROOT/koi.success" "$KOI_ROOT/koi.failed"
+
+  koi_fail() {
+    printf '%s\n' "$1" > "$KOI_ROOT/koi.failed"
+    echo "Koi enrollment failed: $1"
+  }
+
+  printf '%s' "$KOI_SCRIPT_B64" | base64 -d > "$KOI_SCRIPT"
+
+  KOI_SHA256='${koi_script_sha256}'
+  if [ -n "$KOI_SHA256" ]; then
+    ACTUAL_SHA="$(sha256sum "$KOI_SCRIPT" | awk '{print $1}')"
+    if [ "$ACTUAL_SHA" != "$KOI_SHA256" ]; then
+      koi_fail "Koi script SHA-256 mismatch: expected $KOI_SHA256 got $ACTUAL_SHA"
+      exit 1
+    fi
+  fi
+
+  KOI_ENV_JSON="$(printf '%s' '${koi_environment_b64}' | base64 -d)"
+  while IFS=$'\t' read -r koi_k koi_v; do
+    if [ -n "$koi_k" ]; then export "$koi_k=$koi_v"; fi
+  done < <(printf '%s' "$KOI_ENV_JSON" | jq -r 'to_entries[] | [.key, .value] | @tsv')
+
+  KOI_ARGS_JSON="$(printf '%s' '${koi_arguments_b64}' | base64 -d)"
+  KOI_ARGS=()
+  while IFS= read -r koi_arg; do
+    KOI_ARGS+=("$koi_arg")
+  done < <(printf '%s' "$KOI_ARGS_JSON" | jq -r '.[]')
+
+  echo "Running Koi enrollment with ${koi_interpreter} under hostname $(hostname)"
+  if ${koi_interpreter} "$KOI_SCRIPT" "$${KOI_ARGS[@]}" > "$KOI_LOG" 2>&1; then
+    tail -n 40 "$KOI_LOG" 2>/dev/null || true
+    date -u +"%Y-%m-%dT%H:%M:%SZ" > "$KOI_ROOT/koi.success"
+    echo "Koi enrollment completed successfully."
+  else
+    koi_rc=$?
+    tail -n 120 "$KOI_LOG" 2>/dev/null || true
+    koi_fail "Koi enrollment exited with code $koi_rc. See $KOI_LOG"
+    exit $koi_rc
+  fi
+fi
+
+date -u +"%Y-%m-%dT%H:%M:%SZ" > /var/lib/panw-broker/bootstrap.success

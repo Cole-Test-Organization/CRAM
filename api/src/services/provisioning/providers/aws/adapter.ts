@@ -1,9 +1,21 @@
 import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
-import type { ResourcePowerState, ResourceRecord } from "../../types/index.js";
+import type {
+  ProviderConfig,
+  ProviderCredentialStatus,
+  ProviderResourceExistence,
+  ResourcePowerState,
+  ResourceRecord,
+} from "../../types/index.js";
 import type { LogFn } from "../../types/logging.js";
 import { captureCommand, runCommand } from "../../utils/index.js";
+import {
+  classifyCredentialError,
+  resolveEnvIndirection,
+  trimCliMessage,
+  type CredentialErrorRule,
+} from "../credentials.js";
 import type {
   ProviderGenericResourceContext,
   ProviderAdapter,
@@ -22,6 +34,109 @@ export class AwsProviderAdapter implements ProviderAdapter {
   readonly type = "aws" as const;
   readonly requiresBootstrapIso = false;
   readonly steps = awsPanoramaFirewallSteps;
+
+  credentialScope(providerConfig: ProviderConfig): string {
+    const region = typeof providerConfig.region === "string" ? providerConfig.region : "default";
+    const profile = resolveAwsProfile(providerConfig) ?? "default";
+    return `aws:${region}:${profile}`;
+  }
+
+  // `sts get-caller-identity` is the cheapest call that exercises the whole credential
+  // chain (SSO cache, assumed role, static keys) without needing any IAM permission.
+  async checkCredentials(
+    providerConfig: ProviderConfig,
+    log: LogFn,
+  ): Promise<ProviderCredentialStatus> {
+    const profile = resolveAwsProfile(providerConfig);
+    const env = awsCliEnv(providerConfig);
+    try {
+      const raw = await captureCommand(
+        "aws",
+        ["sts", "get-caller-identity", "--output", "json"],
+        { env, log },
+      );
+      const identity = JSON.parse(raw) as { Account?: string; Arn?: string };
+      return {
+        state: "ok",
+        identity: identity.Arn ?? identity.Account ?? null,
+        detail: identity.Account ? `account ${identity.Account}` : null,
+      };
+    } catch (error) {
+      const classified = classifyCredentialError(error, awsCredentialErrorRules(profile));
+      return {
+        state: classified.state,
+        identity: null,
+        detail: classified.detail,
+        remediation: classified.remediation ?? defaultAwsRemediation(classified.state, profile),
+      };
+    }
+  }
+
+  // Answers "does this still exist" for every AWS resource kind the broker records,
+  // keyed off the shape of the id Terraform handed back. A terminated EC2 instance
+  // counts as missing: it is spun down and cannot be restarted.
+  async describeResource(
+    context: ProviderGenericResourceContext,
+    record: ResourceRecord,
+    log: LogFn,
+  ): Promise<ProviderResourceExistence> {
+    const providerResourceId = record.providerResourceId?.trim();
+    if (!providerResourceId) {
+      return { presence: "unknown", detail: "no provider resource id is recorded" };
+    }
+
+    const region = typeof context.deployment.provider.region === "string"
+      ? context.deployment.provider.region
+      : null;
+    if (!region) {
+      return { presence: "unknown", detail: "deployment has no provider.region" };
+    }
+    const env = awsCliEnv(context.deployment.provider);
+
+    try {
+      if (providerResourceId.startsWith("i-")) {
+        const state = mapAwsPowerState(
+          (await captureCommand(
+            "aws",
+            [
+              "ec2", "describe-instances",
+              "--region", region,
+              "--instance-ids", providerResourceId,
+              "--query", "Reservations[0].Instances[0].State.Name",
+              "--output", "text",
+            ],
+            { env, log },
+          )).trim(),
+        );
+        return state === "terminated"
+          ? { presence: "missing", powerState: "terminated", detail: "EC2 instance is terminated" }
+          : { presence: "present", powerState: state };
+      }
+
+      if (record.kind === "egress-route") {
+        return await describeAwsRoute(region, env, providerResourceId, log);
+      }
+
+      const lookup = awsDescribeLookup(providerResourceId, record.kind ?? null);
+      if (!lookup) {
+        return {
+          presence: "unknown",
+          detail: `no existence probe for AWS resource id ${providerResourceId}`,
+        };
+      }
+      await captureCommand("aws", lookup.args(region, providerResourceId), { env, log });
+      return { presence: "present" };
+    } catch (error) {
+      const detail = trimCliMessage(error instanceof Error ? error.message : String(error));
+      if (AWS_NOT_FOUND.test(detail)) {
+        return { presence: "missing", detail };
+      }
+      if (AWS_AUTH_FAILURE.test(detail)) {
+        return { presence: "unknown", detail, credentialFailure: true };
+      }
+      return { presence: "unknown", detail };
+    }
+  }
 
   supportsPowerControl(
     _context: ProviderGenericResourceContext,
@@ -322,6 +437,130 @@ export class AwsProviderAdapter implements ProviderAdapter {
 }
 
 const ec2BackedKinds = new Set(["panorama", "panw-vmseries", "ubuntu-server", "windows-endpoint"]);
+
+// AWS reports "gone" with a per-service NotFound code; a malformed id can only mean the
+// recorded id no longer names anything real either.
+const AWS_NOT_FOUND =
+  /NotFound|does not exist|InvalidVpcID|InvalidSubnetID|InvalidRouteTableID|InvalidInstanceID|NoSuchBucket|\(404\)/i;
+const AWS_AUTH_FAILURE =
+  /ExpiredToken|RequestExpired|InvalidClientTokenId|UnrecognizedClientException|AuthFailure|Unable to locate credentials|SSO session|sso session|token has expired|AccessDenied|UnauthorizedOperation|\(403\)/i;
+
+function awsCredentialErrorRules(profile: string | undefined): CredentialErrorRule[] {
+  const login = profile ? `aws sso login --profile ${profile}` : "aws sso login";
+  return [
+    // InvalidClientTokenId / UnrecognizedClientException read as permission errors but
+    // are what a stale SSO session or a rotated key actually returns — the fix is a
+    // re-login, not an IAM change, so they belong with the expired cases.
+    {
+      state: "expired",
+      pattern: /ExpiredToken|RequestExpired|token has expired|security token included in the request is invalid|InvalidClientTokenId|UnrecognizedClientException|SSO session .* (?:has )?expired|Error when retrieving token from sso|refreshing.*token/i,
+      remediation: `${login} (or refresh the static credentials)`,
+    },
+    {
+      state: "missing",
+      pattern: /Unable to locate credentials|could not be found|NoCredentialProviders|You must specify a region|profile .* could not be found/i,
+      remediation: profile
+        ? `configure the "${profile}" profile (aws configure sso --profile ${profile})`
+        : "configure AWS credentials (aws configure) or set AWS_PROFILE",
+    },
+    {
+      state: "denied",
+      pattern: /AccessDenied|not authorized|UnauthorizedOperation|SignatureDoesNotMatch/i,
+      remediation: "the credentials resolve but are not authorized — check the role/permissions",
+    },
+  ];
+}
+
+function defaultAwsRemediation(
+  state: ProviderCredentialStatus["state"],
+  profile: string | undefined,
+): string | undefined {
+  if (state !== "error") return undefined;
+  return profile
+    ? `run \`aws sts get-caller-identity --profile ${profile}\` on the host to reproduce`
+    : "run `aws sts get-caller-identity` on the host to reproduce";
+}
+
+/**
+ * The profile the deployment's Terraform env resolves to. `provider.profileEnv` names
+ * the env var (conventionally AWS_PROFILE) whose value is the profile, so the CLI probe
+ * and `terraform apply` authenticate identically.
+ */
+function resolveAwsProfile(providerConfig: ProviderConfig): string | undefined {
+  return (
+    resolveEnvIndirection(providerConfig as Record<string, unknown>, "profileEnv") ??
+    process.env.AWS_PROFILE?.trim() ??
+    undefined
+  );
+}
+
+function awsCliEnv(providerConfig: ProviderConfig): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  const profile = resolveAwsProfile(providerConfig);
+  if (profile) env.AWS_PROFILE = profile;
+  if (typeof providerConfig.region === "string" && providerConfig.region) {
+    env.AWS_REGION = providerConfig.region;
+    env.AWS_DEFAULT_REGION = providerConfig.region;
+  }
+  return env;
+}
+
+interface AwsDescribeLookup {
+  args(region: string, id: string): string[];
+}
+
+/** Existence probe per AWS id shape; s3 buckets are named, not prefixed, so kind decides. */
+function awsDescribeLookup(id: string, kind: string | null): AwsDescribeLookup | null {
+  if (id.startsWith("vpc-")) {
+    return { args: (region, value) => ["ec2", "describe-vpcs", "--region", region, "--vpc-ids", value] };
+  }
+  if (id.startsWith("subnet-")) {
+    return { args: (region, value) => ["ec2", "describe-subnets", "--region", region, "--subnet-ids", value] };
+  }
+  if (id.startsWith("rtb-")) {
+    return { args: (region, value) => ["ec2", "describe-route-tables", "--region", region, "--route-table-ids", value] };
+  }
+  if (id.startsWith("eni-")) {
+    return { args: (region, value) => ["ec2", "describe-network-interfaces", "--region", region, "--network-interface-ids", value] };
+  }
+  if (kind === "s3-bucket") {
+    return { args: (region, value) => ["s3api", "head-bucket", "--region", region, "--bucket", value] };
+  }
+  return null;
+}
+
+/**
+ * A Terraform `aws_route` id is "<route-table-id>_<destination-cidr>" — a route is an
+ * entry inside a table, not an addressable object, so existence is "does the parent
+ * table still carry that destination".
+ */
+async function describeAwsRoute(
+  region: string,
+  env: NodeJS.ProcessEnv,
+  routeId: string,
+  log: LogFn,
+): Promise<ProviderResourceExistence> {
+  const separator = routeId.indexOf("_");
+  if (separator <= 0) {
+    return { presence: "unknown", detail: `unrecognized AWS route id ${routeId}` };
+  }
+  const routeTableId = routeId.slice(0, separator);
+  const destinationCidr = routeId.slice(separator + 1);
+  const raw = await captureCommand(
+    "aws",
+    [
+      "ec2", "describe-route-tables",
+      "--region", region,
+      "--route-table-ids", routeTableId,
+      "--query", `RouteTables[0].Routes[?DestinationCidrBlock=='${destinationCidr}'] | length(@)`,
+      "--output", "text",
+    ],
+    { env, log },
+  );
+  return Number(raw.trim()) > 0
+    ? { presence: "present" }
+    : { presence: "missing", detail: `route table ${routeTableId} no longer carries ${destinationCidr}` };
+}
 
 function temporaryArtifactBucketName(context: ProviderGenericResourceContext): string {
   const projectName =

@@ -124,6 +124,48 @@ export default async function provisioningRoutes(
     }
   });
 
+  // ── reconciliation (credential health + drift against the real cloud) ────────
+  fastify.get('/provisioning/credentials', {
+    schema: {
+      description: 'Check every configured provider profile\'s cloud credentials, one probe per credential scope (account + region + profile). Each entry reports `state`: ok / expired (re-login) / missing / denied / error / unsupported, plus the identity it resolved to and a remediation hint. Read-only.',
+      tags: [TAG],
+    },
+  }, async (_request, reply) => {
+    try { return await provisioningService.checkCredentials(); }
+    catch (err) { return fail(reply, err); }
+  });
+
+  fastify.get<{ Querystring: { deployment?: string; includeDestroyed?: boolean } }>('/provisioning/reconcile', {
+    schema: {
+      description: 'Dry-run drift report: for every tracked resource, ask its provider whether the resource still exists. Distinguishes expired credentials (`credentials-invalid` — says nothing about the infrastructure) from resources the provider confirms are gone (`missing`, and `stale:true` when broker state still shows them live). Writes nothing — POST the same path to apply.',
+      tags: [TAG],
+      querystring: { type: 'object', properties: { deployment: { type: 'string', description: 'Limit to one deployment slug.' }, includeDestroyed: { type: 'boolean', description: 'Also probe records already marked destroyed.' } } },
+    },
+  }, async (request, reply) => {
+    try {
+      return await provisioningService.reconcile({
+        deployment: request.query.deployment ?? null,
+        includeDestroyed: request.query.includeDestroyed === true,
+      });
+    } catch (err) { return fail(reply, err); }
+  });
+
+  fastify.post<{ Body: { deployment?: string; includeDestroyed?: boolean } }>('/provisioning/reconcile', {
+    schema: {
+      description: 'Apply the drift report: resources the provider confirms are gone are written back as `destroyed`, clearing already spun-down deployments out of the resource list. Resources under expired/failed credentials are never touched — fix the credentials and re-run. Returns the same report with `applied:true`.',
+      tags: [TAG],
+      body: { type: 'object', properties: { deployment: { type: 'string' }, includeDestroyed: { type: 'boolean' } }, additionalProperties: false },
+    },
+  }, async (request, reply) => {
+    try {
+      return await provisioningService.reconcile({
+        apply: true,
+        deployment: request.body?.deployment ?? null,
+        includeDestroyed: request.body?.includeDestroyed === true,
+      });
+    } catch (err) { return fail(reply, err); }
+  });
+
   fastify.get('/provisioning/events', {
     schema: {
       description: 'Server-Sent Events stream for broker progress. Sends an initial snapshot, then job/resource/active-job updates as deployment state changes.',

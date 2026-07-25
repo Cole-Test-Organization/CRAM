@@ -12,6 +12,7 @@ import type {
 } from "./types.js";
 
 import pp_aws_lab from "./provider-profiles/aws-lab.js";
+import pp_gcp_lab from "./provider-profiles/gcp-lab.js";
 import pp_proxmox_home from "./provider-profiles/proxmox-home.js";
 import rp_aws_egress_route from "./resource-profiles/aws-egress-route.js";
 import rp_aws_network from "./resource-profiles/aws-network.js";
@@ -20,6 +21,8 @@ import rp_aws_panw_vmseries from "./resource-profiles/aws-panw-vmseries.js";
 import rp_aws_s3_bucket from "./resource-profiles/aws-s3-bucket.js";
 import rp_aws_ubuntu_server from "./resource-profiles/aws-ubuntu-server.js";
 import rp_aws_windows_endpoint from "./resource-profiles/aws-windows-endpoint.js";
+import rp_gcp_network from "./resource-profiles/gcp-network.js";
+import rp_gcp_ubuntu_server from "./resource-profiles/gcp-ubuntu-server.js";
 import dep_aws_enterprise_firewall from "./deployments/aws-enterprise-firewall.js";
 import dep_aws_gp_lab_trusted_users from "./deployments/aws-gp-lab-trusted-users.js";
 import dep_aws_panorama_lan from "./deployments/aws-panorama-lan.js";
@@ -29,6 +32,8 @@ import dep_aws_ubuntu_behind_firewall from "./deployments/aws-ubuntu-behind-fire
 import dep_aws_ubuntu_koi_endpoint from "./deployments/aws-ubuntu-koi-endpoint.js";
 import dep_aws_ubuntu_server from "./deployments/aws-ubuntu-server.js";
 import dep_aws_windows_endpoint from "./deployments/aws-windows-endpoint.js";
+import dep_gcp_shared_network from "./deployments/gcp-shared-network.js";
+import dep_gcp_ubuntu_server from "./deployments/gcp-ubuntu-server.js";
 import dep_proxmox_fw_lab from "./deployments/proxmox-fw-lab.js";
 import app_linux_codex_claude from "./app-profiles/linux/codex-claude.js";
 import app_windows_cortex_xdr from "./app-profiles/windows/cortex-xdr.js";
@@ -38,6 +43,7 @@ import cfg_panw_vmseries_internet_egress from "./config-profiles/panw-vmseries/i
 
 export const providerProfiles: ProviderProfileModule[] = [
   pp_aws_lab,
+  pp_gcp_lab,
   pp_proxmox_home,
 ];
 
@@ -49,6 +55,8 @@ export const resourceProfiles: ResourceProfileModule[] = [
   rp_aws_s3_bucket,
   rp_aws_ubuntu_server,
   rp_aws_windows_endpoint,
+  rp_gcp_network,
+  rp_gcp_ubuntu_server,
 ];
 
 export const deployments: DeploymentModule[] = [
@@ -61,6 +69,8 @@ export const deployments: DeploymentModule[] = [
   dep_aws_ubuntu_koi_endpoint,
   dep_aws_ubuntu_server,
   dep_aws_windows_endpoint,
+  dep_gcp_shared_network,
+  dep_gcp_ubuntu_server,
   dep_proxmox_fw_lab,
 ];
 

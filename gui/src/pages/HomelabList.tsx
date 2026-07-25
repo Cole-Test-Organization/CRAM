@@ -4,6 +4,7 @@ import { api, type ProvisioningDeploymentSummary, type ProvisioningJob } from '.
 import { createProvisioningEventStream } from '../lib/provisioningEvents';
 import Button from '../components/Button';
 import JobMonitor from '../components/provisioning/JobMonitor';
+import ReconcilePanel from '../components/provisioning/ReconcilePanel';
 import StatusBadge from '../components/StatusBadge';
 import { formatDateTime } from '../utils/date';
 import { LaunchModal } from './HomelabCommon';
@@ -86,6 +87,10 @@ export default function HomelabList() {
           />
         </div>
       </Show>
+
+      <div class="mb-5">
+        <ReconcilePanel onApplied={refreshAll} />
+      </div>
 
       <div class="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
         <section class="flex flex-col gap-5">
