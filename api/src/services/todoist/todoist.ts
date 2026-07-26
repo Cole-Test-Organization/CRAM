@@ -1,10 +1,9 @@
 // TODO: Add authentication for production/remote access
 
-import { createRequire } from 'module';
 import path from 'path';
 
 // Import todoist API functions from the todoist module
-const require = createRequire(path.resolve(import.meta.dirname, '..', '..', '..', 'todoist', 'package.json'));
+const todoistRoot = path.resolve(import.meta.dirname, '..', '..', '..', '..', 'todoist');
 
 // The todoist module is dynamically imported (ESM, resolved at call time), so
 // its shape isn't statically known here — `any` is the honest type for the
@@ -14,7 +13,7 @@ let todoistApi: any = null;
 async function getTodoistApi() {
   if (todoistApi) return todoistApi;
   // Dynamic import since todoist module uses ESM
-  todoistApi = await import(path.resolve(import.meta.dirname, '..', '..', '..', 'todoist', 'src', 'api.js'));
+  todoistApi = await import(path.join(todoistRoot, 'src', 'api.js'));
   return todoistApi;
 }
 
