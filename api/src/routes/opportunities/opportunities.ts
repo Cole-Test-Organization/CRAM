@@ -82,15 +82,9 @@ export default async function opportunityRoutes(fastify: FastifyInstance, { oppo
       },
     },
   }, async (request, reply) => {
-    try {
-      const opp = await opportunitiesService.create(request.userId, request.body);
-      reply.code(201);
-      return opp;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const opp = await opportunitiesService.create(request.userId, request.body);
+    reply.code(201);
+    return opp;
   });
 
   fastify.patch<{ Params: { id: number }; Body: { account_id?: number; name?: string; opp_link?: string | null; trr_link?: string | null; tech_validation_link?: string | null; stage?: string; notes?: string | null; product_ids?: number[]; why_change?: string[]; why_now?: string[]; why_us?: string[] } }>('/opportunities/:id', {
@@ -116,15 +110,9 @@ export default async function opportunityRoutes(fastify: FastifyInstance, { oppo
       },
     },
   }, async (request, reply) => {
-    try {
-      const opp = await opportunitiesService.patch(request.userId, request.params.id, request.body);
-      if (!opp) { reply.code(404); return { error: 'Opportunity not found' }; }
-      return opp;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const opp = await opportunitiesService.patch(request.userId, request.params.id, request.body);
+    if (!opp) { reply.code(404); return { error: 'Opportunity not found' }; }
+    return opp;
   });
 
   fastify.delete<{ Params: { id: number } }>('/opportunities/:id', {
@@ -152,15 +140,9 @@ export default async function opportunityRoutes(fastify: FastifyInstance, { oppo
       },
     },
   }, async (request, reply) => {
-    try {
-      const opp = await opportunitiesService.linkProduct(request.userId, request.params.id, request.params.productId);
-      if (!opp) { reply.code(404); return { error: 'Opportunity not found' }; }
-      return opp;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const opp = await opportunitiesService.linkProduct(request.userId, request.params.id, request.params.productId);
+    if (!opp) { reply.code(404); return { error: 'Opportunity not found' }; }
+    return opp;
   });
 
   fastify.delete<{ Params: { id: number; productId: number } }>('/opportunities/:id/products/:productId', {

@@ -20,19 +20,13 @@ export default async function importExportRoutes(fastify: FastifyInstance, { imp
       },
     },
   }, async (request, reply) => {
-    try {
-      const bundle = await importExportService.exportAccounts(request.userId, request.body.slugs);
-      reply.header('Content-Type', 'application/json');
-      reply.header(
-        'Content-Disposition',
-        `attachment; filename="accounts-export-${new Date().toISOString().slice(0, 10)}.json"`
-      );
-      return bundle;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const bundle = await importExportService.exportAccounts(request.userId, request.body.slugs);
+    reply.header('Content-Type', 'application/json');
+    reply.header(
+      'Content-Disposition',
+      `attachment; filename="accounts-export-${new Date().toISOString().slice(0, 10)}.json"`
+    );
+    return bundle;
   });
 
   fastify.get<{ Params: { slug: string } }>('/import-export/accounts/:slug', {
@@ -63,12 +57,6 @@ export default async function importExportRoutes(fastify: FastifyInstance, { imp
     },
     bodyLimit: 50 * 1024 * 1024, // 50 MB ceiling for large multi-account bundles
   }, async (request, reply) => {
-    try {
-      return await importExportService.importBundle(request.userId, request.body);
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    return await importExportService.importBundle(request.userId, request.body);
   });
 }

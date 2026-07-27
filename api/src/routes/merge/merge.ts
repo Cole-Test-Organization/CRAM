@@ -29,13 +29,7 @@ export default async function mergeRoutes(fastify: FastifyInstance, { mergeServi
       },
     },
   }, async (request, reply) => {
-    try {
-      return await mergeService.preview(request.userId, request.params.entity, request.body.base_id, request.body.source_id);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    return await mergeService.preview(request.userId, request.params.entity, request.body.base_id, request.body.source_id);
   });
 
   fastify.post<{ Params: { entity: string }; Body: ApplyBody }>('/merge/:entity', {
@@ -58,12 +52,6 @@ export default async function mergeRoutes(fastify: FastifyInstance, { mergeServi
       },
     },
   }, async (request, reply) => {
-    try {
-      return await mergeService.apply(request.userId, request.params.entity, request.body.base_id, request.body.source_id, request.body.choices || {});
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    return await mergeService.apply(request.userId, request.params.entity, request.body.base_id, request.body.source_id, request.body.choices || {});
   });
 }

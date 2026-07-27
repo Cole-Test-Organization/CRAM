@@ -175,13 +175,7 @@ export default async function agentRoutes(fastify: FastifyInstance, { agentSetti
       },
     },
   }, async (request, reply) => {
-    try {
-      return await loadSession(request.userId, request.params.id);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) return reply.code(e.statusCode).send({ error: e.message });
-      throw err;
-    }
+    return await loadSession(request.userId, request.params.id);
   });
 
   // Per-user agent provider config (provider, model, local server URL, and a
@@ -228,14 +222,8 @@ export default async function agentRoutes(fastify: FastifyInstance, { agentSetti
         additionalProperties: false,
       },
     },
-  }, async (request, reply) => {
-    try {
-      return await agentSettingsService.update(request.userId, request.body);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
-      throw err;
-    }
+  }, async (request) => {
+    return agentSettingsService.update(request.userId, request.body);
   });
 
   fastify.delete<{ Params: { id: string } }>('/agent/sessions/:id', {
@@ -249,13 +237,7 @@ export default async function agentRoutes(fastify: FastifyInstance, { agentSetti
       },
     },
   }, async (request, reply) => {
-    try {
-      await deleteSession(request.userId, request.params.id);
-      return { ok: true };
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) return reply.code(e.statusCode).send({ error: e.message });
-      throw err;
-    }
+    await deleteSession(request.userId, request.params.id);
+    return { ok: true };
   });
 }

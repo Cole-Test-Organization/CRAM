@@ -89,14 +89,8 @@ export default async function accountDetailsRoutes(fastify: FastifyInstance, { a
       body: PATCH_BODY,
     },
   }, async (request, reply) => {
-    try {
-      const details = await accountDetailsService.upsert(request.userId, request.params.accountId, request.body || {});
-      return details;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const details = await accountDetailsService.upsert(request.userId, request.params.accountId, request.body || {});
+    return details;
   });
 
   fastify.delete<{ Params: { accountId: number } }>('/accounts/:accountId/details', {

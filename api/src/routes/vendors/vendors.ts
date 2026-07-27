@@ -52,15 +52,9 @@ export default async function vendorRoutes(fastify: FastifyInstance, { vendorsSe
       },
     },
   }, async (request, reply) => {
-    try {
-      const result = await vendorsService.findOrCreate(request.body);
-      reply.code(result.created ? 201 : 200);
-      return result;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const result = await vendorsService.findOrCreate(request.body);
+    reply.code(result.created ? 201 : 200);
+    return result;
   });
 
   fastify.patch<{ Params: { id: number }; Body: { name?: string; slug?: string; website?: string | null; notes?: string | null; needs_review?: boolean } }>('/vendors/:id', {
@@ -80,16 +74,9 @@ export default async function vendorRoutes(fastify: FastifyInstance, { vendorsSe
       },
     },
   }, async (request, reply) => {
-    try {
-      const vendor = await vendorsService.patch(request.params.id, request.body);
-      if (!vendor) { reply.code(404); return { error: 'Vendor not found' }; }
-      return vendor;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      if (e.code === '23505') { reply.code(409); return { error: 'Slug already in use' }; }
-      throw err;
-    }
+    const vendor = await vendorsService.patch(request.params.id, request.body);
+    if (!vendor) { reply.code(404); return { error: 'Vendor not found' }; }
+    return vendor;
   });
 
   fastify.delete<{ Params: { id: number } }>('/vendors/:id', {

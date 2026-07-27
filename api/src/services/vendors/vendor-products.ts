@@ -1,7 +1,7 @@
 import { getPool } from '../../db/connection.js';
 import { slugify } from '../_shared/_slug.js';
 import { FUZZY_THRESHOLD, normalizeProductName } from '../_shared/_fuzzy-match.js';
-import { badRequest, notFound } from '../../lib/http-error.js';
+import { badRequest, notFound, rethrowUniqueViolation } from '../../lib/http-error.js';
 import type { VendorsService } from './vendors.js';
 
 const COLS = `vp.id, vp.vendor_id, vp.name, vp.slug, vp.category, vp.notes,
@@ -238,7 +238,7 @@ export class VendorProductsService {
         `UPDATE vendor_products SET name = $2, slug = $3, category = $4, notes = $5, needs_review = $6
          WHERE id = $1`,
         [id, next.name, next.slug, next.category, next.notes, next.needs_review]
-      );
+      ).catch(rethrowUniqueViolation('Slug already in use for this vendor'));
       return (await client.query(
         `SELECT ${COLS} FROM vendor_products vp JOIN vendors v ON v.id = vp.vendor_id WHERE vp.id = $1`,
         [id]

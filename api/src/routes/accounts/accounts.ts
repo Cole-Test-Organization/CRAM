@@ -113,18 +113,12 @@ export default async function accountRoutes(fastify: FastifyInstance, { accounts
       reply.code(400);
       return { error: 'find-or-create requires at least one of: slug, name, or domains[].' };
     }
-    try {
-      const result = await accountsService.findOrCreate(request.userId, data, {
-        createIfMissing: !!create_if_missing,
-        fuzzy: fuzzy !== false,
-      });
-      reply.code(result.status === 'created' ? 201 : 200);
-      return result;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string; existing?: unknown };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const result = await accountsService.findOrCreate(request.userId, data, {
+      createIfMissing: !!create_if_missing,
+      fuzzy: fuzzy !== false,
+    });
+    reply.code(result.status === 'created' ? 201 : 200);
+    return result;
   });
 
   // Bulk-approve auto-created accounts (clear needs_review) in one call.
@@ -155,18 +149,12 @@ export default async function accountRoutes(fastify: FastifyInstance, { accounts
       },
     },
   }, async (request, reply) => {
-    try {
-      const account = await accountsService.getBySlug(request.userId, request.params.slug);
-      if (!account) {
-        reply.code(404);
-        return { error: `No account with slug "${request.params.slug}". Try /api/accounts/search?q=... to fuzzy-match by name — slugs are exact.` };
-      }
-      return account;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string; existing?: unknown };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
+    const account = await accountsService.getBySlug(request.userId, request.params.slug);
+    if (!account) {
+      reply.code(404);
+      return { error: `No account with slug "${request.params.slug}". Try /api/accounts/search?q=... to fuzzy-match by name — slugs are exact.` };
     }
+    return account;
   });
 
   // Get account by domain (agent convenience — e.g., from an email like jane@acme.com)
@@ -180,18 +168,12 @@ export default async function accountRoutes(fastify: FastifyInstance, { accounts
       },
     },
   }, async (request, reply) => {
-    try {
-      const account = await accountsService.getByDomain(request.userId, request.params.domain);
-      if (!account) {
-        reply.code(404);
-        return { error: `No account found for domain "${request.params.domain}"` };
-      }
-      return account;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string; existing?: unknown };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
+    const account = await accountsService.getByDomain(request.userId, request.params.domain);
+    if (!account) {
+      reply.code(404);
+      return { error: `No account found for domain "${request.params.domain}"` };
     }
+    return account;
   });
 
   // Get account by ID
@@ -235,22 +217,9 @@ export default async function accountRoutes(fastify: FastifyInstance, { accounts
       },
     },
   }, async (request, reply) => {
-    try {
-      const account = await accountsService.create(request.userId, request.body);
-      reply.code(201);
-      return account;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string; existing?: unknown };
-      if (e.statusCode) {
-        reply.code(e.statusCode);
-        return { error: e.message, ...(e.existing ? { existing: e.existing } : {}) };
-      }
-      if (e.code === '23505') {
-        reply.code(409);
-        return { error: `Account with slug "${request.body.slug}" already exists` };
-      }
-      throw err;
-    }
+    const account = await accountsService.create(request.userId, request.body);
+    reply.code(201);
+    return account;
   });
 
   // Full update
@@ -338,13 +307,7 @@ export default async function accountRoutes(fastify: FastifyInstance, { accounts
       },
     },
   }, async (request, reply) => {
-    try {
-      return await accountsService.addPartner(request.userId, request.params.id, request.params.partnerId);
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string; existing?: unknown };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    return await accountsService.addPartner(request.userId, request.params.id, request.params.partnerId);
   });
 
   // Remove a partner link

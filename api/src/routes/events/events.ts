@@ -33,13 +33,7 @@ export default async function eventRoutes(fastify: FastifyInstance, { eventsServ
       },
     },
   }, async (request, reply) => {
-    try {
-      return await eventsService.list(request.query);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
-      throw err;
-    }
+    return eventsService.list(request.query);
   });
 
   fastify.get('/events/facets', {
@@ -66,14 +60,8 @@ export default async function eventRoutes(fastify: FastifyInstance, { eventsServ
       },
     },
   }, async (request, reply) => {
-    try {
-      const events = await eventsService.upcomingWithMatchedContacts(request.userId, request.query);
-      return { events };
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
-      throw err;
-    }
+    const events = await eventsService.upcomingWithMatchedContacts(request.userId, request.query);
+    return { events };
   });
 
   fastify.get<{ Params: { id: number } }>('/events/:id', {
@@ -114,15 +102,9 @@ export default async function eventRoutes(fastify: FastifyInstance, { eventsServ
       },
     },
   }, async (request, reply) => {
-    try {
-      const event = await eventsService.upsert(request.body);
-      reply.code(200);
-      return event;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
-      throw err;
-    }
+    const event = await eventsService.upsert(request.body);
+    reply.code(200);
+    return event;
   });
 
   fastify.delete<{ Params: { id: number } }>('/events/:id', {

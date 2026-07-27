@@ -57,15 +57,9 @@ export default async function vendorProductRoutes(fastify: FastifyInstance, { ve
       },
     },
   }, async (request, reply) => {
-    try {
-      const result = await vendorProductsService.findOrCreate(request.body);
-      reply.code(result.created ? 201 : 200);
-      return result;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const result = await vendorProductsService.findOrCreate(request.body);
+    reply.code(result.created ? 201 : 200);
+    return result;
   });
 
   fastify.patch<{ Params: { id: number }; Body: { name?: string; slug?: string; category?: string; notes?: string | null; needs_review?: boolean } }>('/vendor-products/:id', {
@@ -85,16 +79,9 @@ export default async function vendorProductRoutes(fastify: FastifyInstance, { ve
       },
     },
   }, async (request, reply) => {
-    try {
-      const product = await vendorProductsService.patch(request.params.id, request.body);
-      if (!product) { reply.code(404); return { error: 'Vendor product not found' }; }
-      return product;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      if (e.code === '23505') { reply.code(409); return { error: 'Slug already in use for this vendor' }; }
-      throw err;
-    }
+    const product = await vendorProductsService.patch(request.params.id, request.body);
+    if (!product) { reply.code(404); return { error: 'Vendor product not found' }; }
+    return product;
   });
 
   fastify.delete<{ Params: { id: number } }>('/vendor-products/:id', {
@@ -135,12 +122,6 @@ export default async function vendorProductRoutes(fastify: FastifyInstance, { ve
       },
     },
   }, async (request, reply) => {
-    try {
-      return await vendorProductsService.merge(request.body.winner_id, request.body.loser_id);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    return await vendorProductsService.merge(request.body.winner_id, request.body.loser_id);
   });
 }

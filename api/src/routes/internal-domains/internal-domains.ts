@@ -46,15 +46,9 @@ export default async function internalDomainRoutes(fastify: FastifyInstance, { i
       },
     },
   }, async (request, reply) => {
-    try {
-      const row = await internalDomainsService.add(request.userId, request.body.domain);
-      reply.code(201);
-      return row;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
-      throw err;
-    }
+    const row = await internalDomainsService.add(request.userId, request.body.domain);
+    reply.code(201);
+    return row;
   });
 
   fastify.delete<{ Params: { domain: string } }>('/internal-domains/:domain', {
@@ -64,14 +58,8 @@ export default async function internalDomainRoutes(fastify: FastifyInstance, { i
       params: { type: 'object', required: ['domain'], properties: { domain: { type: 'string' } } },
     },
   }, async (request, reply) => {
-    try {
-      const result = await internalDomainsService.remove(request.userId, decodeURIComponent(request.params.domain));
-      if (!result.deleted) { reply.code(404); return { error: `Internal domain not found: ${result.domain}` }; }
-      return result;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
-      throw err;
-    }
+    const result = await internalDomainsService.remove(request.userId, decodeURIComponent(request.params.domain));
+    if (!result.deleted) { reply.code(404); return { error: `Internal domain not found: ${result.domain}` }; }
+    return result;
   });
 }

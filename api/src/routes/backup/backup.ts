@@ -36,14 +36,8 @@ export default async function backupRoutes(fastify: FastifyInstance, { backupSer
         additionalProperties: false,
       },
     },
-  }, async (request, reply) => {
-    try {
-      return await backupService.updateSettings(request.body);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
-      throw err;
-    }
+  }, async (request) => {
+    return backupService.updateSettings(request.body);
   });
 
   fastify.get('/backup', {
@@ -148,16 +142,10 @@ export default async function backupRoutes(fastify: FastifyInstance, { backupSer
       params: { type: 'object', properties: { filename: { type: 'string' } }, required: ['filename'] },
     },
   }, async (request, reply) => {
-    try {
-      const { stream } = await backupService.openBackupStream(request.params.filename);
-      reply.header('Content-Type', 'application/octet-stream');
-      reply.header('Content-Disposition', `attachment; filename="${request.params.filename}"`);
-      return reply.send(stream);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const { stream } = await backupService.openBackupStream(request.params.filename);
+    reply.header('Content-Type', 'application/octet-stream');
+    reply.header('Content-Disposition', `attachment; filename="${request.params.filename}"`);
+    return reply.send(stream);
   });
 
   fastify.delete<{ Params: { filename: string } }>('/backup/:filename', {
@@ -167,12 +155,6 @@ export default async function backupRoutes(fastify: FastifyInstance, { backupSer
       params: { type: 'object', properties: { filename: { type: 'string' } }, required: ['filename'] },
     },
   }, async (request, reply) => {
-    try {
-      return await backupService.deleteBackup(request.params.filename);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    return await backupService.deleteBackup(request.params.filename);
   });
 }

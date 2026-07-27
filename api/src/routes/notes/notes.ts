@@ -18,13 +18,7 @@ export default async function noteRoutes(fastify: FastifyInstance, { notesServic
       },
     },
   }, async (request, reply) => {
-    try {
-      return await notesService.getAll(request.userId, request.query);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
-      throw err;
-    }
+    return notesService.getAll(request.userId, request.query);
   });
 
   fastify.get<{ Params: { id: number } }>('/notes/:id', {
@@ -60,8 +54,7 @@ export default async function noteRoutes(fastify: FastifyInstance, { notesServic
       reply.code(201);
       return note;
     } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
+      const e = err as { code?: string };
       if (e.code === '23514') { reply.code(400); return { error: 'Exactly one of account_id, contact_id, opportunity_id must be set.' }; }
       if (e.code === '23503') { reply.code(404); return { error: 'Referenced account/contact/opportunity not found.' }; }
       throw err;

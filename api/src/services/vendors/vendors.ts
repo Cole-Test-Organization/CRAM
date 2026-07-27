@@ -1,7 +1,7 @@
 import { getPool } from '../../db/connection.js';
 import { slugify } from '../_shared/_slug.js';
 import { FUZZY_THRESHOLD, normalizeVendorName } from '../_shared/_fuzzy-match.js';
-import { badRequest } from '../../lib/http-error.js';
+import { badRequest, rethrowUniqueViolation } from '../../lib/http-error.js';
 
 const COLS = 'id, name, slug, website, notes, needs_review, deleted_at, created_at, updated_at';
 
@@ -138,7 +138,7 @@ export class VendorsService {
          WHERE id = $1
          RETURNING ${COLS}`,
         [id, next.name, next.slug, next.website, next.notes, next.needs_review]
-      );
+      ).catch(rethrowUniqueViolation('Slug already in use'));
       return updated.rows[0];
     } finally {
       client.release();

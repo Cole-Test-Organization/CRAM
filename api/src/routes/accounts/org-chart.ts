@@ -22,13 +22,7 @@ export default async function orgChartRoutes(fastify: FastifyInstance, { orgChar
       },
     },
   }, async (request, reply) => {
-    try {
-      return await orgChartService.getByAccountId(request.userId, request.params.accountId);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    return await orgChartService.getByAccountId(request.userId, request.params.accountId);
   });
 
   fastify.patch<{
@@ -55,18 +49,12 @@ export default async function orgChartRoutes(fastify: FastifyInstance, { orgChar
       },
     },
   }, async (request, reply) => {
-    try {
-      if (!request.body || !Object.hasOwn(request.body, 'reports_to_contact_id')) {
-        reply.code(400);
-        return { error: 'reports_to_contact_id is required; pass a contact id or null for top-level.' };
-      }
-      const managerId = request.body?.reports_to_contact_id ?? null;
-      return await orgChartService.setManager(request.userId, request.params.accountId, request.params.contactId, managerId);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
+    if (!request.body || !Object.hasOwn(request.body, 'reports_to_contact_id')) {
+      reply.code(400);
+      return { error: 'reports_to_contact_id is required; pass a contact id or null for top-level.' };
     }
+    const managerId = request.body?.reports_to_contact_id ?? null;
+    return await orgChartService.setManager(request.userId, request.params.accountId, request.params.contactId, managerId);
   });
 
   fastify.delete<{ Params: { accountId: number; contactId: number } }>('/accounts/:accountId/org-chart/contacts/:contactId', {
@@ -83,13 +71,7 @@ export default async function orgChartRoutes(fastify: FastifyInstance, { orgChar
       },
     },
   }, async (request, reply) => {
-    try {
-      return await orgChartService.remove(request.userId, request.params.accountId, request.params.contactId);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    return await orgChartService.remove(request.userId, request.params.accountId, request.params.contactId);
   });
 
   fastify.put<{
@@ -114,17 +96,11 @@ export default async function orgChartRoutes(fastify: FastifyInstance, { orgChar
       },
     },
   }, async (request, reply) => {
-    try {
-      return await orgChartService.replace(
-        request.userId,
-        request.params.accountId,
-        request.body?.edges || [],
-        request.body?.root_contact_ids || [],
-      );
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    return await orgChartService.replace(
+      request.userId,
+      request.params.accountId,
+      request.body?.edges || [],
+      request.body?.root_contact_ids || [],
+    );
   });
 }

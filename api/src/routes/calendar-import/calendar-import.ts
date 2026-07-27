@@ -77,13 +77,7 @@ export default async function calendarImportRoutes(fastify: FastifyInstance, { c
         return { error: 'Missing or invalid x-calendar-import-token header.' };
       }
     }
-    try {
-      const report = await calendarImportService.importDay(request.userId, request.body);
-      return report;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const report = await calendarImportService.importDay(request.userId, request.body);
+    return report;
   });
 }

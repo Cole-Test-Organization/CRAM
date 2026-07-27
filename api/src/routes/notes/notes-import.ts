@@ -49,15 +49,9 @@ export default async function notesImportRoutes(fastify: FastifyInstance, { note
       },
     },
   }, async (request, reply) => {
-    try {
-      const jobId = notesImportService.enqueue(request.userId, { files: request.body.files });
-      reply.code(202);
-      return { jobId };
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const jobId = notesImportService.enqueue(request.userId, { files: request.body.files });
+    reply.code(202);
+    return { jobId };
   });
 
   // Zip upload — server normalizes text-ish entries and supported documents into
@@ -91,21 +85,15 @@ export default async function notesImportRoutes(fastify: FastifyInstance, { note
         summary,
       };
     }
-    try {
-      const jobId = notesImportService.enqueue(request.userId, { files });
-      reply.code(202);
-      return {
-        jobId,
-        file_count: files.length,
-        converted_count: summary.converted_files,
-        skipped_count: summary.skipped_files,
-        summary,
-      };
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const jobId = notesImportService.enqueue(request.userId, { files });
+    reply.code(202);
+    return {
+      jobId,
+      file_count: files.length,
+      converted_count: summary.converted_files,
+      skipped_count: summary.skipped_files,
+      summary,
+    };
   });
 
   // Poll a single import job.

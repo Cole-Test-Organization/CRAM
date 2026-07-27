@@ -232,6 +232,24 @@ fastify.addHook('preHandler', async (request) => {
   request.userId = await getCurrentUserId(request);
 });
 
+// The one place a thrown error becomes an HTTP response. Services throw the
+// helpers in lib/http-error.js (badRequest/notFound/conflict/forbidden), which
+// carry a `statusCode`; a raw Postgres unique-violation that gets this far
+// becomes a 409. Every body is `{ error }` — the shape the GUI's api client and
+// the api test suite both read — so routes never have to catch-and-reshape.
+fastify.setErrorHandler((err, request, reply) => {
+  const e = err as { statusCode?: number; code?: string; message?: string; existing?: unknown };
+  // Fastify's own schema rejections already set statusCode 400; surfacing
+  // `message` puts the actual reason ("body must have required property 'name'")
+  // where callers look, instead of the generic "Bad Request".
+  const status = e.code === '23505' ? 409 : e.statusCode ?? 500;
+  if (status >= 500) request.log.error({ err }, 'unhandled route error');
+  reply.code(status);
+  // Duplicate-row conflicts from accounts/contacts attach the row they matched,
+  // so the caller can update it instead of retrying the create.
+  return { error: e.message || 'Internal server error', ...(e.existing ? { existing: e.existing } : {}) };
+});
+
 // All API routes live under /api so the SPA can own bare paths like
 // /accounts/:slug without colliding with /accounts/:id (integer-validated).
 await fastify.register(async (api) => {

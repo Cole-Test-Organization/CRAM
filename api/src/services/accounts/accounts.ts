@@ -3,7 +3,7 @@ import { withUser } from '../../db/connection.js';
 import { slugify } from '../_shared/_slug.js';
 import { jsonb } from '../_shared/_json.js';
 import { normalizeDomain } from '../_shared/_domain.js';
-import { badRequest, notFound, conflict } from '../../lib/http-error.js';
+import { badRequest, notFound, conflict, rethrowUniqueViolation } from '../../lib/http-error.js';
 
 // Shape of the account payload passed to create/update/patch/findOrCreate and
 // the dedupe helpers. All optional — callers send sparse objects.
@@ -392,7 +392,7 @@ export class AccountsService {
           typeof data.favorite === 'boolean' ? data.favorite : null,
           typeof data.needs_review === 'boolean' ? data.needs_review : null,
         ]
-      );
+      ).catch(rethrowUniqueViolation(`Account with slug "${data.slug}" already exists`));
       return this._fetchWithChildren(client, 'id', inserted.rows[0].id);
     });
   }
@@ -424,7 +424,7 @@ export class AccountsService {
           typeof data.favorite === 'boolean' ? data.favorite : null,
           typeof data.needs_review === 'boolean' ? data.needs_review : null,
         ]
-      );
+      ).catch(rethrowUniqueViolation(`Account with slug "${data.slug}" already exists`));
       return this._fetchWithChildren(client, 'id', id);
     });
   }

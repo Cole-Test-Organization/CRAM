@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 import { withUser } from '../../db/connection.js';
 import { deriveFilename } from '../_shared/_slug.js';
-import { badRequest, notFound, conflict } from '../../lib/http-error.js';
+import { badRequest, notFound, conflict, rethrowUniqueViolation } from '../../lib/http-error.js';
 
 export const MEETING_REVIEW_REASONS = [
   'manual',
@@ -297,7 +297,7 @@ export class MeetingsService {
           review.reviewReason,
           data.krisp_meeting_id || null,
         ]
-      );
+      ).catch(rethrowUniqueViolation('A meeting with this filename already exists'));
       const meetingId = res.rows[0].id;
 
       await this._linkContacts(client, meetingId, contactIds, data.attendee_status || null);

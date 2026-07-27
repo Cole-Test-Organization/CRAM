@@ -63,13 +63,7 @@ export default async function contactRoutes(fastify: FastifyInstance, { contacts
       reply.code(400);
       return { error: 'account_id is required when mode=external' };
     }
-    try {
-      return await contactsService.getAttendeeOptions(request.userId, { mode, accountId: account_id });
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    return await contactsService.getAttendeeOptions(request.userId, { mode, accountId: account_id });
   });
 
   // Pre-create dedupe probe. Same match logic create() uses internally
@@ -123,16 +117,10 @@ export default async function contactRoutes(fastify: FastifyInstance, { contacts
       },
     },
   }, async (request, reply) => {
-    try {
-      const { account_id, ...data } = request.body || {};
-      const result = await contactsService.findOrCreate(request.userId, data, account_id);
-      reply.code(result.created ? 201 : 200);
-      return result;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const { account_id, ...data } = request.body || {};
+    const result = await contactsService.findOrCreate(request.userId, data, account_id);
+    reply.code(result.created ? 201 : 200);
+    return result;
   });
 
   // ── From-emails staging (account + people; NO meeting) ─────────────────
@@ -200,13 +188,7 @@ export default async function contactRoutes(fastify: FastifyInstance, { contacts
       },
     },
   }, async (request, reply) => {
-    try {
-      return await contactsService.importFromEmails(request.userId, request.body);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    return await contactsService.importFromEmails(request.userId, request.body);
   });
 
   // Lookup a contact by email (case-insensitive). 404 if not found — used by
@@ -385,15 +367,9 @@ export default async function contactRoutes(fastify: FastifyInstance, { contacts
   }, async (request, reply) => {
     const { to_account_id, from_account_id } = request.body || {};
     if (!to_account_id) { reply.code(400); return { error: 'to_account_id is required' }; }
-    try {
-      const contact = await contactsService.reassignAccount(request.userId, request.params.id, from_account_id, to_account_id);
-      if (!contact) { reply.code(404); return { error: 'Contact not found' }; }
-      return contact;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const contact = await contactsService.reassignAccount(request.userId, request.params.id, from_account_id, to_account_id);
+    if (!contact) { reply.code(404); return { error: 'Contact not found' }; }
+    return contact;
   });
 
   // Full update

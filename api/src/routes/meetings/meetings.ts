@@ -88,26 +88,13 @@ export default async function meetingRoutes(fastify: FastifyInstance, { meetings
       const account = await accountsService.getById(request.userId, account_id);
       if (!account) { reply.code(404); return { error: 'Account not found' }; }
     }
-    try {
-      const meeting = await meetingsService.create(
-        request.userId,
-        internal ? null : account_id!,
-        { ...data, internal: !!internal }
-      );
-      reply.code(201);
-      return meeting;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode === 400) {
-        reply.code(400);
-        return { error: e.message };
-      }
-      if (e.code === '23505') {
-        reply.code(409);
-        return { error: 'A meeting with this filename already exists' };
-      }
-      throw err;
-    }
+    const meeting = await meetingsService.create(
+      request.userId,
+      internal ? null : account_id!,
+      { ...data, internal: !!internal }
+    );
+    reply.code(201);
+    return meeting;
   });
 
   // Update meeting
@@ -134,18 +121,9 @@ export default async function meetingRoutes(fastify: FastifyInstance, { meetings
       },
     },
   }, async (request, reply) => {
-    try {
-      const meeting = await meetingsService.update(request.userId, request.params.id, request.body);
-      if (!meeting) { reply.code(404); return { error: 'Meeting not found' }; }
-      return meeting;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode === 400) {
-        reply.code(400);
-        return { error: e.message };
-      }
-      throw err;
-    }
+    const meeting = await meetingsService.update(request.userId, request.params.id, request.body);
+    if (!meeting) { reply.code(404); return { error: 'Meeting not found' }; }
+    return meeting;
   });
 
   // Triage: attach a parked (account-less) note to an account. The one path
@@ -167,15 +145,9 @@ export default async function meetingRoutes(fastify: FastifyInstance, { meetings
   }, async (request, reply) => {
     const { account_id } = request.body || {};
     if (!account_id) { reply.code(400); return { error: 'account_id is required' }; }
-    try {
-      const meeting = await meetingsService.assignAccount(request.userId, request.params.id, account_id);
-      if (!meeting) { reply.code(404); return { error: 'Meeting not found' }; }
-      return meeting;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const meeting = await meetingsService.assignAccount(request.userId, request.params.id, account_id);
+    if (!meeting) { reply.code(404); return { error: 'Meeting not found' }; }
+    return meeting;
   });
 
   // Reassign a meeting to a DIFFERENT account, or convert it to an internal
@@ -200,15 +172,9 @@ export default async function meetingRoutes(fastify: FastifyInstance, { meetings
       reply.code(400);
       return { error: 'Provide account_id (move to that account) or internal=true (make it an account-less internal note).' };
     }
-    try {
-      const meeting = await meetingsService.reassignAccount(request.userId, request.params.id, { accountId: account_id, internal: !!internal });
-      if (!meeting) { reply.code(404); return { error: 'Meeting not found' }; }
-      return meeting;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const meeting = await meetingsService.reassignAccount(request.userId, request.params.id, { accountId: account_id, internal: !!internal });
+    if (!meeting) { reply.code(404); return { error: 'Meeting not found' }; }
+    return meeting;
   });
 
   // Triage: link an unlinked attendee row to an existing contact. If that
@@ -236,15 +202,9 @@ export default async function meetingRoutes(fastify: FastifyInstance, { meetings
   }, async (request, reply) => {
     const { contact_id } = request.body || {};
     if (!contact_id) { reply.code(400); return { error: 'contact_id is required' }; }
-    try {
-      const meeting = await meetingsService.linkAttendee(request.userId, request.params.id, request.params.attendeeId, contact_id);
-      if (!meeting) { reply.code(404); return { error: 'Attendee not found on this meeting' }; }
-      return meeting;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const meeting = await meetingsService.linkAttendee(request.userId, request.params.id, request.params.attendeeId, contact_id);
+    if (!meeting) { reply.code(404); return { error: 'Attendee not found on this meeting' }; }
+    return meeting;
   });
 
   // Create a meeting from a resolved email list. Caller picks which account
@@ -291,15 +251,9 @@ export default async function meetingRoutes(fastify: FastifyInstance, { meetings
       },
     },
   }, async (request, reply) => {
-    try {
-      const result = await meetingsService.createFromEmails(request.userId, request.body);
-      reply.code(201);
-      return result;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) { reply.code(e.statusCode); return { error: e.message }; }
-      throw err;
-    }
+    const result = await meetingsService.createFromEmails(request.userId, request.body);
+    reply.code(201);
+    return result;
   });
 
   // List all contact-enrichment jobs whose contactId appears on this meeting's

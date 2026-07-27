@@ -46,16 +46,9 @@ export default async function productRoutes(fastify: FastifyInstance, { products
       },
     },
   }, async (request, reply) => {
-    try {
-      const product = await productsService.create(request.userId, request.body);
-      reply.code(201);
-      return product;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
-      if (e.code === '23505') { reply.code(409); return { error: `Product "${request.body.name}" already exists` }; }
-      throw err;
-    }
+    const product = await productsService.create(request.userId, request.body);
+    reply.code(201);
+    return product;
   });
 
   fastify.patch<{ Params: { id: number }; Body: { name?: string; category_id?: number | null } }>('/products/:id', {
@@ -72,16 +65,9 @@ export default async function productRoutes(fastify: FastifyInstance, { products
       },
     },
   }, async (request, reply) => {
-    try {
-      const product = await productsService.patch(request.userId, request.params.id, request.body);
-      if (!product) { reply.code(404); return { error: 'Product not found' }; }
-      return product;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
-      if (e.code === '23505') { reply.code(409); return { error: `Product "${request.body.name}" already exists` }; }
-      throw err;
-    }
+    const product = await productsService.patch(request.userId, request.params.id, request.body);
+    if (!product) { reply.code(404); return { error: 'Product not found' }; }
+    return product;
   });
 
   fastify.delete<{ Params: { id: number } }>('/products/:id', {

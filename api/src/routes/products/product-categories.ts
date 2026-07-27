@@ -41,16 +41,9 @@ export default async function productCategoryRoutes(fastify: FastifyInstance, { 
       },
     },
   }, async (request, reply) => {
-    try {
-      const category = await productCategoriesService.create(request.userId, request.body);
-      reply.code(201);
-      return category;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
-      if (e.code === '23505') { reply.code(409); return { error: `Category "${request.body.name}" already exists` }; }
-      throw err;
-    }
+    const category = await productCategoriesService.create(request.userId, request.body);
+    reply.code(201);
+    return category;
   });
 
   fastify.patch<{ Params: { id: number }; Body: { name?: string } }>('/product-categories/:id', {
@@ -64,16 +57,9 @@ export default async function productCategoryRoutes(fastify: FastifyInstance, { 
       },
     },
   }, async (request, reply) => {
-    try {
-      const category = await productCategoriesService.patch(request.userId, request.params.id, request.body);
-      if (!category) { reply.code(404); return { error: 'Product category not found' }; }
-      return category;
-    } catch (err) {
-      const e = err as { statusCode?: number; code?: string; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
-      if (e.code === '23505') { reply.code(409); return { error: `Category "${request.body.name}" already exists` }; }
-      throw err;
-    }
+    const category = await productCategoriesService.patch(request.userId, request.params.id, request.body);
+    if (!category) { reply.code(404); return { error: 'Product category not found' }; }
+    return category;
   });
 
   fastify.delete<{ Params: { id: number } }>('/product-categories/:id', {

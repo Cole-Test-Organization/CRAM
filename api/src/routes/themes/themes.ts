@@ -62,13 +62,7 @@ export default async function themesRoutes(fastify: FastifyInstance, { themesSer
       },
     },
   }, async (request, reply) => {
-    try {
-      return await themesService.setActive(request.userId, request.body?.theme_id ?? null);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) return reply.code(e.statusCode).send({ error: e.message });
-      throw err;
-    }
+    return await themesService.setActive(request.userId, request.body?.theme_id ?? null);
   });
 
   fastify.get<{ Params: { id: number } }>('/themes/:id', {
@@ -79,13 +73,7 @@ export default async function themesRoutes(fastify: FastifyInstance, { themesSer
       response: { 200: themeSchema },
     },
   }, async (request, reply) => {
-    try {
-      return await themesService.get(request.userId, request.params.id);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) return reply.code(e.statusCode).send({ error: e.message });
-      throw err;
-    }
+    return await themesService.get(request.userId, request.params.id);
   });
 
   fastify.post<{ Body: { slug: string; name: string; description?: string | null; theme_data: Record<string, unknown> } }>('/themes', {
@@ -105,13 +93,7 @@ export default async function themesRoutes(fastify: FastifyInstance, { themesSer
       response: { 200: themeSchema },
     },
   }, async (request, reply) => {
-    try {
-      return await themesService.create(request.userId, request.body);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) return reply.code(e.statusCode).send({ error: e.message });
-      throw err;
-    }
+    return await themesService.create(request.userId, request.body);
   });
 
   fastify.patch<{ Params: { id: number }; Body: { slug?: string; name?: string; description?: string | null; theme_data?: Record<string, unknown> } }>('/themes/:id', {
@@ -131,13 +113,7 @@ export default async function themesRoutes(fastify: FastifyInstance, { themesSer
       response: { 200: themeSchema },
     },
   }, async (request, reply) => {
-    try {
-      return await themesService.update(request.userId, request.params.id, request.body);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) return reply.code(e.statusCode).send({ error: e.message });
-      throw err;
-    }
+    return await themesService.update(request.userId, request.params.id, request.body);
   });
 
   fastify.delete<{ Params: { id: number } }>('/themes/:id', {
@@ -147,12 +123,6 @@ export default async function themesRoutes(fastify: FastifyInstance, { themesSer
       params: { type: 'object', required: ['id'], properties: { id: { type: 'integer' } } },
     },
   }, async (request, reply) => {
-    try {
-      return await themesService.delete(request.userId, request.params.id);
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode) return reply.code(e.statusCode).send({ error: e.message });
-      throw err;
-    }
+    return await themesService.delete(request.userId, request.params.id);
   });
 }

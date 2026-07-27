@@ -51,15 +51,9 @@ export default async function memoryRoutes(fastify: FastifyInstance, { memoriesS
       },
     },
   }, async (request, reply) => {
-    try {
-      const memory = await memoriesService.create(request.userId, request.body);
-      reply.code(201);
-      return memory;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
-      throw err;
-    }
+    const memory = await memoriesService.create(request.userId, request.body);
+    reply.code(201);
+    return memory;
   });
 
   fastify.patch<{ Params: { id: number }; Body: { title?: string | null; content?: string; enabled?: boolean } }>('/memories/:id', {
@@ -77,15 +71,9 @@ export default async function memoryRoutes(fastify: FastifyInstance, { memoriesS
       },
     },
   }, async (request, reply) => {
-    try {
-      const memory = await memoriesService.patch(request.userId, request.params.id, request.body);
-      if (!memory) { reply.code(404); return { error: 'Memory not found' }; }
-      return memory;
-    } catch (err) {
-      const e = err as { statusCode?: number; message?: string };
-      if (e.statusCode === 400) { reply.code(400); return { error: e.message }; }
-      throw err;
-    }
+    const memory = await memoriesService.patch(request.userId, request.params.id, request.body);
+    if (!memory) { reply.code(404); return { error: 'Memory not found' }; }
+    return memory;
   });
 
   fastify.delete<{ Params: { id: number } }>('/memories/:id', {

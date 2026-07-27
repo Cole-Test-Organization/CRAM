@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { withUser } from '../../db/connection.js';
-import { badRequest } from '../../lib/http-error.js';
+import { badRequest, rethrowUniqueViolation } from '../../lib/http-error.js';
 
 const CAT_COLS = 'id, name, created_at, updated_at';
 
@@ -51,7 +51,7 @@ export class ProductCategoriesService {
          VALUES (current_setting('app.current_user_id')::bigint, $1)
          RETURNING id`,
         [name.trim()]
-      );
+      ).catch(rethrowUniqueViolation(`Category "${name.trim()}" already exists`));
       return this._fetch(client, inserted.rows[0].id);
     });
   }
@@ -71,7 +71,7 @@ export class ProductCategoriesService {
       await client.query(
         `UPDATE product_categories SET name = $2 WHERE id = $1`,
         [id, newName]
-      );
+      ).catch(rethrowUniqueViolation(`Category "${newName}" already exists`));
       return this._fetch(client, id);
     });
   }
