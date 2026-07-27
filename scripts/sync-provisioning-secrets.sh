@@ -12,7 +12,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SECRET_SOURCE="$ROOT/api/src/services/provisioning/secrets/seedSecrets.ts"
 
-DEFAULT_REMOTE="${CRAM_SYNC_REMOTE:-host.homelab}"
+# Same prod host as scripts/restart-prod.sh. Bare IP, so the user is explicit —
+# there's no ssh_config Host entry to supply one.
+DEFAULT_REMOTE="${CRAM_SYNC_REMOTE:-hcwilk@10.161.120.221}"
 DEFAULT_ENV_FILE="${CRAM_SYNC_ENV_FILE:-$ROOT/.env}"
 DEFAULT_CONTAINER="${CRAM_SYNC_CONTAINER:-cram}"
 
@@ -40,7 +42,7 @@ Environment overrides:
 
 Example:
   scripts/sync-provisioning-secrets.sh
-  scripts/sync-provisioning-secrets.sh --remote host.homelab --container cram
+  scripts/sync-provisioning-secrets.sh --remote hcwilk@10.161.120.221 --container cram
   npm run sync:provisioning-secrets -- --env-file ./local-broker.env
 EOF
 }

@@ -11,7 +11,10 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-REMOTE="${CRAM_PROD_REMOTE:-host.homelab}"
+# The prod host. Carries an explicit user because this is a bare IP — there's no
+# ssh_config Host entry to supply one, and ssh would otherwise try the local
+# username. Override either with CRAM_PROD_REMOTE / CRAM_PROD_ROOT.
+REMOTE="${CRAM_PROD_REMOTE:-hcwilk@10.161.120.221}"
 REMOTE_ROOT="${CRAM_PROD_ROOT:-~/cram}"
 
 bold() { printf '\033[1m%s\033[0m' "$1"; }
