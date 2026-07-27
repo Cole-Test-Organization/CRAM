@@ -4,7 +4,7 @@ import https from "node:https";
 
 const host = process.argv[2];
 if (!host) {
-  console.error("usage: node work/deactivate-panos-license.mjs <management-host>");
+  console.error("usage: node dev/scripts/provisioning/deactivate-panos-license.js <management-host>");
   process.exit(2);
 }
 

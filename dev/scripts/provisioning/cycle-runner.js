@@ -1,17 +1,19 @@
 #!/usr/bin/env node
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const API_BASE = process.env.PROVISIONING_API_BASE ?? "http://127.0.0.1:3200/api";
 const POLL_MS = Number(process.env.PROVISIONING_POLL_MS ?? "15000");
 const RUN_LABEL = process.env.PROVISIONING_RUN_LABEL ?? new Date().toISOString().slice(0, 10);
-const REPORT = path.resolve(process.env.PROVISIONING_REPORT ?? `work/provisioning-run-report-${RUN_LABEL}.jsonl`);
-const FINAL = path.resolve(process.env.PROVISIONING_SUMMARY ?? `work/provisioning-run-summary-${RUN_LABEL}.md`);
+const REPORT = path.resolve(process.env.PROVISIONING_REPORT ?? `dev/scripts/provisioning/runs/report-${RUN_LABEL}.jsonl`);
+const FINAL = path.resolve(process.env.PROVISIONING_SUMMARY ?? `dev/scripts/provisioning/runs/summary-${RUN_LABEL}.md`);
 const DEACTIVATION_SECRET = "PANW_LICENSE_DEACTIVATION_API_KEY";
 
 const args = parseArgs(process.argv.slice(2));
 const results = [];
 
+// runs/ is gitignored scratch — the report and summary are per-run artifacts.
+mkdirSync(path.dirname(REPORT), { recursive: true });
 writeFileSync(REPORT, "");
 
 function parseArgs(argv) {

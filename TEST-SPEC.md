@@ -90,34 +90,32 @@ npm --prefix api test           # backend: node --test against an ALREADY-RUNNIN
 
 ---
 
-## 5. Current state (as of 2026-06-03)
+## 5. Current state
 
-**Exists:**
-- Frontend harness: `gui/vitest.config.ts` (Solid + jsdom), `gui/vitest.setup.ts` (auto-cleanup). Scripts `test` / `test:watch` / `typecheck`.
-- `gui/src/components/FormModals.test.tsx` — component tests for all 8 form modals: the 2 original meeting reactivity regressions, plus input-persists / validation / correct-`api.*`-on-submit for the rest, plus the unsaved-guard wiring. **(Expanded in Phase 2.)**
-- `gui/src/lib/unsavedGuard.ts` + `unsavedGuard.test.ts` — extracted primitive, 3 unit tests (incl. the `untrack`-is-untracked guarantee).
-- `api/test/*.test.js` — **backend integration suite (Phase 3): 104 tests / 17 files**, run serially (`node --test --test-concurrency=1 'test/*.test.js'`) against a live, seeded API (`API_URL`). Per-resource CRUD + validation + contracts, cross-resource invariants, an in-process HTTP↔MCP parity/wiring check (`mcp.test.js`), and validation-only smoke for the LLM/external resources (`external-smoke.test.js`). Shared HTTP client + exact seed-count constants live in `api/test/helpers.js`. (`endpoints.test.js` was split into these; the null-times regression now lives in `meetings.test.js`.)
-- `tsc --noEmit` passes for `gui`.
-- Seed/reset tooling: `dev/scripts/seed-dev-data.js`, `dev/scripts/clear-db.js`, and a `seed` profile in `docker-compose.yml`.
-- **(Phase 1)** Root runner — `package.json` with `test` (hermetic), `test:api`, `test:all`.
-- **(Phase 1)** CI — `.github/workflows/ci.yml`: a hermetic job (tsc + vitest) and an api-integration job (ephemeral Postgres → migrate → seed → boot → `api/test`), both gating PRs + pushes to `main`.
-- **(Phase 1)** Isolated test DB — `db-test` (tmpfs Postgres, port 55433) under a `test` compose profile; orchestrated by `dev/scripts/test/run-api-tests.js` (shared by local + CI) and `dev/scripts/test/test-api.sh`.
-- **(Phase 1)** Husky pre-push hook (`.husky/pre-push`) running the hermetic subset.
-- **(Phase 2)** Component/unit tests for the stateful FE — `AccountPicker`, `AttendeePicker`, `EditableMarkdown`, `NotesPanel`, `SaveIndicator`, `createSelection` (colocated `*.test.tsx` / `*.test.ts`), plus the expanded `FormModals.test.tsx`. Full FE suite: **44 tests / 8 files**.
-- **(Phase 3)** Backend coverage — `api/test` deepened from smoke GETs to **104 tests / 17 files**: write paths + validation + contracts for every deterministic resource (accounts, account-details, contacts, meetings, opportunities, products, product-categories, vendors, vendor-products, notes, memories, events, themes, search, import-export); cross-resource invariants (contact-delete cascade, `reassign_account`, `internal_domains` guard); HTTP↔MCP parity + in-process services-bag wiring (`mcp.test.js`); and validation-only smoke for the LLM/external/side-effecting resources (`external-smoke.test.js`). Loosened assertions re-tightened to exact seed counts (15 accounts / 32 contacts / 10 opps / 34 meetings / 10 details / 7 partnerships; 24 products / 5 categories / 5 themes / 75 vendors / 180 vendor-products).
+All four phases have shipped. Per-phase detail (what landed, when, and why) lives
+in the phase log in §7 — this section is just the shape of the suite today.
 
-- **(Phase 4)** E2E — `e2e/` Playwright suite (Chromium, serial `workers:1`) driving the **real GUI against a live, seeded API on one origin** (the API serves the built GUI; no Vite/proxy): **6 tests / 4 journey files + `helpers.ts`** — manual meeting → notes → save (incl. an Edit→Save that re-guards the null-times contract end-to-end), from-emails resolve → create, account creation (+ a validation block), internal-note triage (assign-account + keep-internal). DOM/role-based selectors, **no visual-regression**. Two `data-testid`s added (AccountPicker + AttendeePicker option rows). Orchestrated by `dev/scripts/test/run-e2e-tests.js` + `dev/scripts/test/test-e2e.sh`; run via `npm run test:e2e`.
+| Layer | Where | Size | Runner |
+|---|---|---|---|
+| Static | `gui/tsconfig.json`, `api/tsconfig.json` | — | `tsc --noEmit` (both packages) |
+| Unit + component | `gui/src/**/*.test.ts(x)` (colocated) | 100 tests / 22 files | `npm test` (Vitest, Solid + jsdom) |
+| API integration | `api/test/*.test.js` | 209 tests / 36 files | `npm run test:api` (serial, live seeded API) |
+| E2E | `e2e/tests/*.spec.ts` | 9 tests / 6 files | `npm run test:e2e` (Playwright, Chromium) |
 
-**Missing (the gaps this roadmap closes):**
-- ✅ Nothing outstanding — all four phases have shipped. Optional follow-ups remain in §9 (ESLint on the static base; cross-browser / mobile-viewport E2E).
+Supporting infrastructure:
 
-**Resolved by Phase 1:** ~~no CI / root runner / git hooks~~; ~~API tests not hermetic~~ (they now run against a fresh, isolated, seeded DB); ~~no dedicated test database~~.
+- **Root runner** — `test` (hermetic: tsc + gui Vitest), `test:api`, `test:all`, `test:e2e`.
+- **Isolated test DB** — `db-test` (tmpfs Postgres on :55433) under the `test` compose
+  profile, orchestrated by `dev/scripts/test/run-{api,e2e}-tests.js` for both local and CI.
+- **CI** — `.github/workflows/ci.yml` gates every PR/push with the hermetic + api-integration
+  jobs; `.github/workflows/e2e.yml` runs E2E nightly, on manual dispatch, and on `e2e`-labeled PRs.
+- **Pre-push hook** — `.husky/pre-push` runs the hermetic subset.
+- **Seed tooling** — `dev/scripts/seed-dev-data.js`, `dev/scripts/clear-db.js`, and the
+  `seed` compose profile. Exact seed counts are asserted in `api/test/seed-invariants.test.js`
+  and shared via `api/test/helpers.js`.
 
-**Resolved by Phase 2:** ~~frontend coverage stops at two regression tests~~ — every stateful component (7 form modals, both pickers, `EditableMarkdown`, `NotesPanel`, `SaveIndicator`, `createSelection`) now has smoke + key-behavior tests, and `unsavedGuard` is wired into the multi-field modals. Frontend suite is **44 tests across 8 files**.
-
-**Resolved by Phase 3:** ~~backend coverage is shallow (smoke GETs)~~ — write paths, validation, contracts, and cross-resource invariants now cover every deterministic resource, with HTTP↔MCP parity/wiring and validation smoke for the un-hermetic ones; the null-times regression was proven to have teeth and loosened assertions re-tightened to exact seed counts. Backend suite: **104 tests across 17 files**, green via `npm run test:api` + CI.
-
-**Resolved by Phase 4:** ~~no E2E~~ — a thin Playwright cap now covers the 4 critical journeys end-to-end against the live seeded stack, asserted at the DOM level (no screenshots). The manual-meeting Edit→Save step was proven to have teeth (reverting the meetings PUT schema to string-only `starts_at` turns exactly that journey red). Suite: **6 tests / 4 files**, green via `npm run test:e2e` + the nightly/`e2e`-label-gated CI job.
+Remaining optional follow-ups are tracked in §9 (ESLint on the static base;
+cross-browser / mobile-viewport E2E).
 
 ---
 

@@ -10,14 +10,12 @@ When updating accounts, contacts, meetings, or tasks — **use the API endpoints
 
 ### The `api/` backend is TypeScript (NodeNext, run under `tsx`)
 
-`api/src` is 100% TypeScript (`.ts`) with **no build step** — it runs directly under **`tsx`** in every context: dev (`tsx watch`), prod (`node --import tsx`), and the api test runner (`node --import tsx`). There is no `dist/` to compile before running.
+`api/src` is 100% TypeScript (`.ts`) with **no build step** — it runs directly under **`tsx`** in every context: dev (`npx tsx src/index.ts`), prod (`node --import tsx`), and the api test runner (`node --import tsx`). There is no `dist/` to compile before running.
 
-- **Dev hot-reloads `.ts` in place.** Editing any file under `api/src/` is a *code-only* change — nodemon/tsx reload it, no Docker rebuild (see "Rebuild after every code change" below).
+- **The dev API does NOT hot-reload.** `scripts/docker-entrypoint.sh` starts it as plain `npx tsx` with **no watcher** — deliberately, because a restart would kill in-flight provisioning jobs mid-Terraform. After editing anything under `api/src/`, run `docker compose restart app-dev`. (Only the GUI hot-reloads; Vite serves `gui/src` with HMR.) No Docker *rebuild* is needed either way — the source tree is bind-mounted.
 - **`tsconfig.json` is `NodeNext`.** Keep the explicit `.js` extension on relative imports *inside* `.ts` files — `import { x } from './foo.js'` is correct even though the file on disk is `foo.ts`. Do not strip it.
 - **Type gate:** `tsc --noEmit` (`npm --prefix api run typecheck`) is chained into the root `npm test` and the `.husky/pre-push` hook, so an api type error fails the same gate as the gui.
-- **What deliberately stays JS:** migrations are `.cjs` (node-pg-migrate executes them itself); `dev/scripts/*` are host `.js`; `api/test/*.test.js` stay `.js`; and the sibling `outreach/` / `events/` / `todoist/` packages stay `.js` — the api imports `outreach/`'s JS in-process, which is why `tsconfig` keeps `allowJs:true`.
-
-Full history and rationale: [api/TS-MIGRATION.md](api/TS-MIGRATION.md).
+- **What deliberately stays JS:** migrations are `.cjs` (node-pg-migrate executes them itself); `dev/scripts/*` are host `.js`; `api/test/*.test.js` stay `.js`; and the sibling `outreach/` / `events/` / `todoist/` packages stay `.js` — the api imports `outreach/`'s JS in-process via relative paths, which is why `tsconfig` keeps `allowJs:true` (`allowJs:false` can't resolve those specifiers — TS7016). `checkJs` stays `false` so foreign JS never enters the gate.
 
 ### Keep HTTP, MCP, in-process MCP client, and agent instructions in sync — MANDATORY
 
@@ -129,7 +127,13 @@ Do not assume from the running containers alone; e.g. if dev was previously brou
 docker compose --profile dev --profile observability --profile local-loki up -d
 ```
 
-For a *code-only* change (anything under `api/src/`, `gui/src/`, `events/src/`, `outreach/src/`, `todoist/src/`, `api/migrations/`), no rebuild is required — sources are bind-mounted and nodemon/Vite hot-reload. Still verify the container reloaded cleanly. `up -d` (no `--build`) is also the right call for `.env` changes — compose recreates the affected container with the new env.
+For a *code-only* change (anything under `api/src/`, `gui/src/`, `events/src/`, `outreach/src/`, `todoist/src/`, `api/migrations/`), no **rebuild** is required — the sources are bind-mounted. But only the GUI hot-reloads (Vite HMR); the API runs under plain `tsx` with no watcher, so a backend edit needs an explicit restart:
+
+```bash
+docker compose restart app-dev
+```
+
+Verify it came back cleanly (`docker compose logs -f app-dev`). `up -d` (no `--build`) is the right call for `.env` changes — compose recreates the affected container with the new env.
 
 For a *Dockerfile* or system-deps change, you must rebuild. Append `--build` to the DEV.md command (do not drop any profile):
 

@@ -167,10 +167,17 @@ minutes while visible. A closed iPhone web app cannot be guaranteed to refresh
 in the background, so its offline data is only as current as the timestamp
 shown on that phone.
 
-Offline mode currently supports reading the core CRM dataset. Writes remain
-server-only and are blocked while disconnected so an old device copy cannot
-overwrite a newer server edit. See [OFFLINE-SYNC.md](OFFLINE-SYNC.md) for the
-cache boundary and the versioned-outbox plan for future offline editing.
+Offline mode covers **reading** the core CRM dataset — accounts, contacts,
+meetings, opportunities, events, the sales/vendor catalogs, and account
+threads/tasks. Operational data (Broker secrets, provisioning state, backups,
+agent sessions, settings) is deliberately never cached. Writes stay server-only
+and are blocked while disconnected, so an old device copy can never overwrite a
+newer server edit.
+
+The cache belongs to one exact origin and browser profile — two hostnames
+pointing at the same server keep separate caches and separate last-sync
+timestamps. It's ordinary browser storage, not an encrypted vault; clearing
+site data removes it.
 
 ## Testing
 
