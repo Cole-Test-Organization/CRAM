@@ -99,7 +99,7 @@ in the phase log in §7 — this section is just the shape of the suite today.
 |---|---|---|---|
 | Static | `gui/tsconfig.json`, `api/tsconfig.json` | — | `tsc --noEmit` (both packages) |
 | Unit + component | `gui/src/**/*.test.ts(x)` (colocated) | 100 tests / 22 files | `npm test` (Vitest, Solid + jsdom) |
-| API integration | `api/test/*.test.js` | 209 tests / 36 files | `npm run test:api` (serial, live seeded API) |
+| API integration | `api/test/*.test.js` | 210 tests / 37 files | `npm run test:api` (serial, live seeded API) |
 | E2E | `e2e/tests/*.spec.ts` | 9 tests / 6 files | `npm run test:e2e` (Playwright, Chromium) |
 
 Supporting infrastructure:
