@@ -285,48 +285,39 @@ export type ProvisioningRdpTunnel = ProvisioningTunnel;
 
 const OPPORTUNITY_PAGE_SIZE = 500;
 
-async function get<T>(path: string): Promise<T> {
-  const res = await apiFetch(`${BASE}${path}`);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json();
+// Throw for a non-2xx response, preferring the API's own `{ error }` message
+// over the bare status line. Every API error body is that shape (the server's
+// global error handler guarantees it), so this is what callers should surface.
+export async function throwIfNotOk(res: Response): Promise<void> {
+  if (res.ok) return;
+  let message = `${res.status} ${res.statusText}`;
+  try {
+    const parsed = JSON.parse(await res.text());
+    if (parsed?.error) message = parsed.error;
+  } catch {
+    // Non-JSON body (proxy error page, empty 502) — keep the status line.
+  }
+  throw new Error(message);
 }
 
-async function post<T>(path: string, data: any): Promise<T> {
+async function request<T>(method: string, path: string, data?: any): Promise<T> {
   const res = await apiFetch(`${BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
+    method,
+    ...(data !== undefined
+      ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }
+      : {}),
   });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json();
-}
-
-async function patch<T>(path: string, data: any): Promise<T> {
-  const res = await apiFetch(`${BASE}${path}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json();
-}
-
-async function put<T>(path: string, data: any): Promise<T> {
-  const res = await apiFetch(`${BASE}${path}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json();
-}
-
-async function del<T = void>(path: string): Promise<T> {
-  const res = await apiFetch(`${BASE}${path}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  await throwIfNotOk(res);
+  // DELETE (and the occasional 204) can come back with an empty body.
   const text = await res.text();
   return (text ? JSON.parse(text) : undefined) as T;
 }
+
+const get = <T,>(path: string) => request<T>('GET', path);
+const post = <T,>(path: string, data: any) => request<T>('POST', path, data);
+const patch = <T,>(path: string, data: any) => request<T>('PATCH', path, data);
+const put = <T,>(path: string, data: any) => request<T>('PUT', path, data);
+const del = <T = void,>(path: string) => request<T>('DELETE', path);
 
 async function getAllOpportunityPages(params: {
   account_id?: number;
@@ -835,12 +826,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ slugs }),
     });
-    if (!res.ok) {
-      const body = await res.text();
-      let message = `${res.status} ${res.statusText}`;
-      try { message = JSON.parse(body).error || message; } catch {}
-      throw new Error(message);
-    }
+    await throwIfNotOk(res);
 
     const disposition = res.headers.get('Content-Disposition') || '';
     const match = /filename="([^"]+)"/i.exec(disposition);
@@ -872,12 +858,7 @@ export const api = {
       headers: { 'Content-Type': 'application/octet-stream' },
       body: file,
     });
-    if (!res.ok) {
-      const body = await res.text();
-      let msg = `${res.status} ${res.statusText}`;
-      try { msg = JSON.parse(body).error || msg; } catch {}
-      throw new Error(msg);
-    }
+    await throwIfNotOk(res);
     return res.json() as Promise<{
       jobId: string;
       file_count: number;
@@ -1010,12 +991,7 @@ export const api = {
         body: file,
       }
     );
-    if (!res.ok) {
-      const body = await res.text();
-      let msg = `${res.status} ${res.statusText}`;
-      try { msg = JSON.parse(body).error || msg; } catch {}
-      throw new Error(msg);
-    }
+    await throwIfNotOk(res);
     return res.json() as Promise<{ filename: string; size_bytes: number; created_at: string; original_name: string | null; duration_ms: number }>;
   },
 

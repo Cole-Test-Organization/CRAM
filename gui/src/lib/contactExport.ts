@@ -1,4 +1,4 @@
-import { slugifyForFilename, isoToday } from './textExport';
+import { makeExportBuilder } from './textExport';
 
 export type ExportableContact = {
   id: number;
@@ -39,17 +39,10 @@ export function formatContact(c: ExportableContact): string {
   return lines.join('\n');
 }
 
-export function formatContacts(contacts: ExportableContact[]): string {
-  return contacts.map(formatContact).join('\n\n---\n\n') + '\n';
-}
+const contacts = makeExportBuilder<ExportableContact>({
+  format: formatContact,
+  nameOf: contactName,
+  plural: 'contacts',
+});
 
-export function contactsFilename(contacts: ExportableContact[]): string {
-  if (contacts.length === 1) {
-    return `${isoToday()}-${slugifyForFilename(contactName(contacts[0]))}.txt`;
-  }
-  return `contacts-${isoToday()}-${contacts.length}.txt`;
-}
-
-export function buildContactsExport(contacts: ExportableContact[]) {
-  return { text: formatContacts(contacts), filename: contactsFilename(contacts) };
-}
+export const buildContactsExport = contacts.build;

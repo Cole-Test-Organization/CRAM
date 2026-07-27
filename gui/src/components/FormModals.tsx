@@ -1,6 +1,6 @@
 import { createSignal, createEffect, createResource, For, Show } from 'solid-js';
-import Modal, { modalBtn } from './Modal';
-import FormField, { FormRow, formInputClass, formTextareaClass, formSelectClass } from './FormField';
+import Modal from './Modal';
+import FormField, { FormError, FormRow, ModalFooter, formInputClass, formTextareaClass, formSelectClass } from './FormField';
 import AccountPicker from './AccountPicker';
 import AttendeePicker from './AttendeePicker';
 import SegmentedControl from './SegmentedControl';
@@ -8,16 +8,7 @@ import { api } from '../lib/api';
 import { STAGES, type OpportunityStage } from '../lib/stages';
 import { createUnsavedGuard } from '../lib/unsavedGuard';
 import { todayLocalDate } from '../utils/date';
-
-function slugify(name: string) {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
-}
+import { slugify } from '../lib/slug';
 
 type AccountLite = { id: number; name: string; slug: string };
 
@@ -90,8 +81,7 @@ export function AccountFormModal(props: AccountModalProps) {
       props.onSaved?.(acct);
       props.onClose();
     } catch (err: any) {
-      const msg = err?.message || 'Failed to save';
-      setError(msg.includes('409') ? 'An account with this slug already exists' : msg);
+      setError(err?.message || 'Failed to save');
     } finally {
       setSaving(false);
     }
@@ -103,12 +93,7 @@ export function AccountFormModal(props: AccountModalProps) {
       onClose={requestClose}
       title={props.existing ? 'Edit Account' : 'New Account'}
       footer={
-        <>
-          <button class={modalBtn.secondary} onClick={requestClose} disabled={saving()}>Cancel</button>
-          <button class={modalBtn.primary} onClick={submit} disabled={saving()}>
-            {saving() ? 'Saving...' : (props.existing ? 'Save' : 'Create')}
-          </button>
-        </>
+        <ModalFooter saving={saving()} onCancel={requestClose} onSave={submit} existing={props.existing} />
       }
     >
       <FormField label="Name" required>
@@ -153,9 +138,7 @@ export function AccountFormModal(props: AccountModalProps) {
           </FormField>
         </div>
       </FormRow>
-      <Show when={error()}>
-        <div class="text-[12px] text-scarlet-400 mt-2 font-semibold">{error()}</div>
-      </Show>
+      <FormError message={error()} />
     </Modal>
   );
 }
@@ -223,12 +206,13 @@ export function AccountReviewModal(props: AccountReviewModalProps) {
       onClose={requestClose}
       title="Review Account"
       footer={
-        <>
-          <button class={modalBtn.secondary} onClick={requestClose} disabled={saving()}>Cancel</button>
-          <button class={modalBtn.primary} onClick={submit} disabled={saving() || !props.account}>
-            {saving() ? 'Saving...' : 'Save and Confirm'}
-          </button>
-        </>
+        <ModalFooter
+          saving={saving()}
+          onCancel={requestClose}
+          onSave={submit}
+          saveDisabled={!props.account}
+          saveLabel="Save and Confirm"
+        />
       }
     >
       <FormField label="Name" required error={error()}>
@@ -340,12 +324,7 @@ export function ContactFormModal(props: ContactModalProps) {
       onClose={requestClose}
       title={props.existing ? 'Edit Contact' : 'New Contact'}
       footer={
-        <>
-          <button class={modalBtn.secondary} onClick={requestClose} disabled={saving()}>Cancel</button>
-          <button class={modalBtn.primary} onClick={submit} disabled={saving()}>
-            {saving() ? 'Saving...' : (props.existing ? 'Save' : 'Create')}
-          </button>
-        </>
+        <ModalFooter saving={saving()} onCancel={requestClose} onSave={submit} existing={props.existing} />
       }
     >
       <Show when={!props.existing}>
@@ -381,9 +360,7 @@ export function ContactFormModal(props: ContactModalProps) {
       <FormField label="Notes">
         <textarea class={formTextareaClass} rows={4} placeholder="Background, priorities, preferences..." value={notes()} onInput={(e) => setNotes(e.currentTarget.value)} />
       </FormField>
-      <Show when={error()}>
-        <div class="text-[12px] text-scarlet-400 mt-2 font-semibold">{error()}</div>
-      </Show>
+      <FormError message={error()} />
     </Modal>
   );
 }
@@ -726,12 +703,7 @@ export function MeetingFormModal(props: MeetingModalProps) {
       title={props.existing ? (props.existing.internal ? 'Edit Internal Meeting' : 'Edit Meeting') : (internal() ? 'New Internal Meeting' : 'New Meeting')}
       size="lg"
       footer={
-        <>
-          <button class={modalBtn.secondary} onClick={requestClose} disabled={saving()}>Cancel</button>
-          <button class={modalBtn.primary} onClick={submit} disabled={saving()}>
-            {saving() ? 'Saving...' : (props.existing ? 'Save' : 'Create')}
-          </button>
-        </>
+        <ModalFooter saving={saving()} onCancel={requestClose} onSave={submit} existing={props.existing} />
       }
     >
       <Show when={!props.existing && !props.fixedAccountId}>
@@ -999,9 +971,7 @@ export function MeetingFormModal(props: MeetingModalProps) {
       <FormField label="Notes" required>
         <textarea class={formTextareaClass} rows={10} placeholder="Meeting notes (markdown)..." value={body()} onInput={(e) => setBody(e.currentTarget.value)} />
       </FormField>
-      <Show when={error()}>
-        <div class="text-[12px] text-scarlet-400 mt-2 font-semibold">{error()}</div>
-      </Show>
+      <FormError message={error()} />
     </Modal>
   );
 }
@@ -1109,12 +1079,7 @@ export function OpportunityFormModal(props: OpportunityModalProps) {
       title={props.existing ? 'Edit Opportunity' : 'New Opportunity'}
       size="lg"
       footer={
-        <>
-          <button class={modalBtn.secondary} onClick={requestClose} disabled={saving()}>Cancel</button>
-          <button class={modalBtn.primary} onClick={submit} disabled={saving()}>
-            {saving() ? 'Saving...' : (props.existing ? 'Save' : 'Create')}
-          </button>
-        </>
+        <ModalFooter saving={saving()} onCancel={requestClose} onSave={submit} existing={props.existing} />
       }
     >
       <Show when={!props.existing}>
@@ -1188,9 +1153,7 @@ export function OpportunityFormModal(props: OpportunityModalProps) {
           </Show>
         </Show>
       </FormField>
-      <Show when={error()}>
-        <div class="text-[12px] text-scarlet-400 mt-2 font-semibold">{error()}</div>
-      </Show>
+      <FormError message={error()} />
     </Modal>
   );
 }
@@ -1240,8 +1203,7 @@ export function ProductFormModal(props: ProductModalProps) {
       props.onSaved?.(product);
       props.onClose();
     } catch (err: any) {
-      const msg = err?.message || 'Failed to save';
-      setError(msg.includes('409') ? 'A product with this name already exists' : msg);
+      setError(err?.message || 'Failed to save');
     } finally {
       setSaving(false);
     }
@@ -1254,12 +1216,7 @@ export function ProductFormModal(props: ProductModalProps) {
       title={props.existing ? 'Edit Product' : 'New Product'}
       size="sm"
       footer={
-        <>
-          <button class={modalBtn.secondary} onClick={props.onClose} disabled={saving()}>Cancel</button>
-          <button class={modalBtn.primary} onClick={submit} disabled={saving()}>
-            {saving() ? 'Saving...' : (props.existing ? 'Save' : 'Create')}
-          </button>
-        </>
+        <ModalFooter saving={saving()} onCancel={props.onClose} onSave={submit} existing={props.existing} />
       }
     >
       <FormField label="Name" required>
@@ -1275,9 +1232,7 @@ export function ProductFormModal(props: ProductModalProps) {
           </Show>
         </select>
       </FormField>
-      <Show when={error()}>
-        <div class="text-[12px] text-scarlet-400 mt-2 font-semibold">{error()}</div>
-      </Show>
+      <FormError message={error()} />
     </Modal>
   );
 }
@@ -1314,8 +1269,7 @@ export function ProductCategoryFormModal(props: ProductCategoryModalProps) {
       props.onSaved?.(cat);
       props.onClose();
     } catch (err: any) {
-      const msg = err?.message || 'Failed to save';
-      setError(msg.includes('409') ? 'A category with this name already exists' : msg);
+      setError(err?.message || 'Failed to save');
     } finally {
       setSaving(false);
     }
@@ -1328,20 +1282,13 @@ export function ProductCategoryFormModal(props: ProductCategoryModalProps) {
       title={props.existing ? 'Edit Category' : 'New Category'}
       size="sm"
       footer={
-        <>
-          <button class={modalBtn.secondary} onClick={props.onClose} disabled={saving()}>Cancel</button>
-          <button class={modalBtn.primary} onClick={submit} disabled={saving()}>
-            {saving() ? 'Saving...' : (props.existing ? 'Save' : 'Create')}
-          </button>
-        </>
+        <ModalFooter saving={saving()} onCancel={props.onClose} onSave={submit} existing={props.existing} />
       }
     >
       <FormField label="Name" required>
         <input class={formInputClass} placeholder="Network Security" value={name()} onInput={(e) => setName(e.currentTarget.value)} autofocus />
       </FormField>
-      <Show when={error()}>
-        <div class="text-[12px] text-scarlet-400 mt-2 font-semibold">{error()}</div>
-      </Show>
+      <FormError message={error()} />
     </Modal>
   );
 }
@@ -1423,8 +1370,7 @@ export function VendorFormModal(props: VendorModalProps) {
       props.onSaved?.(vendor);
       props.onClose();
     } catch (err: any) {
-      const msg = err?.message || 'Failed to save';
-      setError(msg.includes('409') ? 'A vendor with this slug already exists' : msg);
+      setError(err?.message || 'Failed to save');
     } finally {
       setSaving(false);
     }
@@ -1436,12 +1382,7 @@ export function VendorFormModal(props: VendorModalProps) {
       onClose={requestClose}
       title={props.existing ? 'Edit Vendor' : 'New Vendor'}
       footer={
-        <>
-          <button class={modalBtn.secondary} onClick={requestClose} disabled={saving()}>Cancel</button>
-          <button class={modalBtn.primary} onClick={submit} disabled={saving()}>
-            {saving() ? 'Saving...' : (props.existing ? 'Save' : 'Create')}
-          </button>
-        </>
+        <ModalFooter saving={saving()} onCancel={requestClose} onSave={submit} existing={props.existing} />
       }
     >
       <FormField label="Name" required>
@@ -1483,9 +1424,7 @@ export function VendorFormModal(props: VendorModalProps) {
           <span class="text-[12px] uppercase tracking-wider font-semibold">Flag for review</span>
         </label>
       </FormField>
-      <Show when={error()}>
-        <div class="text-[12px] text-scarlet-400 mt-2 font-semibold">{error()}</div>
-      </Show>
+      <FormError message={error()} />
     </Modal>
   );
 }
@@ -1595,8 +1534,7 @@ export function VendorProductFormModal(props: VendorProductModalProps) {
       props.onSaved?.(product);
       props.onClose();
     } catch (err: any) {
-      const msg = err?.message || 'Failed to save';
-      setError(msg.includes('409') ? 'A product with this slug already exists for this vendor' : msg);
+      setError(err?.message || 'Failed to save');
     } finally {
       setSaving(false);
     }
@@ -1608,12 +1546,7 @@ export function VendorProductFormModal(props: VendorProductModalProps) {
       onClose={requestClose}
       title={props.existing ? 'Edit Vendor Product' : 'New Vendor Product'}
       footer={
-        <>
-          <button class={modalBtn.secondary} onClick={requestClose} disabled={saving()}>Cancel</button>
-          <button class={modalBtn.primary} onClick={submit} disabled={saving()}>
-            {saving() ? 'Saving...' : (props.existing ? 'Save' : 'Create')}
-          </button>
-        </>
+        <ModalFooter saving={saving()} onCancel={requestClose} onSave={submit} existing={props.existing} />
       }
     >
       <Show when={!props.existing}>
@@ -1707,9 +1640,7 @@ export function VendorProductFormModal(props: VendorProductModalProps) {
           <span class="text-[12px] uppercase tracking-wider font-semibold">Flag for review</span>
         </label>
       </FormField>
-      <Show when={error()}>
-        <div class="text-[12px] text-scarlet-400 mt-2 font-semibold">{error()}</div>
-      </Show>
+      <FormError message={error()} />
     </Modal>
   );
 }

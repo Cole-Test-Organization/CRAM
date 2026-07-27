@@ -1,5 +1,6 @@
 import type { JSX } from 'solid-js';
 import { Show } from 'solid-js';
+import { modalBtn } from './Modal';
 
 /* Re-exported strings so existing callers pick up the new vintage styling
    without touching their call sites. */
@@ -37,4 +38,43 @@ export default function FormField(props: FormFieldProps) {
 
 export function FormRow(props: { children: JSX.Element }) {
   return <div class="flex gap-3 flex-wrap">{props.children}</div>;
+}
+
+// Form-level (as opposed to field-level) error — a failed submit or a
+// cross-field validation message. Renders nothing when there's no message, so
+// callers don't need to wrap it in <Show>.
+export function FormError(props: { message?: string | null }) {
+  return (
+    <Show when={props.message}>
+      <div class="text-[12px] text-scarlet-400 mt-2 font-semibold">{props.message}</div>
+    </Show>
+  );
+}
+
+interface ModalFooterProps {
+  saving: boolean;
+  onCancel: () => void;
+  onSave: () => void;
+  // Truthy when editing rather than creating — drives the default save label.
+  existing?: unknown;
+  // Override the default 'Save'/'Create' label (e.g. 'Save and Confirm').
+  saveLabel?: string;
+  // Extra reason to block save beyond `saving` (e.g. a required picker is empty).
+  saveDisabled?: boolean;
+}
+
+// The Cancel + save pair every form modal passes to <Modal footer={...}>.
+export function ModalFooter(props: ModalFooterProps) {
+  return (
+    <>
+      <button class={modalBtn.secondary} onClick={props.onCancel} disabled={props.saving}>Cancel</button>
+      <button
+        class={modalBtn.primary}
+        onClick={props.onSave}
+        disabled={props.saving || !!props.saveDisabled}
+      >
+        {props.saving ? 'Saving...' : (props.saveLabel ?? (props.existing ? 'Save' : 'Create'))}
+      </button>
+    </>
+  );
 }

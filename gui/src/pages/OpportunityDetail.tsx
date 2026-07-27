@@ -6,7 +6,7 @@ import Button from '../components/Button';
 import NotesPanel from '../components/NotesPanel';
 import BackLink from '../components/BackLink';
 import { stageLabel, stageChipClass } from '../lib/stages';
-import { localDateStr } from '../utils/date';
+import { formatShortDate, localDateStr } from '../utils/date';
 
 // Vendor categories mirrored from TechnicalProfilePanel — used to flatten the
 // account's technical profile into a Design of Record prompt without empty rows.
@@ -41,13 +41,6 @@ const WHY_COLS: Array<{ key: WhyKey; title: string }> = [
   { key: 'why_now',    title: 'Why Now' },
   { key: 'why_us',     title: 'Why Us' },
 ];
-
-function formatDate(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-}
 
 export default function OpportunityDetail() {
   const params = useParams();
@@ -271,7 +264,7 @@ export default function OpportunityDetail() {
               <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
                 <div class="panel panel-accent p-4">
                   <div class="text-[10px] uppercase tracking-widest font-bold text-surf-300 mb-1">Created</div>
-                  <div class="text-base-50 text-sm">{formatDate(o().created_at)}</div>
+                  <div class="text-base-50 text-sm">{formatShortDate(o().created_at)}</div>
                 </div>
                 <div class="panel panel-accent p-4">
                   <div class="text-[10px] uppercase tracking-widest font-bold text-surf-300 mb-1">Opp Link</div>

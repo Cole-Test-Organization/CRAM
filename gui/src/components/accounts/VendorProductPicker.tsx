@@ -3,6 +3,7 @@ import { api } from '../../lib/api';
 import { vendorProductLabel, vendorIsRedundant } from '../../lib/vendorProduct';
 import { formInputClass } from '../FormField';
 import { modalBtn } from '../Modal';
+import { slugify } from '../../lib/slug';
 import type { VendorProduct } from '../../lib/types';
 
 interface VendorProductPickerProps {
@@ -16,14 +17,6 @@ interface VendorProductPickerProps {
   // Called with the new full selection (array of products).
   onChange: (next: VendorProduct[]) => void;
   placeholder?: string;
-}
-
-function slugify(s: string) {
-  return s.toLowerCase().trim()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
 }
 
 export default function VendorProductPicker(props: VendorProductPickerProps) {

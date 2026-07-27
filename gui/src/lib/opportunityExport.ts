@@ -1,4 +1,4 @@
-import { slugifyForFilename, isoToday } from './textExport';
+import { makeExportBuilder } from './textExport';
 import { stageShort } from './stages';
 
 export type ExportableOpportunity = {
@@ -50,17 +50,10 @@ export function formatOpportunity(o: ExportableOpportunity): string {
   return lines.join('\n');
 }
 
-export function formatOpportunities(opps: ExportableOpportunity[]): string {
-  return opps.map(formatOpportunity).join('\n\n---\n\n') + '\n';
-}
+const opportunities = makeExportBuilder<ExportableOpportunity>({
+  format: formatOpportunity,
+  nameOf: oppName,
+  plural: 'opportunities',
+});
 
-export function opportunitiesFilename(opps: ExportableOpportunity[]): string {
-  if (opps.length === 1) {
-    return `${isoToday()}-${slugifyForFilename(oppName(opps[0]))}.txt`;
-  }
-  return `opportunities-${isoToday()}-${opps.length}.txt`;
-}
-
-export function buildOpportunitiesExport(opps: ExportableOpportunity[]) {
-  return { text: formatOpportunities(opps), filename: opportunitiesFilename(opps) };
-}
+export const buildOpportunitiesExport = opportunities.build;

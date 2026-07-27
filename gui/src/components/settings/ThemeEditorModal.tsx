@@ -25,6 +25,7 @@ import {
   type KeyColors,
 } from '../../lib/theme';
 import { api } from '../../lib/api';
+import { slugifyWithFallback } from '../../lib/slug';
 
 const FONT_PRESETS = {
   sans:    "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
@@ -42,10 +43,6 @@ const FALLBACK_KEY_COLORS: KeyColors = {
   text:       '#1a1a1a',
   background: '#ffffff',
 };
-
-function slugify(s: string) {
-  return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'custom-theme';
-}
 
 // HTML <input type="color"> only accepts #rrggbb. Normalize 3-char shorthand
 // and tolerate empty/invalid values without erroring.
@@ -156,7 +153,7 @@ export default function ThemeEditorModal(props: {
         const updated = await api.patchTheme(props.initial.id, payload);
         savedId = updated.id;
       } else {
-        const slug = slugify(name());
+        const slug = slugifyWithFallback(name(), 'custom-theme');
         const created = await api.createTheme({ ...payload, slug });
         savedId = created.id;
       }

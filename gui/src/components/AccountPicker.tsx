@@ -2,22 +2,13 @@ import { createSignal, createResource, For, Show, createMemo } from 'solid-js';
 import { api } from '../lib/api';
 import { formInputClass, formSelectClass } from './FormField';
 import { modalBtn } from './Modal';
+import { slugify } from '../lib/slug';
 
 interface AccountPickerProps {
   value: { id: number; name: string; slug: string } | null;
   onChange: (account: { id: number; name: string; slug: string } | null) => void;
   placeholder?: string;
   excludePartner?: boolean;
-}
-
-function slugify(name: string) {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
 }
 
 export default function AccountPicker(props: AccountPickerProps) {
@@ -87,8 +78,7 @@ export default function AccountPicker(props: AccountPickerProps) {
       setNewName('');
       setNewSlug('');
     } catch (err: any) {
-      const msg = err?.message || 'Failed to create account';
-      setCreateError(msg.includes('409') ? 'An account with this slug already exists' : msg);
+      setCreateError(err?.message || 'Failed to create account');
     } finally {
       setCreating(false);
     }

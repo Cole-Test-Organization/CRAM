@@ -1,5 +1,5 @@
 import { api } from './api';
-import { slugifyForFilename, isoToday } from './textExport';
+import { makeExportBuilder } from './textExport';
 
 export type ExportableMeeting = {
   id: number;
@@ -22,23 +22,14 @@ function meetingDisplayAttendees(m: ExportableMeeting): string {
 }
 
 export function formatMeeting(m: ExportableMeeting): string {
-  const title = meetingDisplayTitle(m);
-  const date = (m.date || '').trim() || '(no date)';
-  const attendees = meetingDisplayAttendees(m);
-  const notes = (m.body || '').trim();
-
   return [
-    title,
-    `Date: ${date}`,
-    `Attendees: ${attendees}`,
+    meetingDisplayTitle(m),
+    `Date: ${(m.date || '').trim() || '(no date)'}`,
+    `Attendees: ${meetingDisplayAttendees(m)}`,
     '',
     'Notes:',
-    notes || '(no notes)',
+    (m.body || '').trim() || '(no notes)',
   ].join('\n');
-}
-
-export function formatMeetings(meetings: ExportableMeeting[]): string {
-  return meetings.map(formatMeeting).join('\n\n---\n\n') + '\n';
 }
 
 // The list endpoint omits `body`, so we re-fetch each selected meeting to get
@@ -51,18 +42,14 @@ export async function fetchFullMeetings(ids: number[]): Promise<ExportableMeetin
   return meetings.filter(Boolean);
 }
 
-export function meetingsFilename(meetings: ExportableMeeting[]): string {
-  if (meetings.length === 1) {
-    const m = meetings[0];
-    const stem = slugifyForFilename(meetingDisplayTitle(m));
-    const date = m.date || isoToday();
-    return `${date}-${stem}.txt`;
-  }
-  return `meetings-${isoToday()}-${meetings.length}.txt`;
-}
+const meetings = makeExportBuilder<ExportableMeeting>({
+  format: formatMeeting,
+  nameOf: meetingDisplayTitle,
+  plural: 'meetings',
+  dateOf: (m) => m.date,
+});
 
 // Drop-in for <ExportActions build={...}>.
 export async function buildMeetingsExport(ids: number[]) {
-  const meetings = await fetchFullMeetings(ids);
-  return { text: formatMeetings(meetings), filename: meetingsFilename(meetings) };
+  return meetings.build(await fetchFullMeetings(ids));
 }
