@@ -7,7 +7,7 @@ import {
     type ResourceAdapterContext,
 } from "./resources/index.js";
 import { GenericTerraformResourceAdapter } from "./resources/genericTerraformResourceAdapter.js";
-import { FileStateRepository, type StateRepository } from "./state/index.js";
+import type { StateRepository } from "./state/index.js";
 import {
     ConfigRepository,
     ModuleConfigRepository,
@@ -55,7 +55,10 @@ import {
 } from "./utils/paths.js";
 
 export interface ResourceBrokerOptions {
-    stateRepository?: StateRepository;
+    // Required: Postgres is the source of truth for broker state. There is no
+    // file-backed fallback — defaulting to one would silently write resource and
+    // job records to disk instead of the DB.
+    stateRepository: StateRepository;
     rootDir?: string;
     resourceAdapters?: ResourceAdapterRegistry;
     configRepository?: ConfigRepository;
@@ -70,9 +73,8 @@ export class ResourceBroker {
     private readonly config: ConfigRepository;
     private readonly secretResolver?: SecretResolver;
 
-    constructor(options: ResourceBrokerOptions = {}) {
-        this.stateRepository =
-            options.stateRepository ?? new FileStateRepository();
+    constructor(options: ResourceBrokerOptions) {
+        this.stateRepository = options.stateRepository;
         this.rootDir = options.rootDir ?? projectRoot;
         this.resourceAdapters =
             options.resourceAdapters ??

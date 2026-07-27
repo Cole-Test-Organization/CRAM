@@ -17,10 +17,7 @@ export const projectRoot = process.env.PROVISIONING_ROOT
 export const runtimeRoot = process.env.PROVISIONING_RUNTIME_ROOT
   ? path.resolve(process.env.PROVISIONING_RUNTIME_ROOT)
   : projectRoot;
-export const dataDir = path.join(runtimeRoot, "data");
 export const workDir = path.join(runtimeRoot, "work");
-export const statePath = path.join(dataDir, "state.json");
-export const jobsPath = path.join(dataDir, "jobs.json");
 
 // Terraform stacks are shipped artifacts. Default under projectRoot/terraform so
 // projectRoot-relative stack refs ("terraform/<stack>") resolve unchanged;
