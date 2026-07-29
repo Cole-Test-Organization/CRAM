@@ -200,6 +200,20 @@ npm start
 See the client README for endpoint configuration, local storage location, and
 DMG packaging commands.
 
+### iPhone and iPad client
+
+The [`mobile/`](mobile/README.md) Xcode project builds a SwiftUI iOS client
+around the same bundled, responsive GUI. Like Electron, its application shell
+launches locally and its endpoint-specific offline snapshot keeps the core CRM
+readable without DNS or server access. Ordinary offline writes remain blocked;
+focused meeting notes retain the existing device-local draft until a server
+save succeeds.
+
+The mobile app requires iOS 17+, Xcode 16+, and Node.js 22.12+ to build. It does
+not add a backend delta feed, mutation queue, or conflict resolver. The seam for
+that future cross-client backend layer is documented in
+[`docs/client-sync-architecture.md`](docs/client-sync-architecture.md).
+
 ## Testing
 
 ```bash

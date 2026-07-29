@@ -15,7 +15,10 @@ export default function Layout(props: ParentProps) {
     // Electron's pinned notes window uses the same bundled router and theme,
     // but it is intentionally a focused editor rather than a second copy of
     // the full application chrome.
-    if (location.pathname.startsWith("/desktop/meeting-notes/")) {
+    if (
+        location.pathname.startsWith("/desktop/meeting-notes/")
+        || location.pathname.startsWith("/client/meeting-notes/")
+    ) {
         return <>{props.children}</>;
     }
 

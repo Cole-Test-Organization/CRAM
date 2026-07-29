@@ -1,4 +1,9 @@
 import { createSignal } from 'solid-js';
+import {
+  isCramMobile,
+  mobileCacheBridge,
+  type MobileCachedResponse,
+} from './mobile';
 
 const API_CACHE_NAME = 'cram-api-v1';
 const LAST_SYNC_STORAGE_KEY = 'cram.offline-sync.v1';
@@ -130,6 +135,21 @@ export function isOfflineCacheableApiPath(input: string | URL): boolean {
 }
 
 async function putApiCache(request: Request, response: Response, required: boolean) {
+  const nativeCache = mobileCacheBridge();
+  if (nativeCache) {
+    try {
+      const bodyBase64 = arrayBufferToBase64(await response.arrayBuffer());
+      await nativeCache.put(request.url, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries()),
+        bodyBase64,
+      });
+    } catch (error) {
+      if (required) throw error;
+    }
+    return;
+  }
   if (typeof caches === 'undefined') {
     if (required) throw new Error('Offline storage is unavailable in this browser.');
     return;
@@ -143,6 +163,15 @@ async function putApiCache(request: Request, response: Response, required: boole
 }
 
 async function getApiCache(request: Request): Promise<Response | undefined> {
+  const nativeCache = mobileCacheBridge();
+  if (nativeCache) {
+    try {
+      const cached = await nativeCache.get(request.url);
+      return cached ? responseFromMobileCache(cached) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
   if (typeof caches === 'undefined') return undefined;
   try {
     const cache = await caches.open(API_CACHE_NAME);
@@ -150,6 +179,26 @@ async function getApiCache(request: Request): Promise<Response | undefined> {
   } catch {
     return undefined;
   }
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function responseFromMobileCache(cached: MobileCachedResponse): Response {
+  const binary = atob(cached.bodyBase64);
+  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  return new Response(bytes.buffer, {
+    status: cached.status,
+    statusText: cached.statusText,
+    headers: cached.headers,
+  });
 }
 
 function markOfflineReplay(response: Response): Response {
@@ -164,26 +213,42 @@ function markOfflineReplay(response: Response): Response {
 }
 
 async function pruneApiCache(requiredPaths: string[]) {
-  if (typeof caches === 'undefined') throw new Error('Offline storage is unavailable in this browser.');
-  const cache = await caches.open(API_CACHE_NAME);
   const origin = typeof window === 'undefined' ? 'https://cram.invalid' : window.location.origin;
   const keep = new Set(requiredPaths.map((path) => new URL(path, origin).toString()));
+  const nativeCache = mobileCacheBridge();
+  if (nativeCache) {
+    const keys = await nativeCache.keys();
+    await Promise.all(keys
+      .filter((key) => !keep.has(key))
+      .map((key) => nativeCache.delete(key)));
+    return;
+  }
+  if (typeof caches === 'undefined') throw new Error('Offline storage is unavailable in this browser.');
+  const cache = await caches.open(API_CACHE_NAME);
   const keys = await cache.keys();
   await Promise.all(keys
     .filter((request) => !keep.has(request.url))
     .map((request) => cache.delete(request)));
 }
 
+export async function hasCompleteOfflineCopy(paths: string[]): Promise<boolean> {
+  const nativeCache = mobileCacheBridge();
+  if (nativeCache) {
+    const storedKeys = new Set(await nativeCache.keys());
+    return paths.every((path) => storedKeys.has(cacheRequest(path).url));
+  }
+  if (typeof caches === 'undefined') return false;
+  const cache = await caches.open(API_CACHE_NAME);
+  const matches = await Promise.all(paths.map((path) => cache.match(cacheRequest(path))));
+  return matches.every(Boolean);
+}
+
 async function verifyStoredOfflineCopy(record: LastSyncRecord | null) {
   if (!record) return;
-  if (typeof caches !== 'undefined') {
-    try {
-      const cache = await caches.open(API_CACHE_NAME);
-      const matches = await Promise.all(record.paths.map((path) => cache.match(cacheRequest(path))));
-      if (matches.every(Boolean)) return;
-    } catch {
-      // Treat an unavailable cache as an invalid offline copy below.
-    }
+  try {
+    if (await hasCompleteOfflineCopy(record.paths)) return;
+  } catch {
+    // Treat an unavailable or incomplete cache as an invalid offline copy.
   }
   try { localStorage.removeItem(LAST_SYNC_STORAGE_KEY); } catch { /* storage may be disabled */ }
   setLastSyncAt(null);
@@ -448,7 +513,7 @@ export function initializeOfflineSupport() {
   initialized = true;
   const cacheValidation = verifyStoredOfflineCopy(initialLastSync);
 
-  if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  if (!isCramMobile() && 'serviceWorker' in navigator && import.meta.env.PROD) {
     navigator.serviceWorker.register('/sw.js').catch(() => {
       setSyncError('The offline app shell could not be installed.');
     });

@@ -44,3 +44,12 @@ e2e/.cache/
 # Electron desktop build/package artifacts
 client/dist/
 client/release/
+
+# Swift mobile build artifacts and generated shared renderer
+mobile/CRAMMobile/Resources/Web/*
+!mobile/CRAMMobile/Resources/Web/.gitkeep
+mobile/DerivedData/
+mobile/build/
+mobile/.build/
+mobile/**/xcuserdata/
+mobile/**/*.xcuserstate

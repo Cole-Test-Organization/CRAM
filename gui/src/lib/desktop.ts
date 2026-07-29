@@ -1,3 +1,8 @@
+import {
+  isCramMobile,
+  openMobileMeetingNotes,
+} from './mobile';
+
 type CramDesktopBridge = {
   isDesktop: true;
   openMeetingNotes: (meetingId: number) => Promise<{
@@ -26,4 +31,17 @@ export async function openFloatingMeetingNotes(meetingId: number) {
   const bridge = desktopBridge();
   if (!bridge) throw new Error('Floating notes are available in CRAM Desktop.');
   return bridge.openMeetingNotes(meetingId);
+}
+
+export function hasClientMeetingNotes() {
+  return isCramDesktop() || isCramMobile();
+}
+
+export function clientMeetingNotesLabel() {
+  return isCramMobile() ? 'Focus Notes' : 'Float Notes';
+}
+
+export async function openClientMeetingNotes(meetingId: number) {
+  if (isCramMobile()) return openMobileMeetingNotes(meetingId);
+  return openFloatingMeetingNotes(meetingId);
 }

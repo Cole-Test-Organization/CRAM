@@ -1,8 +1,9 @@
 name: CI
 
-# Gates every PR and every push to main. Two independent jobs run in parallel:
-#   • hermetic        — static (tsc) + frontend (vitest) + desktop unit. No DB.
+# Gates every PR and every push to main. Three independent jobs run in parallel:
+#   • hermetic        — static + frontend + desktop/mobile contract unit. No DB.
 #   • api-integration — real Fastify API against a fresh, seeded Postgres.
+#   • ios-build       — shared renderer + Swift app/test compilation on macOS.
 # See TEST-SPEC.md §6–7 for the strategy behind this.
 
 on:
@@ -17,7 +18,7 @@ concurrency:
 
 jobs:
   hermetic:
-    name: Static + frontend + desktop unit
+    name: Static + frontend + client unit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +34,31 @@ jobs:
         run: npm --prefix gui test
       - name: Desktop config + protocol tests (node:test)
         run: npm --prefix client test
+      - name: Mobile project + cross-client contract tests (node:test)
+        run: npm run test:mobile
+
+  ios-build:
+    name: iOS app + test compile
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gui/package-lock.json
+      - run: npm --prefix gui ci
+      - name: Xcode version
+        run: xcodebuild -version
+      - name: Build app and Swift tests for iOS Simulator
+        run: >-
+          xcodebuild
+          -project mobile/CRAMMobile.xcodeproj
+          -scheme CRAMMobile
+          -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath "$RUNNER_TEMP/cram-mobile-derived-data"
+          CODE_SIGNING_ALLOWED=NO
+          build-for-testing
 
   api-integration:
     name: API integration (live seeded DB)

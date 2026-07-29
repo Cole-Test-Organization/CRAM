@@ -36,6 +36,7 @@ export default function App() {
       <Route path="/meetings" component={() => <MeetingsList />} />
       <Route path="/meetings/:id" component={MeetingView} />
       <Route path="/desktop/meeting-notes/:id" component={FloatingMeetingNotes} />
+      <Route path="/client/meeting-notes/:id" component={FloatingMeetingNotes} />
       <Route path="/contacts" component={() => <ContactList />} />
       <Route path="/contacts/:id" component={ContactDetail} />
       <Route path="/events" component={EventsList} />

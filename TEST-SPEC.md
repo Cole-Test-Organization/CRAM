@@ -47,6 +47,8 @@ Two axes, often conflated: **scope** (how much is exercised) and **purpose** (e.
 | **Static** | `tsc --noEmit` | `gui/` | yes | Type errors, undefined refs. Not behavioral. (`api/` is plain JS/ESM — no `tsconfig`, not typechecked.) |
 | **Unit** | Vitest + Solid `createRoot` (no DOM) | colocated `*.test.ts` | yes | One isolated unit's logic/reactivity (e.g. the `unsavedGuard` primitive). |
 | **Component / integration (FE)** | Vitest + `@solidjs/testing-library` + **jsdom**, API **mocked** | colocated `*.test.tsx` | yes | Component behavior, reactivity, wiring. The bug-catching workhorse. |
+| **Client contract** | Node `node --test` | `client/test/`, `mobile/test/` | yes | Desktop protocol/config behavior plus Xcode-project and browser↔Swift bridge/cache-boundary drift. |
+| **iOS unit / compile** | XCTest + `xcodebuild build-for-testing` | `mobile/CRAMMobileTests/` | needs macOS/Xcode | Swift endpoint isolation, native cache/replay, and whether the app + tests compile for iOS Simulator. |
 | **Integration (BE)** | Node `node --test` + `fetch` vs a **live** API | `api/test/*.test.js` | **needs a DB** (see §6) | Real routes, validation, contracts, cross-resource rules. |
 | **E2E** | Playwright (real browser, full stack, no mocks) | `e2e/` | needs live stack + seed | Critical user journeys end-to-end. |
 | **Manual / exploratory** | `curl`, container logs, red→green flips | ad hoc | n/a | Root-causing, one-off confirmation, proving a test has teeth. A technique, not a deliverable. |
@@ -68,7 +70,7 @@ Two axes, often conflated: **scope** (how much is exercised) and **purpose** (e.
 
 ```bash
 # From the repo root (the root runner — landed in Phase 1):
-npm test          # hermetic gate: tsc + gui vitest + dependency-free client Node tests.
+npm test          # hermetic gate: tsc + gui vitest + dependency-free desktop/mobile Node tests.
                   #   ↑ also what the husky pre-push hook and CI's hermetic job run.
 npm run test:api  # API integration: brings up an ISOLATED throwaway Postgres, migrates +
                   #   seeds it, boots the API, runs api/test, tears it down. Needs Docker.
@@ -84,6 +86,7 @@ npm --prefix gui test           # frontend: vitest run (unit + component), herme
 npm --prefix gui run test:watch
 npm --prefix gui run typecheck  # tsc --noEmit
 npm --prefix client test        # Electron shell/config/protocol unit tests (Node built-ins only)
+npm run test:mobile             # Xcode project + browser/Swift contract checks (Node built-ins only)
 npm --prefix api test           # backend: node --test against an ALREADY-RUNNING API (API_URL=…)
 ```
 
@@ -99,18 +102,21 @@ in the phase log in §7 — this section is just the shape of the suite today.
 | Layer | Where | Size | Runner |
 |---|---|---|---|
 | Static | `gui/tsconfig.json`, `api/tsconfig.json` | — | `tsc --noEmit` (both packages) |
-| Unit + component | `gui/src/**/*.test.ts(x)` (colocated) | 107 tests / 25 files | `npm test` (Vitest, Solid + jsdom) |
+| Unit + component | `gui/src/**/*.test.ts(x)` (colocated) | 114 tests / 26 files | `npm test` (Vitest, Solid + jsdom) |
 | Desktop unit | `client/test/*.test.mjs` | 18 tests / 4 files | `npm test` (Node test runner) |
+| Mobile contract | `mobile/test/*.test.mjs` | 4 tests / 1 file | `npm test` (Node test runner) |
+| iOS unit / compile | `mobile/CRAMMobileTests/*.swift` | 10 tests / 5 files | Xcode / `ios-build` CI job |
 | API integration | `api/test/*.test.js` | 210 tests / 37 files | `npm run test:api` (serial, live seeded API) |
 | E2E | `e2e/tests/*.spec.ts` | 9 tests / 6 files | `npm run test:e2e` (Playwright, Chromium) |
 
 Supporting infrastructure:
 
-- **Root runner** — `test` (hermetic: tsc + gui Vitest + desktop Node tests), `test:api`, `test:all`, `test:e2e`.
+- **Root runner** — `test` (hermetic: tsc + gui Vitest + desktop/mobile Node tests), `test:api`, `test:all`, `test:e2e`.
 - **Isolated test DB** — `db-test` (tmpfs Postgres on :55433) under the `test` compose
   profile, orchestrated by `dev/scripts/test/run-{api,e2e}-tests.js` for both local and CI.
-- **CI** — `.github/workflows/ci.yml` gates every PR/push with the hermetic + api-integration
-  jobs; `.github/workflows/e2e.yml` runs E2E nightly, on manual dispatch, and on `e2e`-labeled PRs.
+- **CI** — `.github/workflows/ci.yml` gates every PR/push with hermetic,
+  api-integration, and iOS app/test compile jobs; `.github/workflows/e2e.yml`
+  runs E2E nightly, on manual dispatch, and on `e2e`-labeled PRs.
 - **Pre-push hook** — `.husky/pre-push` runs the hermetic subset.
 - **Seed tooling** — `dev/scripts/seed-dev-data.js`, `dev/scripts/clear-db.js`, and the
   `seed` compose profile. Exact seed counts are asserted in `api/test/seed-invariants.test.js`
@@ -193,6 +199,7 @@ A thin Playwright layer over the live seeded stack. Reuses the Phase 1 seed for 
 | E2E tool | **Playwright** (over Puppeteer/Cypress) | Purpose-built for testing, cross-browser, auto-waiting; free/open (Apache-2.0). |
 | E2E stack under test | **Build the GUI + serve it from the real API on one origin**, against an isolated tmpfs Postgres (the `test:api` harness shape + a `vite build`) | Hermetic, deterministic, prod-like (no Vite/proxy); reuses the Phase 1 seed and the caller-owns-DB orchestration. |
 | E2E CI cadence | **Nightly + manual dispatch + opt-in `e2e` PR label** | Honors "never gate every push" while keeping a pre-merge gate available for risky PRs; real-browser flake stays off day-to-day PRs. |
+| Native iOS gate | **Compile app + XCTest bundle on a macOS runner for every PR/push** | Linux cannot typecheck UIKit/WebKit code; the native target must be compiled where the Apple SDK exists. Runtime XCTest remains available locally/on a simulator. |
 
 ---
 

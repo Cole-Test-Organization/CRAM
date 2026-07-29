@@ -8,6 +8,7 @@ import {
 import { useParams, useSearchParams } from '@solidjs/router';
 import { api } from '../lib/api';
 import { isOffline } from '../lib/offline';
+import { isCramMobile } from '../lib/mobile';
 import {
   clearMeetingDraft,
   loadMeetingDraft,
@@ -162,7 +163,7 @@ export function FloatingMeetingNotesEditor(props: FloatingMeetingNotesEditorProp
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0">
             <div class="text-[10px] uppercase tracking-[0.18em] text-surf-300 font-bold mb-1">
-              Floating meeting notes
+              {isCramMobile() ? 'Focused meeting notes' : 'Floating meeting notes'}
             </div>
             <h1 class="font-[family-name:var(--font-display)] font-bold text-[17px] leading-tight break-words">
               {title()}
@@ -177,7 +178,7 @@ export function FloatingMeetingNotesEditor(props: FloatingMeetingNotesEditorProp
             </div>
           </div>
           <span class="border-2 border-surf-300 text-surf-300 px-2 py-1 text-[9px] uppercase tracking-widest font-bold shrink-0">
-            Always on top
+            {isCramMobile() ? 'Local draft' : 'Always on top'}
           </span>
         </div>
       </header>

@@ -159,3 +159,8 @@ npm run build
 
 `npm run pack` additionally creates an unpacked application for the current
 host platform. A signed/notarized DMG must be validated on macOS.
+
+The desktop, web, and Swift mobile clients intentionally share one future
+backend synchronization boundary. See
+[`../docs/client-sync-architecture.md`](../docs/client-sync-architecture.md);
+the backend delta/mutation protocol described there is not implemented yet.

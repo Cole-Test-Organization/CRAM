@@ -6,6 +6,7 @@ import InternalDomainsSettings from "../components/settings/InternalDomainsSetti
 import BackupSettings from "../components/settings/BackupSettings";
 import ThemePicker from "../components/settings/ThemePicker";
 import MemoryManager from "../components/settings/MemoryManager";
+import { isCramMobile, openMobileSettings } from "../lib/mobile";
 
 export default function Settings() {
     const [statusMsg, setStatusMsg] = createSignal<{
@@ -41,6 +42,25 @@ export default function Settings() {
             </Show>
 
             <div class="grid grid-cols-1 gap-6 md:grid-cols-2">
+                <Show when={isCramMobile()}>
+                    <section class="panel p-5">
+                        <h2 class="text-[15px] font-bold mb-2">Mobile app</h2>
+                        <p class="text-[12px] text-base-300 leading-relaxed mb-4">
+                            Change the CRAM server used by this device or review its endpoint-specific offline storage.
+                        </p>
+                        <button
+                            type="button"
+                            class="press press-primary press-sm"
+                            onClick={() => {
+                                void openMobileSettings().catch((error: unknown) => {
+                                    flash("err", error instanceof Error ? error.message : "Could not open mobile settings.");
+                                });
+                            }}
+                        >
+                            Open mobile settings
+                        </button>
+                    </section>
+                </Show>
                 <AgentLLMSettings />
                 <SystemPromptSettings />
                 <NewsRankingSettings />

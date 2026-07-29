@@ -3,11 +3,38 @@ import {
   apiFetch,
   buildDetailSyncPaths,
   formatLastSyncTimestamp,
+  hasCompleteOfflineCopy,
   isOfflineCacheableApiPath,
   serverReachable,
 } from './offline';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  delete (window as Window & { cramMobile?: unknown }).cramMobile;
+});
+
+function installMobileCache(overrides: {
+  get?: ReturnType<typeof vi.fn>;
+  keys?: ReturnType<typeof vi.fn>;
+  put?: ReturnType<typeof vi.fn>;
+} = {}) {
+  const cache = {
+    put: overrides.put || vi.fn(async (_key: string, _response: unknown) => undefined),
+    get: overrides.get || vi.fn(async (_key: string) => null),
+    keys: overrides.keys || vi.fn(async () => []),
+    delete: vi.fn(async () => undefined),
+  };
+  Object.defineProperty(window, 'cramMobile', {
+    configurable: true,
+    value: {
+      isMobile: true,
+      cache,
+      openMeetingNotes: vi.fn(),
+      openSettings: vi.fn(),
+    },
+  });
+  return cache;
+}
 
 describe('offline cache boundary', () => {
   it('includes core CRM reads and excludes operational or secret-bearing surfaces', () => {
@@ -105,5 +132,63 @@ describe('offline API transport', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('X-CRAM-Offline')).toBe('true');
     expect(serverReachable()).toBe(false);
+  });
+
+  it('uses the native mobile cache adapter when the Swift bridge is present', async () => {
+    const put = vi.fn(async (_key: string, _response: unknown) => undefined);
+    installMobileCache({ put });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"accounts":[]}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })));
+
+    await apiFetch('/api/accounts?sort=name');
+
+    expect(put).toHaveBeenCalledOnce();
+    expect(put.mock.calls[0][0]).toBe('http://localhost:3000/api/accounts?sort=name');
+    expect(put.mock.calls[0][1]).toMatchObject({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  });
+
+  it('reconstructs a cached mobile response after a network failure', async () => {
+    const get = vi.fn(async () => ({
+      status: 200,
+      statusText: 'ok',
+      headers: { 'Content-Type': 'application/json' },
+      bodyBase64: btoa('{"accounts":[{"id":9}]}'),
+    }));
+    installMobileCache({ get });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+
+    const response = await apiFetch('/api/accounts?sort=name', {}, { forceNetwork: true });
+
+    expect(response.headers.get('X-CRAM-Offline')).toBe('true');
+    await expect(response.json()).resolves.toEqual({ accounts: [{ id: 9 }] });
+    expect(get).toHaveBeenCalledOnce();
+  });
+
+  it('validates a persisted mobile snapshot through the native cache', async () => {
+    const keys = vi.fn(async () => [
+      'http://localhost:3000/api/accounts?sort=name',
+      'http://localhost:3000/api/meetings?limit=15',
+    ]);
+    installMobileCache({ keys });
+    vi.stubGlobal('caches', {
+      open: vi.fn(() => {
+        throw new Error('Browser CacheStorage must not be used by CRAM Mobile.');
+      }),
+    });
+
+    await expect(hasCompleteOfflineCopy([
+      '/api/accounts?sort=name',
+      '/api/meetings?limit=15',
+    ])).resolves.toBe(true);
+    await expect(hasCompleteOfflineCopy([
+      '/api/accounts?sort=name',
+      '/api/contacts',
+    ])).resolves.toBe(false);
+    expect(keys).toHaveBeenCalledTimes(2);
   });
 });

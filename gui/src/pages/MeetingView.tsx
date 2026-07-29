@@ -9,7 +9,11 @@ import BackLink from '../components/BackLink';
 import ExportActions from '../components/ExportActions';
 import { buildMeetingsExport } from '../lib/meetingExport';
 import { attendeeStatusClass, attendeeStatusLabel } from '../lib/attendeeStatus';
-import { isCramDesktop, openFloatingMeetingNotes } from '../lib/desktop';
+import {
+  clientMeetingNotesLabel,
+  hasClientMeetingNotes,
+  openClientMeetingNotes,
+} from '../lib/desktop';
 
 type EnrichmentJob = {
   jobId: string;
@@ -245,7 +249,7 @@ export default function MeetingView() {
     if (!value) return;
     setPopoutError('');
     try {
-      await openFloatingMeetingNotes(value.id);
+      await openClientMeetingNotes(value.id);
     } catch (error: any) {
       setPopoutError(error?.message || 'Could not open floating notes.');
     }
@@ -277,9 +281,9 @@ export default function MeetingView() {
                 </div>
               </div>
               <div class="flex gap-3 items-center flex-wrap">
-                <Show when={isCramDesktop()}>
+                <Show when={hasClientMeetingNotes()}>
                   <Button variant="primary" size="sm" onClick={() => void popOutNotes()}>
-                    Float Notes
+                    {clientMeetingNotesLabel()}
                   </Button>
                 </Show>
                 <ExportActions ids={() => [m().id]} build={buildMeetingsExport} />
