@@ -179,10 +179,28 @@ pointing at the same server keep separate caches and separate last-sync
 timestamps. It's ordinary browser storage, not an encrypted vault; clearing
 site data removes it.
 
+### macOS desktop client
+
+The separate [`client/`](client/README.md) package builds a minimal Electron
+application for macOS. Its UI shell is packaged locally, so it can launch
+without DNS or proxy access, and it persists the same read-only CRM snapshot as
+the website in its local Electron profile. It does not queue offline writes or
+attempt conflict reconciliation.
+
+Build and run it from `client/`:
+
+```bash
+npm install
+npm start
+```
+
+See the client README for endpoint configuration, local storage location, and
+DMG packaging commands.
+
 ## Testing
 
 ```bash
-npm test          # hermetic gate: tsc (gui) + gui vitest — fast, no DB
+npm test          # hermetic gate: tsc + gui vitest + desktop unit tests — fast, no DB
 npm run test:api  # API integration vs a fresh, isolated, seeded Postgres (needs Docker)
 npm run test:all  # both
 ```

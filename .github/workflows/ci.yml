@@ -1,7 +1,7 @@
 name: CI
 
 # Gates every PR and every push to main. Two independent jobs run in parallel:
-#   • hermetic        — static (tsc) + frontend component/unit (vitest). No DB.
+#   • hermetic        — static (tsc) + frontend (vitest) + desktop unit. No DB.
 #   • api-integration — real Fastify API against a fresh, seeded Postgres.
 # See TEST-SPEC.md §6–7 for the strategy behind this.
 
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   hermetic:
-    name: Static + frontend (tsc + vitest)
+    name: Static + frontend + desktop unit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,6 +31,8 @@ jobs:
         run: npm --prefix gui run typecheck
       - name: Component + unit tests (vitest)
         run: npm --prefix gui test
+      - name: Desktop config + protocol tests (node:test)
+        run: npm --prefix client test
 
   api-integration:
     name: API integration (live seeded DB)

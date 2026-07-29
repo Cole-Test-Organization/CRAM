@@ -86,4 +86,24 @@ describe('offline API transport', () => {
     expect(serverReachable()).toBe(false);
     expect(put).not.toHaveBeenCalled();
   });
+
+  it('marks a direct cache fallback as offline when DNS or the proxy is unreachable', async () => {
+    const cached = new Response('{"accounts":[{"id":7}]}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    vi.stubGlobal('caches', {
+      open: vi.fn().mockResolvedValue({
+        put: vi.fn(),
+        match: vi.fn().mockResolvedValue(cached),
+      }),
+    });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+
+    const response = await apiFetch('/api/accounts?sort=name', {}, { forceNetwork: true });
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('X-CRAM-Offline')).toBe('true');
+    expect(serverReachable()).toBe(false);
+  });
 });

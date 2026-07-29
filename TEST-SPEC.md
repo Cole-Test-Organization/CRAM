@@ -68,7 +68,7 @@ Two axes, often conflated: **scope** (how much is exercised) and **purpose** (e.
 
 ```bash
 # From the repo root (the root runner — landed in Phase 1):
-npm test          # hermetic gate: tsc (gui) + gui vitest. Fast, no DB.
+npm test          # hermetic gate: tsc + gui vitest + dependency-free client Node tests.
                   #   ↑ also what the husky pre-push hook and CI's hermetic job run.
 npm run test:api  # API integration: brings up an ISOLATED throwaway Postgres, migrates +
                   #   seeds it, boots the API, runs api/test, tears it down. Needs Docker.
@@ -83,6 +83,7 @@ npm run test:all  # the hermetic + API suites (NOT e2e — that's nightly/label-
 npm --prefix gui test           # frontend: vitest run (unit + component), hermetic
 npm --prefix gui run test:watch
 npm --prefix gui run typecheck  # tsc --noEmit
+npm --prefix client test        # Electron shell/config/protocol unit tests (Node built-ins only)
 npm --prefix api test           # backend: node --test against an ALREADY-RUNNING API (API_URL=…)
 ```
 
@@ -98,13 +99,14 @@ in the phase log in §7 — this section is just the shape of the suite today.
 | Layer | Where | Size | Runner |
 |---|---|---|---|
 | Static | `gui/tsconfig.json`, `api/tsconfig.json` | — | `tsc --noEmit` (both packages) |
-| Unit + component | `gui/src/**/*.test.ts(x)` (colocated) | 100 tests / 22 files | `npm test` (Vitest, Solid + jsdom) |
+| Unit + component | `gui/src/**/*.test.ts(x)` (colocated) | 101 tests / 22 files | `npm test` (Vitest, Solid + jsdom) |
+| Desktop unit | `client/test/*.test.mjs` | 12 tests / 3 files | `npm test` (Node test runner) |
 | API integration | `api/test/*.test.js` | 210 tests / 37 files | `npm run test:api` (serial, live seeded API) |
 | E2E | `e2e/tests/*.spec.ts` | 9 tests / 6 files | `npm run test:e2e` (Playwright, Chromium) |
 
 Supporting infrastructure:
 
-- **Root runner** — `test` (hermetic: tsc + gui Vitest), `test:api`, `test:all`, `test:e2e`.
+- **Root runner** — `test` (hermetic: tsc + gui Vitest + desktop Node tests), `test:api`, `test:all`, `test:e2e`.
 - **Isolated test DB** — `db-test` (tmpfs Postgres on :55433) under the `test` compose
   profile, orchestrated by `dev/scripts/test/run-{api,e2e}-tests.js` for both local and CI.
 - **CI** — `.github/workflows/ci.yml` gates every PR/push with the hermetic + api-integration

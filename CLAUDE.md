@@ -159,9 +159,9 @@ After **any** code change, run the **entire test suite except end-to-end** from 
 npm run test:all
 ```
 
-`test:all` is `npm test && npm run test:api` — the two non-e2e layers:
+`test:all` is `npm test && npm run test:api` — the non-e2e layers:
 
-- **`npm test`** — the hermetic gate: `tsc --noEmit` (gui) + gui Vitest (unit + component). Fast, no Docker. This is exactly what the `.husky/pre-push` hook runs.
+- **`npm test`** — the hermetic gate: `tsc --noEmit` (gui + api) + gui Vitest (unit + component) + the dependency-free Node tests for `client/`. Fast, no Docker. This is exactly what the `.husky/pre-push` hook runs.
 - **`npm run test:api`** — the backend integration suite: spins up an **isolated throwaway Postgres** (the `db-test` tmpfs container on :55433 — never your dev/prod data), then migrates → seeds → boots the API → runs `api/test` → tears it down. **Needs Docker.**
 
 This is deliberately **stricter than the pre-push hook** (which runs only the hermetic subset to stay fast on push): local work also runs the API suite, because that's where backend contract/validation regressions live.

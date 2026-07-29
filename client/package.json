@@ -1,0 +1,84 @@
+{
+  "name": "cram-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal macOS Electron client for CRAM with durable offline reads.",
+  "author": "CRAM",
+  "main": "src/main.mjs",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "npm run build:renderer",
+    "build:renderer": "npm --prefix ../gui run build -- --outDir ../client/dist/renderer",
+    "start": "npm run build:renderer && electron .",
+    "test": "node --test",
+    "check": "node --check src/main.mjs && node --check src/config.mjs && node --check src/protocol.mjs && npm test",
+    "pack": "npm run build:renderer && electron-builder --dir",
+    "dist:mac": "npm run build:renderer && electron-builder --mac dmg zip",
+    "dist:mac:arm64": "npm run build:renderer && electron-builder --mac dmg zip --arm64",
+    "dist:mac:x64": "npm run build:renderer && electron-builder --mac dmg zip --x64"
+  },
+  "devDependencies": {
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.justcole.cram.desktop",
+    "productName": "CRAM Desktop",
+    "afterPack": "scripts/harden-macos-plist.cjs",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "dist/renderer/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.business",
+      "minimumSystemVersion": "12.0.0",
+      "icon": "../gui/public/icon-512.png",
+      "extendInfo": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true,
+          "NSExceptionDomains": {
+            "127.0.0.1": {
+              "NSIncludesSubdomains": false,
+              "NSTemporaryExceptionAllowsInsecureHTTPLoads": true
+            },
+            "localhost": {
+              "NSIncludesSubdomains": false,
+              "NSTemporaryExceptionAllowsInsecureHTTPLoads": true
+            }
+          }
+        }
+      },
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "dmg": {
+      "title": "CRAM Desktop ${version}",
+      "contents": [
+        {
+          "x": 140,
+          "y": 180,
+          "type": "file"
+        },
+        {
+          "x": 400,
+          "y": 180,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "artifactName": "${productName}-${version}-${arch}.${ext}"
+  }
+}

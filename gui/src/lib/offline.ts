@@ -152,6 +152,17 @@ async function getApiCache(request: Request): Promise<Response | undefined> {
   }
 }
 
+function markOfflineReplay(response: Response): Response {
+  if (response.headers.get('X-CRAM-Offline') === 'true') return response;
+  const headers = new Headers(response.headers);
+  headers.set('X-CRAM-Offline', 'true');
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 async function pruneApiCache(requiredPaths: string[]) {
   if (typeof caches === 'undefined') throw new Error('Offline storage is unavailable in this browser.');
   const cache = await caches.open(API_CACHE_NAME);
@@ -208,7 +219,7 @@ export async function apiFetch(
     const cached = await getApiCache(request!);
     if (cached) {
       setServerReachable(false);
-      return cached;
+      return markOfflineReplay(cached);
     }
     throw new OfflineDataUnavailableError(new URL(request!.url).pathname + new URL(request!.url).search);
   }
@@ -227,7 +238,7 @@ export async function apiFetch(
     }
     if (cacheable) {
       const cached = await getApiCache(request!);
-      if (cached) return cached;
+      if (cached) return markOfflineReplay(cached);
       throw new OfflineDataUnavailableError(new URL(request!.url).pathname + new URL(request!.url).search);
     }
     if (method !== 'GET') showNotice('The server could not be reached. No changes were saved.');
