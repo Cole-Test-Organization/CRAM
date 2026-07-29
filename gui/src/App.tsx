@@ -19,6 +19,7 @@ import HomelabList from './pages/HomelabList';
 import HomelabDetail from './pages/HomelabDetail';
 import BrokerSecrets from './pages/BrokerSecrets';
 import BrokerProxmox from './pages/BrokerProxmox';
+import FloatingMeetingNotes from './pages/FloatingMeetingNotes';
 
 function LegacyHomelabDetailRedirect() {
   const params = useParams<{ id: string }>();
@@ -34,6 +35,7 @@ export default function App() {
       <Route path="/accounts/:slug" component={AccountDetail} />
       <Route path="/meetings" component={() => <MeetingsList />} />
       <Route path="/meetings/:id" component={MeetingView} />
+      <Route path="/desktop/meeting-notes/:id" component={FloatingMeetingNotes} />
       <Route path="/contacts" component={() => <ContactList />} />
       <Route path="/contacts/:id" component={ContactDetail} />
       <Route path="/events" component={EventsList} />

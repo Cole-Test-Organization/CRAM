@@ -41,7 +41,31 @@ test('creates a private first-run config and reads it back', async (t) => {
 
   assert.equal(first.serverUrl, 'https://first.test');
   assert.deepEqual(second, first);
-  assert.deepEqual(persisted, { serverUrl: 'https://first.test' });
+  assert.deepEqual(persisted, {
+    serverUrl: 'https://first.test',
+    autoOpenMeetingNotes: true,
+    launchAtLogin: true,
+  });
+});
+
+test('defaults legacy configs to automatic notes and honors explicit opt-outs', async (t) => {
+  const userDataPath = await mkdtemp(path.join(os.tmpdir(), 'cram-client-settings-'));
+  t.after(() => rm(userDataPath, { recursive: true, force: true }));
+  const configPath = path.join(userDataPath, CONFIG_FILENAME);
+
+  await writeFile(configPath, JSON.stringify({ serverUrl: 'https://legacy.test' }));
+  const legacy = await loadOrCreateConfig(userDataPath);
+  assert.equal(legacy.autoOpenMeetingNotes, true);
+  assert.equal(legacy.launchAtLogin, true);
+
+  await writeFile(configPath, JSON.stringify({
+    serverUrl: 'https://configured.test',
+    autoOpenMeetingNotes: false,
+    launchAtLogin: false,
+  }));
+  const configured = await loadOrCreateConfig(userDataPath);
+  assert.equal(configured.autoOpenMeetingNotes, false);
+  assert.equal(configured.launchAtLogin, false);
 });
 
 test('uses command line, environment, then config precedence', async (t) => {

@@ -4,6 +4,8 @@ import path from 'node:path';
 
 export const DEFAULT_SERVER_URL = 'https://crm.home.justcole.com';
 export const CONFIG_FILENAME = 'config.json';
+export const DEFAULT_AUTO_OPEN_MEETING_NOTES = true;
+export const DEFAULT_LAUNCH_AT_LOGIN = true;
 
 export function normalizeServerUrl(value) {
   if (typeof value !== 'string' || !value.trim()) {
@@ -55,9 +57,17 @@ export function serverStorageKey(serverUrl) {
 async function writeConfigAtomically(configPath, serverUrl) {
   await mkdir(path.dirname(configPath), { recursive: true });
   const temporaryPath = `${configPath}.${randomUUID()}.tmp`;
-  const content = `${JSON.stringify({ serverUrl }, null, 2)}\n`;
+  const content = `${JSON.stringify({
+    serverUrl,
+    autoOpenMeetingNotes: DEFAULT_AUTO_OPEN_MEETING_NOTES,
+    launchAtLogin: DEFAULT_LAUNCH_AT_LOGIN,
+  }, null, 2)}\n`;
   await writeFile(temporaryPath, content, { encoding: 'utf8', mode: 0o600 });
   await rename(temporaryPath, configPath);
+}
+
+function optionalBoolean(value, fallback) {
+  return typeof value === 'boolean' ? value : fallback;
 }
 
 export async function loadOrCreateConfig(userDataPath, defaultServerUrl = DEFAULT_SERVER_URL) {
@@ -69,6 +79,11 @@ export async function loadOrCreateConfig(userDataPath, defaultServerUrl = DEFAUL
     return {
       configPath,
       serverUrl: normalizeServerUrl(parsed?.serverUrl),
+      autoOpenMeetingNotes: optionalBoolean(
+        parsed?.autoOpenMeetingNotes,
+        DEFAULT_AUTO_OPEN_MEETING_NOTES,
+      ),
+      launchAtLogin: optionalBoolean(parsed?.launchAtLogin, DEFAULT_LAUNCH_AT_LOGIN),
     };
   } catch (error) {
     if (error?.code !== 'ENOENT') {
@@ -78,7 +93,12 @@ export async function loadOrCreateConfig(userDataPath, defaultServerUrl = DEFAUL
 
   const serverUrl = normalizeServerUrl(defaultServerUrl);
   await writeConfigAtomically(configPath, serverUrl);
-  return { configPath, serverUrl };
+  return {
+    configPath,
+    serverUrl,
+    autoOpenMeetingNotes: DEFAULT_AUTO_OPEN_MEETING_NOTES,
+    launchAtLogin: DEFAULT_LAUNCH_AT_LOGIN,
+  };
 }
 
 export async function resolveServerConfig({
@@ -100,5 +120,7 @@ export async function resolveServerConfig({
     configPath: stored.configPath,
     serverUrl: normalizeServerUrl(selected),
     source: commandLineUrl ? 'command-line' : environmentUrl ? 'environment' : 'config',
+    autoOpenMeetingNotes: stored.autoOpenMeetingNotes,
+    launchAtLogin: stored.launchAtLogin,
   };
 }

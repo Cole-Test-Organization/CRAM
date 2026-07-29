@@ -12,6 +12,13 @@ export default function Layout(props: ParentProps) {
     const location = useLocation();
     const [drawerOpen, setDrawerOpen] = createSignal(false);
 
+    // Electron's pinned notes window uses the same bundled router and theme,
+    // but it is intentionally a focused editor rather than a second copy of
+    // the full application chrome.
+    if (location.pathname.startsWith("/desktop/meeting-notes/")) {
+        return <>{props.children}</>;
+    }
+
     // Track in-app navigation so the per-page "← Back" links can return the
     // user to where they actually came from instead of a fixed list page.
     useNavHistory();

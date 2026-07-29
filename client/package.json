@@ -14,7 +14,7 @@
     "build:renderer": "npm --prefix ../gui run build -- --outDir ../client/dist/renderer",
     "start": "npm run build:renderer && electron .",
     "test": "node --test",
-    "check": "node --check src/main.mjs && node --check src/config.mjs && node --check src/protocol.mjs && npm test",
+    "check": "node --check src/main.mjs && node --check src/config.mjs && node --check src/protocol.mjs && node --check src/meeting-scheduler.mjs && node --check src/preload.cjs && npm test",
     "pack": "npm run build:renderer && electron-builder --dir",
     "dist:mac": "npm run build:renderer && electron-builder --mac dmg zip",
     "dist:mac:arm64": "npm run build:renderer && electron-builder --mac dmg zip --arm64",

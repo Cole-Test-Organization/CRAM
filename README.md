@@ -184,8 +184,11 @@ site data removes it.
 The separate [`client/`](client/README.md) package builds a minimal Electron
 application for macOS. Its UI shell is packaged locally, so it can launch
 without DNS or proxy access, and it persists the same read-only CRM snapshot as
-the website in its local Electron profile. It does not queue offline writes or
-attempt conflict reconciliation.
+the website in its local Electron profile. Meeting pages also have a **Float
+Notes** action: the compact editor stays above normal windows and opens
+automatically at calendar meeting start. Its keystrokes are protected by a
+device-local draft; general offline writes and automatic conflict reconciliation
+remain out of scope.
 
 Build and run it from `client/`:
 

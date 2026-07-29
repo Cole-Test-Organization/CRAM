@@ -9,6 +9,7 @@ import BackLink from '../components/BackLink';
 import ExportActions from '../components/ExportActions';
 import { buildMeetingsExport } from '../lib/meetingExport';
 import { attendeeStatusClass, attendeeStatusLabel } from '../lib/attendeeStatus';
+import { isCramDesktop, openFloatingMeetingNotes } from '../lib/desktop';
 
 type EnrichmentJob = {
   jobId: string;
@@ -71,6 +72,17 @@ export default function MeetingView() {
   const navigate = useNavigate();
   const [meeting, { refetch }] = createResource(() => Number(params.id), (id) => api.getMeeting(id));
   const [editOpen, setEditOpen] = createSignal(false);
+  const [popoutError, setPopoutError] = createSignal('');
+
+  createEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return;
+    const meetingId = Number(params.id);
+    const channel = new BroadcastChannel('cram-meeting-notes');
+    channel.onmessage = (event) => {
+      if (event.data?.meetingId === meetingId) void refetch();
+    };
+    onCleanup(() => channel.close());
+  });
 
   // Meeting-review panel state. `meetings.needs_review` now means the meeting
   // itself needs placement/match review, and `review_reason` explains why.
@@ -228,6 +240,17 @@ export default function MeetingView() {
     navigate(m.internal || !m.account_slug ? '/meetings' : `/accounts/${m.account_slug}`);
   };
 
+  const popOutNotes = async () => {
+    const value = meeting();
+    if (!value) return;
+    setPopoutError('');
+    try {
+      await openFloatingMeetingNotes(value.id);
+    } catch (error: any) {
+      setPopoutError(error?.message || 'Could not open floating notes.');
+    }
+  };
+
   return (
     <div>
       <Show when={meeting()} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
@@ -254,12 +277,20 @@ export default function MeetingView() {
                 </div>
               </div>
               <div class="flex gap-3 items-center flex-wrap">
+                <Show when={isCramDesktop()}>
+                  <Button variant="primary" size="sm" onClick={() => void popOutNotes()}>
+                    Float Notes
+                  </Button>
+                </Show>
                 <ExportActions ids={() => [m().id]} build={buildMeetingsExport} />
                 <Button variant="ghost" size="sm" onClick={() => { setMoveOpen((v) => !v); setMoveError(''); }}>Move</Button>
                 <Button variant="ghost" size="sm" onClick={() => setEditOpen(true)}>Edit</Button>
                 <Button variant="danger" size="sm" onClick={deleteMeeting}>Delete</Button>
               </div>
             </div>
+            <Show when={popoutError()}>
+              <div class="text-[11px] text-scarlet-400 mb-4 font-semibold">{popoutError()}</div>
+            </Show>
 
             <Show when={m().account_id && m().account_needs_review}>
               <div class="panel p-5 mb-4 border-2 border-amber-300 bg-amber-300/5">

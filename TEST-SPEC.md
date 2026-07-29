@@ -2,7 +2,7 @@
 
 Testing strategy and roadmap for the SE Operating System. **Living document** — update it as phases land and decisions change.
 
-_Last updated: 2026-06-03._
+_Last updated: 2026-07-29._
 
 ---
 
@@ -99,8 +99,8 @@ in the phase log in §7 — this section is just the shape of the suite today.
 | Layer | Where | Size | Runner |
 |---|---|---|---|
 | Static | `gui/tsconfig.json`, `api/tsconfig.json` | — | `tsc --noEmit` (both packages) |
-| Unit + component | `gui/src/**/*.test.ts(x)` (colocated) | 101 tests / 22 files | `npm test` (Vitest, Solid + jsdom) |
-| Desktop unit | `client/test/*.test.mjs` | 12 tests / 3 files | `npm test` (Node test runner) |
+| Unit + component | `gui/src/**/*.test.ts(x)` (colocated) | 107 tests / 25 files | `npm test` (Vitest, Solid + jsdom) |
+| Desktop unit | `client/test/*.test.mjs` | 18 tests / 4 files | `npm test` (Node test runner) |
 | API integration | `api/test/*.test.js` | 210 tests / 37 files | `npm run test:api` (serial, live seeded API) |
 | E2E | `e2e/tests/*.spec.ts` | 9 tests / 6 files | `npm run test:e2e` (Playwright, Chromium) |
 
