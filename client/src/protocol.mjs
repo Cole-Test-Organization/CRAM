@@ -4,6 +4,7 @@ import path from 'node:path';
 export const APP_SCHEME = 'cram';
 export const APP_HOST = 'app';
 export const APP_URL = `${APP_SCHEME}://${APP_HOST}/`;
+export const DEFAULT_API_TIMEOUT_MS = 15_000;
 
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -51,6 +52,23 @@ const FORWARDED_HEADER_BLOCKLIST = [
 
 function isApiPath(pathname) {
   return pathname === '/api' || pathname.startsWith('/api/');
+}
+
+export function requestPathForDiagnostics(requestUrl) {
+  const url = new URL(requestUrl);
+  const queryKeys = [...new Set(url.searchParams.keys())].sort();
+  const query = queryKeys.length
+    ? `?${queryKeys.map((key) => `${encodeURIComponent(key)}=…`).join('&')}`
+    : '';
+  return `${url.pathname}${query}`;
+}
+
+function emitDiagnostic(onDiagnostic, level, event, details) {
+  try {
+    onDiagnostic?.(level, event, details);
+  } catch {
+    // Diagnostics must never break the client request path.
+  }
 }
 
 export function buildUpstreamUrl(serverUrl, requestUrl) {
@@ -139,21 +157,76 @@ async function staticResponse(request, rendererRoot) {
   return new Response(body, { status: 200, headers: securityHeaders(filePath) });
 }
 
-async function proxyApiRequest(request, serverUrl, fetchUpstream) {
+async function proxyApiRequest(
+  request,
+  serverUrl,
+  fetchUpstream,
+  onDiagnostic,
+  apiTimeoutMs,
+) {
   const method = request.method.toUpperCase();
-  return fetchUpstream(buildUpstreamUrl(serverUrl, request.url), {
-    method,
-    headers: forwardedHeaders(request.headers),
-    body: method === 'GET' || method === 'HEAD' ? undefined : request.body,
-    credentials: 'include',
-    redirect: 'follow',
+  const path = requestPathForDiagnostics(request.url);
+  const controller = new AbortController();
+  let timeout;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      const error = new Error(`CRAM API request timed out after ${apiTimeoutMs}ms.`);
+      error.name = 'APIProxyTimeoutError';
+      error.code = 'CRAM_API_TIMEOUT';
+      controller.abort(error);
+      reject(error);
+    }, apiTimeoutMs);
   });
+  const startedAt = Date.now();
+
+  try {
+    const response = await Promise.race([
+      fetchUpstream(buildUpstreamUrl(serverUrl, request.url), {
+        method,
+        headers: forwardedHeaders(request.headers),
+        body: method === 'GET' || method === 'HEAD' ? undefined : request.body,
+        credentials: 'include',
+        redirect: 'follow',
+        signal: controller.signal,
+      }),
+      timeoutPromise,
+    ]);
+    const durationMs = Date.now() - startedAt;
+    if (response.status >= 400 || durationMs >= 5_000) {
+      emitDiagnostic(
+        onDiagnostic,
+        response.status >= 500 ? 'error' : 'warn',
+        'protocol.api.response',
+        { method, path, status: response.status, durationMs },
+      );
+    }
+    return response;
+  } catch (error) {
+    emitDiagnostic(onDiagnostic, 'error', 'protocol.api.failed', {
+      method,
+      path,
+      durationMs: Date.now() - startedAt,
+      error,
+    });
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
-export function createProtocolHandler({ rendererRoot, serverUrl, fetchUpstream }) {
+export function createProtocolHandler({
+  rendererRoot,
+  serverUrl,
+  fetchUpstream,
+  onDiagnostic,
+  apiTimeoutMs = DEFAULT_API_TIMEOUT_MS,
+}) {
   if (!rendererRoot) throw new Error('rendererRoot is required.');
   if (!serverUrl) throw new Error('serverUrl is required.');
   if (typeof fetchUpstream !== 'function') throw new Error('fetchUpstream is required.');
+  if (!Number.isFinite(apiTimeoutMs) || apiTimeoutMs <= 0) {
+    throw new Error('apiTimeoutMs must be a positive number.');
+  }
 
   return async (request) => {
     const url = new URL(request.url);
@@ -161,8 +234,22 @@ export function createProtocolHandler({ rendererRoot, serverUrl, fetchUpstream }
       return new Response('Not found', { status: 404 });
     }
     if (isApiPath(url.pathname)) {
-      return proxyApiRequest(request, serverUrl, fetchUpstream);
+      return proxyApiRequest(
+        request,
+        serverUrl,
+        fetchUpstream,
+        onDiagnostic,
+        apiTimeoutMs,
+      );
     }
-    return staticResponse(request, rendererRoot);
+    const response = await staticResponse(request, rendererRoot);
+    if (response.status >= 400) {
+      emitDiagnostic(onDiagnostic, 'error', 'protocol.renderer.response', {
+        method: request.method,
+        path: requestPathForDiagnostics(request.url),
+        status: response.status,
+      });
+    }
+    return response;
   };
 }

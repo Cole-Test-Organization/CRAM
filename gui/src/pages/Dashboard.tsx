@@ -5,24 +5,91 @@ import { debounce } from '../lib/editing';
 import PressCard from '../components/dashboard/PressCard';
 import Button from '../components/Button';
 
+function errorText(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  return 'The CRAM server did not return a response.';
+}
+
+type ResourceState<T> = {
+  data: T | null;
+  error: Error | null;
+};
+
+async function loadResource<T>(operation: () => Promise<T>): Promise<ResourceState<T>> {
+  try {
+    return { data: await operation(), error: null };
+  } catch (error) {
+    return {
+      data: null,
+      error: error instanceof Error ? error : new Error(String(error)),
+    };
+  }
+}
+
+function ResourceFallback(props: { error: unknown; label: string }) {
+  return (
+    <Show
+      when={props.error}
+      fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}
+    >
+      {(error) => (
+        <div class="p-6 text-center" role="alert">
+          <div class="text-red-400 text-sm font-bold">Could not load {props.label}.</div>
+          <div class="text-base-300 text-[12px] mt-2">{errorText(error())}</div>
+        </div>
+      )}
+    </Show>
+  );
+}
+
 export default function Dashboard() {
-  const [health] = createResource(() => api.health());
-  const [recentMeetings] = createResource(() => api.getAllMeetings({ limit: 15 }));
-  const [accounts] = createResource(() => api.getAccounts({ exclude_status: 'partner', sort: 'last_contact', limit: 10 }));
-  const [partners] = createResource(() => api.getAccounts({ status: 'partner', sort: 'name', limit: 10 }));
+  const [healthState] = createResource(() => loadResource(() => api.health()));
+  const [recentMeetingsState] = createResource(() =>
+    loadResource(() => api.getAllMeetings({ limit: 15 })));
+  const [accountsState] = createResource(() =>
+    loadResource(() => api.getAccounts({
+      exclude_status: 'partner',
+      sort: 'last_contact',
+      limit: 10,
+    })));
+  const [partnersState] = createResource(() =>
+    loadResource(() => api.getAccounts({ status: 'partner', sort: 'name', limit: 10 })));
+  const health = () => healthState()?.data;
+  const recentMeetings = () => recentMeetingsState()?.data;
+  const accounts = () => accountsState()?.data;
+  const partners = () => partnersState()?.data;
 
   const [query, setQuery] = createSignal('');
-  const [searchResults] = createResource(
+  const [searchState] = createResource(
     query,
-    (q) => (q && q.length >= 2) ? api.search(q, 'all', 20) : null
+    (q) => (q && q.length >= 2)
+      ? loadResource(() => api.search(q, 'all', 20))
+      : { data: null, error: null },
   );
+  const searchResults = () => searchState()?.data;
   const debouncedSetQuery = debounce((q: string) => setQuery(q), 300);
+  const initialLoadError = () =>
+    healthState()?.error
+    || recentMeetingsState()?.error
+    || accountsState()?.error
+    || partnersState()?.error;
 
   return (
     <div>
       <div class="flex justify-between items-center mb-6">
         <h1 class="text-[26px] font-bold font-[family-name:var(--font-display)]">Dashboard</h1>
       </div>
+
+      <Show when={initialLoadError()}>
+        {(error) => (
+          <section class="panel border-l-4 border-red-500 p-4 mb-6" role="alert">
+            <div class="text-red-400 text-sm font-bold">CRAM could not reach its data service.</div>
+            <div class="text-base-200 text-[12px] mt-1">
+              {errorText(error())} Check the sync indicator, network connection, and configured server.
+            </div>
+          </section>
+        )}
+      </Show>
 
       {/* Search */}
       <div class="relative mb-7">
@@ -129,7 +196,15 @@ export default function Dashboard() {
           <Button href="/meetings" variant="ghost" size="sm">View all</Button>
         </div>
         <div class="panel panel-accent">
-          <Show when={recentMeetings()} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
+          <Show
+            when={recentMeetings()}
+            fallback={(
+              <ResourceFallback
+                error={recentMeetingsState()?.error}
+                label="recent meetings"
+              />
+            )}
+          >
             <For each={recentMeetings()} fallback={<div class="text-base-300 text-center p-10 text-sm">No meetings yet</div>}>
               {(m: any) => (
                 <A href={`/meetings/${m.id}`} class="press-row gap-4 flex-wrap border-b border-base-700 last:border-b-0">
@@ -155,7 +230,10 @@ export default function Dashboard() {
           <Button href="/accounts" variant="ghost" size="sm">View all</Button>
         </div>
         <div class="panel panel-accent">
-          <Show when={accounts()} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
+          <Show
+            when={accounts()}
+            fallback={<ResourceFallback error={accountsState()?.error} label="accounts" />}
+          >
             <For each={accounts()!.accounts} fallback={<div class="text-base-300 text-center p-10 text-sm">No accounts yet</div>}>
               {(acct) => (
                 <A href={`/accounts/${acct.slug}`} class="press-row gap-4 flex-wrap border-b border-base-700 last:border-b-0">
@@ -175,7 +253,10 @@ export default function Dashboard() {
           <Button href="/partners" variant="ghost" size="sm">View all</Button>
         </div>
         <div class="panel panel-accent">
-          <Show when={partners()} fallback={<div class="text-base-300 p-10 text-center">Loading...</div>}>
+          <Show
+            when={partners()}
+            fallback={<ResourceFallback error={partnersState()?.error} label="partners" />}
+          >
             <For each={partners()!.accounts} fallback={<div class="text-base-300 text-center p-10 text-sm">No partners yet</div>}>
               {(acct) => (
                 <A href={`/accounts/${acct.slug}`} class="press-row gap-4 flex-wrap border-b border-base-700 last:border-b-0">

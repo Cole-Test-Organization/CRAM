@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -12,6 +13,7 @@ import {
   shell,
 } from 'electron';
 import { resolveServerConfig, serverStorageKey } from './config.mjs';
+import { createClientLogger, diagnosticError } from './logger.mjs';
 import { createMeetingScheduler } from './meeting-scheduler.mjs';
 import {
   APP_HOST,
@@ -22,6 +24,7 @@ import {
 } from './protocol.mjs';
 
 app.setName('CRAM Desktop');
+app.setAppLogsPath();
 app.enableSandbox();
 
 protocol.registerSchemesAsPrivileged([{
@@ -45,7 +48,46 @@ let desktopSession = null;
 let serverConfig = null;
 let desktopPartition = null;
 let meetingScheduler = null;
+let clientLogger = null;
 const meetingNotesWindows = new Map();
+const earlyDiagnostics = [];
+
+function recordDiagnostic(level, event, details = {}) {
+  const selectedLevel = ['debug', 'info', 'warn', 'error'].includes(level) ? level : 'info';
+  if (clientLogger) {
+    clientLogger[selectedLevel](event, details);
+    return;
+  }
+  earlyDiagnostics.push({ level: selectedLevel, event, details });
+}
+
+function initializeDiagnostics() {
+  clientLogger = createClientLogger({ directory: app.getPath('logs') });
+  for (const entry of earlyDiagnostics.splice(0)) {
+    clientLogger[entry.level](entry.event, entry.details);
+  }
+  clientLogger.info('app.start', {
+    appVersion: app.getVersion(),
+    electronVersion: process.versions.electron,
+    nodeVersion: process.versions.node,
+    packaged: app.isPackaged,
+    platform: process.platform,
+    architecture: process.arch,
+    userDataPath: app.getPath('userData'),
+  });
+}
+
+process.on('uncaughtExceptionMonitor', (error, origin) => {
+  recordDiagnostic('error', 'process.uncaught-exception', {
+    origin,
+    error: diagnosticError(error),
+  });
+});
+process.on('unhandledRejection', (reason) => {
+  recordDiagnostic('error', 'process.unhandled-rejection', {
+    error: diagnosticError(reason),
+  });
+});
 
 function isAppUrl(value) {
   try {
@@ -75,6 +117,12 @@ function installPermissionBoundary(targetSession) {
     const requestingUrl = details?.requestingUrl || webContents?.getURL() || '';
     callback(isClipboardWrite(permission, requestingUrl));
   });
+}
+
+function revealDiagnosticLog() {
+  if (!clientLogger) return;
+  clientLogger.info('log.reveal-requested');
+  shell.showItemInFolder(clientLogger.filePath);
 }
 
 function installMenu(config) {
@@ -115,6 +163,10 @@ function installMenu(config) {
         {
           label: 'Open Local Data Folder',
           click: () => void shell.openPath(app.getPath('userData')),
+        },
+        {
+          label: 'Show Diagnostic Log',
+          click: revealDiagnosticLog,
         },
         { type: 'separator' },
         process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' },
@@ -180,6 +232,156 @@ function installWindowNavigationBoundary(window) {
   });
 }
 
+function diagnosticLocation(value) {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch {
+    return String(value || '');
+  }
+}
+
+function consoleDiagnostic(args) {
+  const modern = args.find((value) =>
+    value
+    && typeof value === 'object'
+    && typeof value.message === 'string'
+    && typeof value.level === 'string');
+  if (modern) {
+    return {
+      level: modern.level,
+      message: modern.message,
+      lineNumber: modern.lineNumber,
+      source: diagnosticLocation(modern.sourceId),
+    };
+  }
+  const [, numericLevel, message, lineNumber, sourceId] = args;
+  const levels = ['debug', 'info', 'warning', 'error'];
+  return {
+    level: levels[numericLevel] || 'info',
+    message: String(message || ''),
+    lineNumber,
+    source: diagnosticLocation(sourceId),
+  };
+}
+
+function showLoadFailure(window, label, details) {
+  if (window.isDestroyed()) return;
+  window.show();
+  const logPath = clientLogger?.filePath || app.getPath('logs');
+  void dialog.showMessageBox(window, {
+    type: 'error',
+    title: 'CRAM Desktop',
+    message: `${label} could not load.`,
+    detail: `${details}\n\nDiagnostic log:\n${logPath}`,
+    buttons: ['Show Diagnostic Log', 'Close'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  }).then(({ response }) => {
+    if (response === 0) revealDiagnosticLog();
+  });
+}
+
+function installWindowDiagnostics(window, { label, targetUrl }) {
+  const target = diagnosticLocation(targetUrl);
+  let loadFailureReported = false;
+  let unresponsiveReported = false;
+  const startupTimer = setTimeout(() => {
+    if (window.isDestroyed() || !window.webContents.isLoadingMainFrame()) return;
+    const details = 'The local application shell did not finish loading within 15 seconds.';
+    recordDiagnostic('error', 'window.load-timeout', { label, target, timeoutMs: 15_000 });
+    if (!loadFailureReported) {
+      loadFailureReported = true;
+      showLoadFailure(window, label, details);
+    }
+  }, 15_000);
+
+  window.webContents.on('dom-ready', () => {
+    clearTimeout(startupTimer);
+    recordDiagnostic('info', 'window.dom-ready', { label, target });
+  });
+  window.webContents.on('did-finish-load', () => {
+    clearTimeout(startupTimer);
+    recordDiagnostic('info', 'window.load-finished', { label, target });
+  });
+  window.webContents.on(
+    'did-fail-load',
+    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      const failedTarget = diagnosticLocation(validatedURL);
+      recordDiagnostic(isMainFrame ? 'error' : 'warn', 'window.load-failed', {
+        label,
+        target: failedTarget,
+        errorCode,
+        errorDescription,
+        isMainFrame,
+      });
+      if (isMainFrame && errorCode !== -3 && !loadFailureReported) {
+        loadFailureReported = true;
+        clearTimeout(startupTimer);
+        showLoadFailure(window, label, `${errorDescription} (${errorCode})`);
+      }
+    },
+  );
+  window.webContents.on('preload-error', (_event, failedPreloadPath, error) => {
+    recordDiagnostic('error', 'window.preload-failed', {
+      label,
+      preloadPath: failedPreloadPath,
+      error: diagnosticError(error),
+    });
+  });
+  window.webContents.on('console-message', (...args) => {
+    const message = consoleDiagnostic(args);
+    if (message.level !== 'warning' && message.level !== 'error') return;
+    recordDiagnostic(message.level === 'error' ? 'error' : 'warn', 'renderer.console', {
+      label,
+      ...message,
+    });
+  });
+  window.webContents.on('render-process-gone', (_event, details) => {
+    recordDiagnostic('error', 'window.renderer-gone', { label, ...details });
+    showLoadFailure(window, label, `The renderer process exited: ${details.reason}.`);
+  });
+  window.webContents.on('unresponsive', () => {
+    recordDiagnostic('error', 'window.unresponsive', { label, target });
+    if (unresponsiveReported || window.isDestroyed()) return;
+    unresponsiveReported = true;
+    void dialog.showMessageBox(window, {
+      type: 'warning',
+      title: 'CRAM Desktop',
+      message: `${label} is not responding.`,
+      detail: `You can reload it or inspect the diagnostic log at:\n${clientLogger?.filePath || app.getPath('logs')}`,
+      buttons: ['Reload', 'Show Diagnostic Log', 'Wait'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    }).then(({ response }) => {
+      if (response === 0 && !window.isDestroyed()) window.reload();
+      if (response === 1) revealDiagnosticLog();
+    });
+  });
+  window.webContents.on('responsive', () => {
+    unresponsiveReported = false;
+    recordDiagnostic('info', 'window.responsive', { label, target });
+  });
+  window.webContents.once('destroyed', () => clearTimeout(startupTimer));
+}
+
+function loadWindow(window, targetUrl, label) {
+  installWindowDiagnostics(window, { label, targetUrl });
+  recordDiagnostic('info', 'window.load-started', {
+    label,
+    target: diagnosticLocation(targetUrl),
+  });
+  void window.loadURL(targetUrl).catch((error) => {
+    recordDiagnostic('error', 'window.load-rejected', {
+      label,
+      target: diagnosticLocation(targetUrl),
+      error: diagnosticError(error),
+    });
+  });
+}
+
 function createWindow(partition, { showWhenReady = true } = {}) {
   const window = new BrowserWindow({
     width: 1280,
@@ -193,6 +395,7 @@ function createWindow(partition, { showWhenReady = true } = {}) {
   });
 
   window.once('ready-to-show', () => {
+    recordDiagnostic('info', 'window.ready-to-show', { label: 'Main window' });
     if (showWhenReady) window.show();
   });
   installWindowNavigationBoundary(window);
@@ -200,7 +403,7 @@ function createWindow(partition, { showWhenReady = true } = {}) {
     if (mainWindow === window) mainWindow = null;
   });
 
-  void window.loadURL(APP_URL);
+  loadWindow(window, APP_URL, 'Main window');
   return window;
 }
 
@@ -270,6 +473,10 @@ function openMeetingNotesWindow(meeting) {
     window.setAlwaysOnTop(true);
   }
   window.once('ready-to-show', () => {
+    recordDiagnostic('info', 'window.ready-to-show', {
+      label: 'Meeting notes',
+      meetingId,
+    });
     window.show();
     window.moveTop();
     window.focus();
@@ -281,7 +488,11 @@ function openMeetingNotesWindow(meeting) {
   });
 
   meetingNotesWindows.set(meetingId, window);
-  void window.loadURL(meetingNotesUrl({ ...meeting, id: meetingId }));
+  loadWindow(
+    window,
+    meetingNotesUrl({ ...meeting, id: meetingId }),
+    `Meeting notes ${meetingId}`,
+  );
   return window;
 }
 
@@ -335,6 +546,7 @@ function showMainWindow() {
 }
 
 async function start() {
+  initializeDiagnostics();
   serverConfig = await resolveServerConfig({
     argv: process.argv,
     env: process.env,
@@ -343,12 +555,22 @@ async function start() {
 
   const storageKey = serverStorageKey(serverConfig.serverUrl);
   desktopPartition = `persist:cram-${storageKey}`;
+  clientLogger.info('app.configuration', {
+    configSource: serverConfig.source,
+    serverUrl: serverConfig.serverUrl,
+    rendererRoot,
+    rendererPresent: existsSync(path.join(rendererRoot, 'index.html')),
+    partition: desktopPartition,
+    autoOpenMeetingNotes: serverConfig.autoOpenMeetingNotes,
+    launchAtLogin: serverConfig.launchAtLogin,
+  });
   desktopSession = session.fromPartition(desktopPartition, { cache: true });
   installPermissionBoundary(desktopSession);
   desktopSession.protocol.handle(APP_SCHEME, createProtocolHandler({
     rendererRoot,
     serverUrl: serverConfig.serverUrl,
     fetchUpstream: (url, init) => desktopSession.fetch(url, init),
+    onDiagnostic: (level, event, details) => recordDiagnostic(level, event, details),
   }));
 
   installDesktopIpc();
@@ -367,10 +589,16 @@ async function start() {
       statePath: path.join(app.getPath('userData'), `meeting-schedule-${storageKey}.json`),
       fetchMeetings: fetchMeetingSchedule,
       onMeetingStart: (meeting) => openMeetingNotesWindow(meeting),
-      onError: (error) => console.warn('[meeting-scheduler]', error?.message || error),
+      onError: (error) => {
+        recordDiagnostic('warn', 'meeting-scheduler.failed', {
+          error: diagnosticError(error),
+        });
+        console.warn('[meeting-scheduler]', error?.message || error);
+      },
     });
     await meetingScheduler.start();
   }
+  clientLogger.info('app.ready', { mainWindowVisible: mainWindow?.isVisible() });
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -384,6 +612,9 @@ if (!hasSingleInstanceLock) {
   app.whenReady()
     .then(start)
     .catch((error) => {
+      recordDiagnostic('error', 'app.start-failed', {
+        error: diagnosticError(error),
+      });
       dialog.showErrorBox('CRAM Desktop could not start', error?.stack || String(error));
       app.quit();
     });
@@ -392,7 +623,10 @@ if (!hasSingleInstanceLock) {
     showMainWindow();
   });
 
-  app.on('before-quit', () => meetingScheduler?.stop());
+  app.on('before-quit', () => {
+    recordDiagnostic('info', 'app.before-quit');
+    meetingScheduler?.stop();
+  });
 
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();

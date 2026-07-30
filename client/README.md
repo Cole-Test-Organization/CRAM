@@ -81,6 +81,11 @@ Remote endpoints must use HTTPS; plain HTTP is accepted only for `localhost`,
 Each normalized server URL gets a separate persistent Electron partition, so a
 cached dataset from one CRAM server is never replayed for another server.
 
+API requests made by the desktop proxy have a 15-second ceiling. If DNS, TLS,
+the private route, or the server stalls beyond that point, the request fails
+deterministically so the shared GUI can replay its offline copy or show a
+connection error instead of displaying `Loading...` indefinitely.
+
 `autoOpenMeetingNotes` controls the meeting-start scheduler. `launchAtLogin`
 registers a packaged macOS build as a login item so the scheduler can be
 running before the first meeting; it has no effect during `npm start`
@@ -119,6 +124,28 @@ An offline/local draft is intentionally not uploaded silently on a later
 launch. Reopen the floating editor and click **Save to CRAM** once connected.
 The status beneath the editor always distinguishes local-only from server-saved
 notes.
+
+## Diagnostic log
+
+CRAM Desktop writes private, rotating JSONL diagnostics to:
+
+```text
+~/Library/Logs/CRAM Desktop/client.log
+```
+
+The previous bounded file is `client.log.previous`. Use **File → Show
+Diagnostic Log** to reveal the active file in Finder.
+
+The log records app/config startup, packaged-renderer presence, local window
+navigation, preload and renderer failures, renderer warning/error messages,
+unresponsive or crashed renderers, meeting-scheduler failures, and failed,
+slow, or non-success API proxy requests. Request bodies and headers are never
+logged; sensitive fields and URL query values are redacted. The active file is
+created with user-only permissions.
+
+If the local shell itself fails, the window is now shown with an error dialog
+and a direct path to this log instead of remaining hidden behind
+`ready-to-show`.
 
 ## Build a macOS installer
 
