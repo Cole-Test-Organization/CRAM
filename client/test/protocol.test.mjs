@@ -8,6 +8,7 @@ import {
   buildUpstreamUrl,
   createProtocolHandler,
   forwardedHeaders,
+  requestPathForDiagnostics,
   resolveRendererPath,
 } from '../src/protocol.mjs';
 
@@ -32,6 +33,13 @@ test('drops renderer-only request headers before proxying', () => {
   assert.equal(headers.get('host'), null);
   assert.equal(headers.get('origin'), null);
   assert.equal(headers.get('x-cram-client'), 'desktop');
+});
+
+test('diagnostic request paths expose query names but never values', () => {
+  assert.equal(
+    requestPathForDiagnostics(`${APP_URL}api/notes?account_id=42&token=secret`),
+    '/api/notes?account_id=…&token=…',
+  );
 });
 
 test('keeps renderer paths inside the packaged asset directory', () => {
@@ -100,5 +108,29 @@ test('proxies API method, query, headers, and body without touching remote UI co
   assert.equal(calls[0].url, 'https://crm.example.test/api/meetings?limit=15');
   assert.equal(calls[0].init.method, 'POST');
   assert.equal(calls[0].init.headers.get('x-cram-client'), 'desktop');
+  assert.ok(calls[0].init.signal instanceof AbortSignal);
   assert.equal(await new Response(calls[0].init.body).text(), '{"title":"Demo"}');
+});
+
+test('times out a stalled API proxy request and emits a sanitized diagnostic', async (t) => {
+  const rendererRoot = await mkdtemp(path.join(os.tmpdir(), 'cram-client-timeout-'));
+  t.after(() => rm(rendererRoot, { recursive: true, force: true }));
+  const diagnostics = [];
+  const handler = createProtocolHandler({
+    rendererRoot,
+    serverUrl: 'https://crm.example.test',
+    fetchUpstream: () => new Promise(() => {}),
+    apiTimeoutMs: 10,
+    onDiagnostic: (...event) => diagnostics.push(event),
+  });
+
+  await assert.rejects(
+    handler(new Request(`${APP_URL}api/accounts?token=do-not-log`)),
+    (error) => error?.code === 'CRAM_API_TIMEOUT',
+  );
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0][0], 'error');
+  assert.equal(diagnostics[0][1], 'protocol.api.failed');
+  assert.equal(diagnostics[0][2].path, '/api/accounts?token=…');
+  assert.doesNotMatch(JSON.stringify(diagnostics), /do-not-log/);
 });
