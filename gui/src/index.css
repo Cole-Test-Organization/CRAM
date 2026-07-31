@@ -617,6 +617,36 @@
     padding: 0 12px;
   }
 
+  .sync-status-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    min-width: 0;
+  }
+  .sync-status-toggle {
+    width: 100%;
+    min-height: 30px;
+    padding: 5px 9px;
+    border: 2px solid var(--color-base-500);
+    background: var(--color-base-950);
+    color: var(--color-base-300);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    cursor: pointer;
+  }
+  .sync-status-toggle:hover {
+    border-color: var(--color-surf-300);
+    color: var(--color-surf-300);
+  }
+  .sync-status-toggle:focus-visible {
+    outline: 2px solid var(--color-surf-200);
+    outline-offset: 2px;
+  }
   .sync-status {
     display: flex;
     align-items: center;
@@ -708,6 +738,13 @@
     .press-sm { padding: 7px 12px; font-size: 12px; min-height: 36px; }
     .press-md { padding: 10px 16px; font-size: 13px; min-height: 44px; }
     .press-lg { padding: 12px 22px; font-size: 15px; min-height: 48px; }
+
+    /* The connection-mode toggle is a real action, so it takes a real touch
+       target on phones rather than shrinking with the status readout. */
+    .sync-status-toggle {
+      min-height: 44px;
+      font-size: 11px;
+    }
 
     /* Press-card shadow reduces from 4px → 2px on mobile so the card's
        right edge doesn't cause viewport overflow when flush with page padding. */

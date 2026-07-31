@@ -11,15 +11,49 @@ offline snapshot planner in `gui/src/lib/offline.ts`.
 
 | Client | App shell | Durable API snapshot | Writes while offline |
 |---|---|---|---|
-| Web/PWA | Service worker | Browser CacheStorage | Rejected |
-| Electron | Bundled renderer | Endpoint-specific native response files | Rejected |
-| Swift mobile | Bundled renderer | Endpoint-specific native response cache through the mobile bridge | Rejected |
+| Web/PWA | Service worker | Browser CacheStorage | Queued in `localStorage`, replayed on return to Online |
+| Electron | Bundled renderer | Endpoint-specific native response files | Queued in `localStorage`, replayed on return to Online |
+| Swift mobile | Bundled renderer | Endpoint-specific native response cache through the mobile bridge | Queued in `localStorage`, replayed on return to Online |
 
 The current planner downloads complete core collections plus the detail URLs
 needed by every core detail route. Cache keys are exact request URLs. Secret or
-operational surfaces are excluded. This is intentionally conservative:
-server state is authoritative, clients do not generate competing offline
-revisions, and no conflict algorithm is needed yet.
+operational surfaces are excluded.
+
+### Offline is a mode, not an inference
+
+`gui/src/lib/offline.ts` never guesses whether the network is usable. The
+operator selects `online` or `offline` (persisted under
+`cram.connection-mode.v1`) and the transport obeys it:
+
+- **Online** — every request is attempted. A cached response is substituted
+  only *after* a real failure, and is announced rather than swapped in
+  silently. A failed request marks `serverUnreachable()` for display only; it
+  never changes the mode.
+- **Offline** — nothing touches the network. Reads resolve from the snapshot or
+  raise `OfflineDataUnavailableError`; writes are queued.
+
+This replaced inference from `navigator.onLine` and from request outcomes. Both
+were unreliable in practice — `navigator.onLine` reports only that an interface
+exists, not that the CRAM server is reachable, and a single transient
+`ERR_NETWORK_CHANGED` used to strand the whole app in read-only until something
+happened to flip it back.
+
+### Write queue
+
+`gui/src/lib/writeQueue.ts` parks offline writes verbatim (method, URL,
+headers, body) and replays them FIFO when the operator returns to Online.
+
+- A queued write **rejects** with `WriteQueuedError` rather than resolving with
+  a synthetic response. Callers must not receive server-assigned values the
+  server never produced — the meeting-notes editor clears its local draft and
+  reports "Saved to CRAM" on a resolved save, so a fake success would discard
+  notes that exist only in the queue.
+- Replay stops at the first transport or 5xx failure, so two edits to one
+  record cannot land out of order. A 4xx is dropped into `rejectedWrites`
+  instead of retried forever, which would wedge every later change behind it.
+- This is still last-write-wins against server state. It is a convenience for a
+  single operator on one device, **not** a conflict-resolution protocol — see
+  below for what a real one requires.
 
 The Swift implementation separates:
 
@@ -94,8 +128,11 @@ retry/conflict behavior testable.
 3. Add a Swift adapter conforming to `APITransporting`/`ResponseCaching`.
 4. Validate bootstrap and delta parity using the same fixtures across browser,
    Electron, and Swift tests.
-5. Only then introduce a durable mutation outbox and entity-specific conflict
-   policies. Meeting-note drafts remain local-only until that policy exists.
+5. Only then replace the last-write-wins write queue with a durable mutation
+   outbox carrying `clientMutationId`/`baseRevision`, plus entity-specific
+   conflict policies. Meeting-note drafts stay in their own local draft store
+   (`gui/src/lib/meetingDraft.ts`) until that policy exists — they are
+   keystroke-frequency and must not enter the write queue.
 
 ## Guardrails
 
@@ -105,5 +142,11 @@ retry/conflict behavior testable.
 - Schema migration and cache migration must be versioned independently.
 - Cache admission remains allowlisted; generic GET caching must never include
   secrets, provisioning state, backups, or agent sessions.
-- Do not ship offline mutation replay without idempotency, tombstones, and a
-  tested conflict UX.
+- The shipped write queue is a **single-operator, single-device convenience**
+  and deliberately stops short of a sync protocol. It has no idempotency keys,
+  no tombstones, and no conflict UX: a replayed write overwrites whatever the
+  server holds. That is acceptable only while one person edits CRAM from one
+  device at a time.
+- Do not extend that queue to multiple devices, shared editing, or background
+  replay without first adding idempotency, tombstones, and a tested conflict
+  UX. The failure mode is silent data loss, not a visible error.

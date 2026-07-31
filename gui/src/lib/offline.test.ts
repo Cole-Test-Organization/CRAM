@@ -6,13 +6,24 @@ import {
   hasCompleteOfflineCopy,
   isOfflineCacheableApiPath,
   notice,
-  OfflineWriteError,
+  resetConnectionModeForTests,
   resetNoticeForTests,
   serverReachable,
+  setConnectionMode,
 } from './offline';
+import {
+  queuedWriteCount,
+  replayWriteQueue,
+  resetWriteQueueForTests,
+  WriteQueuedError,
+} from './writeQueue';
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // Mode and queue are module-level state; leaving either set would leak the
+  // transport's behavior into the next case.
+  resetConnectionModeForTests();
+  resetWriteQueueForTests();
   delete (window as Window & { cramMobile?: unknown }).cramMobile;
   delete (window as Window & { cramDesktop?: unknown }).cramDesktop;
 });
@@ -234,26 +245,16 @@ describe('offline API transport', () => {
     expect(get).toHaveBeenCalledOnce();
   });
 
-  it('re-reads the live network state instead of trusting a latched offline flag', async () => {
+  it('still attempts a write in Online mode when navigator claims there is no network', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('{"id":574}', {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     }));
     vi.stubGlobal('fetch', fetchMock);
-
-    // While the browser genuinely reports no network, a write must be refused
-    // locally rather than lost against an unreachable server.
+    // navigator.onLine only reports that an interface exists, and is wrong
+    // constantly behind a VPN. It must never be allowed to veto a request.
     vi.stubGlobal('navigator', { onLine: false });
-    await expect(apiFetch('/api/meetings/574/reassign-account', {
-      method: 'POST',
-      body: '{"account_id":7}',
-    })).rejects.toThrow(OfflineWriteError);
-    expect(fetchMock).not.toHaveBeenCalled();
 
-    // The window `online` event only fires on a transition, so a renderer that
-    // latched offline during a blip never hears about the recovery. The write
-    // path has to notice on its own or the app stays read-only all session.
-    vi.stubGlobal('navigator', { onLine: true });
     const response = await apiFetch('/api/meetings/574/reassign-account', {
       method: 'POST',
       body: '{"account_id":7}',
@@ -261,6 +262,97 @@ describe('offline API transport', () => {
 
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('queues a write in Offline mode instead of reporting a save that never happened', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    await setConnectionMode('offline');
+
+    await expect(apiFetch('/api/meetings/574', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"body":"Notes from the room"}',
+    })).rejects.toThrow(WriteQueuedError);
+
+    // Rejecting is the point: a resolved save makes the notes editor clear its
+    // local draft and report "Saved to CRAM" for data only held locally.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(queuedWriteCount()).toBe(1);
+  });
+
+  it('makes no network call at all for an Offline-mode read', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    installDesktopCache({
+      get: vi.fn(async () => ({
+        status: 200,
+        statusText: 'ok',
+        headers: { 'Content-Type': 'application/json' },
+        bodyBase64: btoa('{"accounts":[{"id":7}]}'),
+      })),
+    });
+    await setConnectionMode('offline');
+
+    const response = await apiFetch('/api/accounts?sort=name');
+
+    expect(response.headers.get('X-CRAM-Offline')).toBe('true');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('replays queued writes in order and drops what the server refuses', async () => {
+    await setConnectionMode('offline');
+    vi.stubGlobal('fetch', vi.fn());
+    for (const id of [1, 2, 3]) {
+      await expect(apiFetch(`/api/accounts/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: `{"status":"customer","seq":${id}}`,
+      })).rejects.toThrow(WriteQueuedError);
+    }
+    expect(queuedWriteCount()).toBe(3);
+
+    const seen: string[] = [];
+    const replayFetch = vi.fn(async (url: any, init: any) => {
+      seen.push(String(url));
+      // The middle write is refused outright; retrying it forever would wedge
+      // every later change behind it.
+      return new Response('{"error":"bad status"}', {
+        status: String(url).endsWith('/2') ? 422 : 200,
+      });
+    });
+
+    const outcome = await replayWriteQueue(replayFetch as any);
+
+    expect(seen).toEqual([
+      'http://localhost:3000/api/accounts/1',
+      'http://localhost:3000/api/accounts/2',
+      'http://localhost:3000/api/accounts/3',
+    ]);
+    expect(outcome).toMatchObject({ replayed: 2, rejected: 1, remaining: 0, error: null });
+    expect(queuedWriteCount()).toBe(0);
+  });
+
+  it('stops replaying on a transport failure so later writes cannot overtake earlier ones', async () => {
+    await setConnectionMode('offline');
+    vi.stubGlobal('fetch', vi.fn());
+    for (const id of [1, 2]) {
+      await expect(apiFetch(`/api/accounts/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: `{"seq":${id}}`,
+      })).rejects.toThrow(WriteQueuedError);
+    }
+
+    const replayFetch = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const outcome = await replayWriteQueue(replayFetch as any);
+
+    expect(replayFetch).toHaveBeenCalledOnce();
+    expect(outcome.replayed).toBe(0);
+    expect(outcome.remaining).toBe(2);
+    expect(outcome.error).toMatch(/failed to fetch/i);
   });
 
   it('announces a cache replay so a stale read is not mistaken for a fresh one', async () => {

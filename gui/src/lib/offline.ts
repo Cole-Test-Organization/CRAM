@@ -11,9 +11,16 @@ import type {
   CachedApiResponse,
   ClientCacheBridge,
 } from './clientCache';
+import {
+  enqueueWrite,
+  queuedWriteCount,
+  replayWriteQueue,
+  WriteQueuedError,
+} from './writeQueue';
 
 const API_CACHE_NAME = 'cram-api-v1';
 const LAST_SYNC_STORAGE_KEY = 'cram.offline-sync.v1';
+const CONNECTION_MODE_STORAGE_KEY = 'cram.connection-mode.v1';
 const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const FOREGROUND_SYNC_STALE_MS = 60 * 1000;
 const SYNC_CONCURRENCY = 6;
@@ -40,13 +47,6 @@ type ApiFetchOptions = {
   forceNetwork?: boolean;
   requireCache?: boolean;
 };
-
-export class OfflineWriteError extends Error {
-  constructor() {
-    super('CRAM is offline. Changes are read-only until the server reconnects.');
-    this.name = 'OfflineWriteError';
-  }
-}
 
 export class OfflineDataUnavailableError extends Error {
   constructor(path: string) {
@@ -95,22 +95,72 @@ export {
   syncPhase,
 };
 
-export const isOffline = () => !browserOnline() || serverReachable() === false;
 export const hasOfflineCopy = () => Boolean(lastSyncAt());
 
 /**
- * `browserOnline` latches on the window `online`/`offline` events, which only
- * fire on a *transition*. A renderer that starts up — or reloads — during a
- * network blip latches false and then never hears an `online` event to clear
- * it, because by then there is no transition left to observe. That wedges the
- * app read-only for the rest of the session: writes are refused and reads are
- * served from cache while `navigator.onLine` says the network is fine.
- * Re-read the live value before any decision that depends on it.
+ * Offline is a mode the operator chooses, never a state the app infers.
+ *
+ * Inference could not be made trustworthy here: `navigator.onLine` reports only
+ * that some network interface exists — not that the CRAM server is reachable —
+ * and it is wrong constantly on a machine running a VPN. Deriving the mode from
+ * request outcomes was worse: one transient `ERR_NETWORK_CHANGED` dropped the
+ * whole app into read-only until something happened to flip it back. So the
+ * mode is explicit, and a failed request now means only that one request failed.
  */
-function refreshBrowserOnline(): boolean {
-  const live = typeof navigator === 'undefined' ? true : navigator.onLine;
-  if (live !== browserOnline()) setBrowserOnline(live);
-  return live;
+export type ConnectionMode = 'online' | 'offline';
+
+function readConnectionMode(): ConnectionMode {
+  if (typeof localStorage === 'undefined') return 'online';
+  try {
+    return localStorage.getItem(CONNECTION_MODE_STORAGE_KEY) === 'offline' ? 'offline' : 'online';
+  } catch {
+    return 'online';
+  }
+}
+
+const [connectionMode, setConnectionModeSignal] = createSignal<ConnectionMode>(readConnectionMode());
+
+export { connectionMode };
+
+export const isOfflineMode = () => connectionMode() === 'offline';
+/** The last request failed. Informational only — it never gates anything. */
+export const serverUnreachable = () => serverReachable() === false;
+export const isOffline = isOfflineMode;
+
+export async function setConnectionMode(mode: ConnectionMode): Promise<void> {
+  if (mode === connectionMode()) return;
+  setConnectionModeSignal(mode);
+  try { localStorage.setItem(CONNECTION_MODE_STORAGE_KEY, mode); } catch { /* storage may be disabled */ }
+
+  if (mode === 'offline') {
+    setServerReachable(null);
+    showNotice(hasOfflineCopy()
+      ? 'Offline mode. Reads come from the last synced copy and edits are queued.'
+      : 'Offline mode, but this device has no synced copy yet.');
+    return;
+  }
+
+  await flushQueuedWrites();
+  void syncNow();
+}
+
+/**
+ * Drains the offline queue against the live server. Called when the operator
+ * returns to Online mode, and nudged by the browser `online` event.
+ */
+export async function flushQueuedWrites(): Promise<void> {
+  if (isOfflineMode() || !queuedWriteCount()) return;
+  const outcome = await replayWriteQueue();
+  const synced = outcome.replayed
+    ? `${outcome.replayed} queued change${outcome.replayed === 1 ? '' : 's'} synced.`
+    : '';
+  if (outcome.error) {
+    showNotice(`${synced} ${outcome.remaining} still queued — ${outcome.error}`.trim());
+  } else if (outcome.rejected) {
+    showNotice(`${synced} ${outcome.rejected} rejected by the server.`.trim());
+  } else if (outcome.replayed) {
+    showNotice(synced);
+  }
 }
 
 let noticeTimer: number | undefined;
@@ -290,10 +340,36 @@ function isNetworkFailure(error: unknown): boolean {
   return error instanceof TypeError || (error instanceof DOMException && error.name === 'NetworkError');
 }
 
+function pathAndQuery(url: string): string {
+  const parsed = new URL(url);
+  return parsed.pathname + parsed.search;
+}
+
+/** In Offline mode a write is parked verbatim rather than attempted. */
+function queueOfflineWrite(input: RequestInfo | URL, init: RequestInit, method: string): never {
+  const body = init.body === undefined || init.body === null ? null : init.body;
+  if (body !== null && typeof body !== 'string') {
+    throw new Error('This change cannot be queued offline. Switch to Online mode to save it.');
+  }
+  const entry = enqueueWrite({
+    method,
+    url: absoluteUrl(input),
+    headers: Object.fromEntries(new Headers(init.headers).entries()),
+    body,
+  });
+  const pending = queuedWriteCount();
+  showNotice(`Change queued — ${pending} pending. Switch to Online to sync.`);
+  throw new WriteQueuedError(entry.id);
+}
+
 /**
- * Network-first REST transport for the existing API client. Successful CRM
- * GETs are persisted by exact URL and transparently replayed when unreachable.
- * Writes always go to the canonical server and are never queued in this phase.
+ * Network-first REST transport for the existing API client.
+ *
+ * In Online mode every request is attempted, always — the transport never
+ * decides in advance that the network is not worth trying, which is what used
+ * to strand the app in a false offline state. A cached copy is substituted only
+ * after a real failure, and says so. In Offline mode nothing touches the
+ * network: reads come from the snapshot and writes go to the queue.
  */
 export async function apiFetch(
   input: RequestInfo | URL,
@@ -303,21 +379,12 @@ export async function apiFetch(
   const method = (init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
   const cacheable = method === 'GET' && isOfflineCacheableApiPath(absoluteUrl(input));
   const request = cacheable ? cacheRequest(input) : null;
-  const online = refreshBrowserOnline();
 
-  if (method !== 'GET' && !online) {
-    const error = new OfflineWriteError();
-    showNotice(error.message);
-    throw error;
-  }
-
-  if (cacheable && !online && !options.forceNetwork) {
-    const cached = await getApiCache(request!);
-    if (cached) {
-      setServerReachable(false);
-      return markOfflineReplay(cached);
-    }
-    throw new OfflineDataUnavailableError(new URL(request!.url).pathname + new URL(request!.url).search);
+  if (isOfflineMode()) {
+    if (method !== 'GET') queueOfflineWrite(input, init, method);
+    const cached = cacheable ? await getApiCache(request!) : undefined;
+    if (cached) return markOfflineReplay(cached);
+    throw new OfflineDataUnavailableError(pathAndQuery(absoluteUrl(input)));
   }
 
   let response: Response;
@@ -440,9 +507,11 @@ let activeSync: Promise<void> | null = null;
 export function syncNow(): Promise<void> {
   if (activeSync) return activeSync;
   activeSync = (async () => {
-    if (!refreshBrowserOnline()) {
+    if (isOfflineMode()) {
       setSyncPhase(lastSyncAt() ? 'ready' : 'idle');
-      showNotice(lastSyncAt() ? 'Offline copy is ready, but it cannot be refreshed without a connection.' : 'Connect once to prepare CRAM for offline use.');
+      showNotice(lastSyncAt()
+        ? 'Offline mode. Switch to Online to refresh the local copy.'
+        : 'Offline mode. Switch to Online once to prepare CRAM for offline use.');
       return;
     }
 
@@ -561,17 +630,16 @@ export function initializeOfflineSupport() {
     });
   }
 
+  // These events are hints for when it is worth retrying — never gates. The
+  // mode alone decides whether the network gets touched.
   const onOnline = () => {
     setBrowserOnline(true);
-    void syncNow();
+    if (isOfflineMode()) return;
+    void flushQueuedWrites().then(() => syncNow());
   };
-  const onOffline = () => {
-    setBrowserOnline(false);
-    setServerReachable(false);
-  };
+  const onOffline = () => setBrowserOnline(false);
   const onVisibility = () => {
-    if (document.visibilityState !== 'visible' || !navigator.onLine) return;
-    setBrowserOnline(true);
+    if (document.visibilityState !== 'visible' || isOfflineMode()) return;
     const last = lastSyncAt() ? Date.parse(lastSyncAt()!) : 0;
     if (!last || Date.now() - last >= FOREGROUND_SYNC_STALE_MS) void syncNow();
   };
@@ -580,14 +648,22 @@ export function initializeOfflineSupport() {
   window.addEventListener('offline', onOffline);
   document.addEventListener('visibilitychange', onVisibility);
   syncInterval = window.setInterval(() => {
-    if (document.visibilityState === 'visible' && navigator.onLine) void syncNow();
+    if (document.visibilityState === 'visible' && !isOfflineMode()) void syncNow();
   }, AUTO_SYNC_INTERVAL_MS);
 
   // Let the initial render finish first so the sync indicator is visible while
   // a larger first-time snapshot is being prepared.
   window.setTimeout(() => {
-    void cacheValidation.finally(() => syncNow());
+    void cacheValidation
+      .finally(() => flushQueuedWrites())
+      .finally(() => syncNow());
   }, 0);
+}
+
+/** Test-only: connection mode is module state shared across cases. */
+export function resetConnectionModeForTests() {
+  setConnectionModeSignal('online');
+  try { localStorage.removeItem(CONNECTION_MODE_STORAGE_KEY); } catch { /* storage may be disabled */ }
 }
 
 /** Test-only: the notice banner is module state shared across cases. */
