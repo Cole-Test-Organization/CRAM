@@ -102,8 +102,8 @@ in the phase log in §7 — this section is just the shape of the suite today.
 | Layer | Where | Size | Runner |
 |---|---|---|---|
 | Static | `gui/tsconfig.json`, `api/tsconfig.json` | — | `tsc --noEmit` (both packages) |
-| Unit + component | `gui/src/**/*.test.ts(x)` (colocated) | 115 tests / 27 files | `npm test` (Vitest, Solid + jsdom) |
-| Desktop unit | `client/test/*.test.mjs` | 23 tests / 5 files | `npm test` (Node test runner) |
+| Unit + component | `gui/src/**/*.test.ts(x)` (colocated) | 118 tests / 27 files | `npm test` (Vitest, Solid + jsdom) |
+| Desktop unit | `client/test/*.test.mjs` | 28 tests / 6 files | `npm test` (Node test runner) |
 | Mobile contract | `mobile/test/*.test.mjs` | 4 tests / 1 file | `npm test` (Node test runner) |
 | iOS unit / compile | `mobile/CRAMMobileTests/*.swift` | 10 tests / 5 files | Xcode / `ios-build` CI job |
 | API integration | `api/test/*.test.js` | 210 tests / 37 files | `npm run test:api` (serial, live seeded API) |

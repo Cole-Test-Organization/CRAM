@@ -5,12 +5,16 @@ import {
   formatLastSyncTimestamp,
   hasCompleteOfflineCopy,
   isOfflineCacheableApiPath,
+  notice,
+  OfflineWriteError,
+  resetNoticeForTests,
   serverReachable,
 } from './offline';
 
 afterEach(() => {
   vi.unstubAllGlobals();
   delete (window as Window & { cramMobile?: unknown }).cramMobile;
+  delete (window as Window & { cramDesktop?: unknown }).cramDesktop;
 });
 
 function installMobileCache(overrides: {
@@ -31,6 +35,30 @@ function installMobileCache(overrides: {
       cache,
       openMeetingNotes: vi.fn(),
       openSettings: vi.fn(),
+    },
+  });
+  return cache;
+}
+
+function installDesktopCache(overrides: {
+  get?: ReturnType<typeof vi.fn>;
+  keys?: ReturnType<typeof vi.fn>;
+  put?: ReturnType<typeof vi.fn>;
+  prune?: ReturnType<typeof vi.fn>;
+} = {}) {
+  const cache = {
+    put: overrides.put || vi.fn(async (_key: string, _response: unknown) => undefined),
+    get: overrides.get || vi.fn(async (_key: string) => null),
+    keys: overrides.keys || vi.fn(async () => []),
+    delete: vi.fn(async () => undefined),
+    prune: overrides.prune || vi.fn(async (_keeping: string[]) => undefined),
+  };
+  Object.defineProperty(window, 'cramDesktop', {
+    configurable: true,
+    value: {
+      isDesktop: true,
+      cache,
+      openMeetingNotes: vi.fn(),
     },
   });
   return cache;
@@ -152,6 +180,43 @@ describe('offline API transport', () => {
     });
   });
 
+  it('uses the native desktop cache instead of CacheStorage on the cram scheme', async () => {
+    const put = vi.fn(async (_key: string, _response: unknown) => undefined);
+    installDesktopCache({ put });
+    vi.stubGlobal('caches', {
+      open: vi.fn(() => {
+        throw new Error('Browser CacheStorage must not be used by CRAM Desktop.');
+      }),
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"accounts":[]}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })));
+
+    await apiFetch('/api/accounts?sort=name');
+
+    expect(put).toHaveBeenCalledOnce();
+    expect(put.mock.calls[0][0]).toBe('http://localhost:3000/api/accounts?sort=name');
+  });
+
+  it('surfaces required cache-write failures without disguising them as missing data', async () => {
+    installDesktopCache({
+      put: vi.fn(async () => {
+        throw new Error('Desktop cache disk is full.');
+      }),
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"accounts":[]}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })));
+
+    await expect(apiFetch(
+      '/api/accounts?sort=name',
+      {},
+      { requireCache: true },
+    )).rejects.toThrow('Desktop cache disk is full.');
+  });
+
   it('reconstructs a cached mobile response after a network failure', async () => {
     const get = vi.fn(async () => ({
       status: 200,
@@ -167,6 +232,68 @@ describe('offline API transport', () => {
     expect(response.headers.get('X-CRAM-Offline')).toBe('true');
     await expect(response.json()).resolves.toEqual({ accounts: [{ id: 9 }] });
     expect(get).toHaveBeenCalledOnce();
+  });
+
+  it('re-reads the live network state instead of trusting a latched offline flag', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"id":574}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    // While the browser genuinely reports no network, a write must be refused
+    // locally rather than lost against an unreachable server.
+    vi.stubGlobal('navigator', { onLine: false });
+    await expect(apiFetch('/api/meetings/574/reassign-account', {
+      method: 'POST',
+      body: '{"account_id":7}',
+    })).rejects.toThrow(OfflineWriteError);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // The window `online` event only fires on a transition, so a renderer that
+    // latched offline during a blip never hears about the recovery. The write
+    // path has to notice on its own or the app stays read-only all session.
+    vi.stubGlobal('navigator', { onLine: true });
+    const response = await apiFetch('/api/meetings/574/reassign-account', {
+      method: 'POST',
+      body: '{"account_id":7}',
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('announces a cache replay so a stale read is not mistaken for a fresh one', async () => {
+    const get = vi.fn(async () => ({
+      status: 200,
+      statusText: 'ok',
+      headers: { 'Content-Type': 'application/json' },
+      bodyBase64: btoa('{"id":574,"account_id":7}'),
+    }));
+    installDesktopCache({ get });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    resetNoticeForTests();
+
+    const response = await apiFetch('/api/meetings/574');
+
+    expect(response.headers.get('X-CRAM-Offline')).toBe('true');
+    expect(notice()).toMatch(/last synced copy/i);
+  });
+
+  it('stays silent when the sync itself falls back, so it cannot masquerade as a user read', async () => {
+    const get = vi.fn(async () => ({
+      status: 200,
+      statusText: 'ok',
+      headers: { 'Content-Type': 'application/json' },
+      bodyBase64: btoa('{"accounts":[]}'),
+    }));
+    installDesktopCache({ get });
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+    resetNoticeForTests();
+
+    await apiFetch('/api/accounts?sort=name', {}, { forceNetwork: true, requireCache: true });
+
+    expect(notice()).toBeNull();
   });
 
   it('validates a persisted mobile snapshot through the native cache', async () => {

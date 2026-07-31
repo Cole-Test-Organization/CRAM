@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import plistHook from '../scripts/harden-macos-plist.cjs';
+import clientPackage from '../package.json' with { type: 'json' };
 
 test('macOS post-pack hardening disables arbitrary network loads', async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cram-client-plist-'));
@@ -27,4 +28,11 @@ test('macOS post-pack hardening disables arbitrary network loads', async (t) => 
 
   assert.match(hardened, /<key>NSAllowsArbitraryLoads<\/key>\s*<false\/>/);
   assert.doesNotMatch(hardened, /<key>NSAllowsArbitraryLoads<\/key>\s*<true\/>/);
+});
+
+test('the packaged app declares why it accesses a private CRAM server', () => {
+  assert.match(
+    clientPackage.build.mac.extendInfo.NSLocalNetworkUsageDescription,
+    /private CRAM server.*local or Tailscale network/i,
+  );
 });

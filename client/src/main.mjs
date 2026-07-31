@@ -22,6 +22,7 @@ import {
   buildUpstreamUrl,
   createProtocolHandler,
 } from './protocol.mjs';
+import { createFileResponseCache } from './response-cache.mjs';
 
 app.setName('CRAM Desktop');
 app.setAppLogsPath();
@@ -30,7 +31,6 @@ app.enableSandbox();
 protocol.registerSchemesAsPrivileged([{
   scheme: APP_SCHEME,
   privileges: {
-    allowServiceWorkers: true,
     codeCache: true,
     corsEnabled: true,
     secure: true,
@@ -47,6 +47,7 @@ let mainWindow = null;
 let desktopSession = null;
 let serverConfig = null;
 let desktopPartition = null;
+let desktopResponseCache = null;
 let meetingScheduler = null;
 let clientLogger = null;
 const meetingNotesWindows = new Map();
@@ -125,6 +126,16 @@ function revealDiagnosticLog() {
   shell.showItemInFolder(clientLogger.filePath);
 }
 
+function openLocalNetworkSettings() {
+  void shell.openExternal(
+    'x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork',
+  ).catch((error) => {
+    recordDiagnostic('warn', 'settings.local-network-open-failed', {
+      error: diagnosticError(error),
+    });
+  });
+}
+
 function installMenu(config) {
   const template = [
     ...(process.platform === 'darwin'
@@ -168,6 +179,12 @@ function installMenu(config) {
           label: 'Show Diagnostic Log',
           click: revealDiagnosticLog,
         },
+        ...(process.platform === 'darwin'
+          ? [{
+              label: 'Open Local Network Privacy Settings',
+              click: openLocalNetworkSettings,
+            }]
+          : []),
         { type: 'separator' },
         process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' },
       ],
@@ -388,7 +405,10 @@ function createWindow(partition, { showWhenReady = true } = {}) {
     height: 820,
     minWidth: 760,
     minHeight: 560,
-    show: false,
+    // Keep the main window foregrounded before its first private-network
+    // request. macOS 15+ can otherwise deny the initial operation before it
+    // has a visible app to attach the Local Network consent prompt to.
+    show: showWhenReady,
     title: 'CRAM Desktop',
     backgroundColor: '#17130f',
     webPreferences: windowWebPreferences(partition),
@@ -396,7 +416,7 @@ function createWindow(partition, { showWhenReady = true } = {}) {
 
   window.once('ready-to-show', () => {
     recordDiagnostic('info', 'window.ready-to-show', { label: 'Main window' });
-    if (showWhenReady) window.show();
+    if (showWhenReady && !window.isVisible()) window.show();
   });
   installWindowNavigationBoundary(window);
   window.on('closed', () => {
@@ -513,6 +533,36 @@ function installDesktopIpc() {
     openMeetingNotesWindow({ id });
     return { opened: true, meetingId: id };
   });
+  ipcMain.handle('cram-desktop:cache-put', async (event, key, response) => {
+    if (!isTrustedRendererEvent(event) || !desktopResponseCache) {
+      throw new Error('Untrusted renderer cannot write the desktop cache.');
+    }
+    await desktopResponseCache.put(key, response);
+  });
+  ipcMain.handle('cram-desktop:cache-get', async (event, key) => {
+    if (!isTrustedRendererEvent(event) || !desktopResponseCache) {
+      throw new Error('Untrusted renderer cannot read the desktop cache.');
+    }
+    return desktopResponseCache.get(key);
+  });
+  ipcMain.handle('cram-desktop:cache-keys', async (event) => {
+    if (!isTrustedRendererEvent(event) || !desktopResponseCache) {
+      throw new Error('Untrusted renderer cannot enumerate the desktop cache.');
+    }
+    return desktopResponseCache.keys();
+  });
+  ipcMain.handle('cram-desktop:cache-delete', async (event, key) => {
+    if (!isTrustedRendererEvent(event) || !desktopResponseCache) {
+      throw new Error('Untrusted renderer cannot delete from the desktop cache.');
+    }
+    await desktopResponseCache.delete(key);
+  });
+  ipcMain.handle('cram-desktop:cache-prune', async (event, keeping) => {
+    if (!isTrustedRendererEvent(event) || !desktopResponseCache) {
+      throw new Error('Untrusted renderer cannot prune the desktop cache.');
+    }
+    await desktopResponseCache.prune(keeping);
+  });
 }
 
 async function fetchMeetingSchedule() {
@@ -555,16 +605,27 @@ async function start() {
 
   const storageKey = serverStorageKey(serverConfig.serverUrl);
   desktopPartition = `persist:cram-${storageKey}`;
+  desktopResponseCache = createFileResponseCache({
+    directory: path.join(app.getPath('userData'), 'api-cache-v1', storageKey),
+  });
   clientLogger.info('app.configuration', {
     configSource: serverConfig.source,
     serverUrl: serverConfig.serverUrl,
     rendererRoot,
     rendererPresent: existsSync(path.join(rendererRoot, 'index.html')),
     partition: desktopPartition,
+    offlineCacheDirectory: desktopResponseCache.directory,
     autoOpenMeetingNotes: serverConfig.autoOpenMeetingNotes,
     launchAtLogin: serverConfig.launchAtLogin,
   });
   desktopSession = session.fromPartition(desktopPartition, { cache: true });
+  // Older desktop builds attempted to use Chromium CacheStorage on the
+  // custom cram:// origin. Chromium cannot durably store those Request keys,
+  // so remove that obsolete service worker/cache without touching localStorage
+  // drafts or the new native response cache.
+  await desktopSession.clearStorageData({
+    storages: ['serviceworkers', 'cachestorage'],
+  });
   installPermissionBoundary(desktopSession);
   desktopSession.protocol.handle(APP_SCHEME, createProtocolHandler({
     rendererRoot,
@@ -579,10 +640,7 @@ async function start() {
   if (process.platform === 'darwin' && app.isPackaged) {
     app.setLoginItemSettings({ openAtLogin: serverConfig.launchAtLogin });
   }
-  const openedAtLogin = process.platform === 'darwin'
-    && app.isPackaged
-    && app.getLoginItemSettings().wasOpenedAtLogin;
-  mainWindow = createWindow(desktopPartition, { showWhenReady: !openedAtLogin });
+  mainWindow = createWindow(desktopPartition);
 
   if (serverConfig.autoOpenMeetingNotes) {
     meetingScheduler = createMeetingScheduler({

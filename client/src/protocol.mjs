@@ -63,6 +63,17 @@ export function requestPathForDiagnostics(requestUrl) {
   return `${url.pathname}${query}`;
 }
 
+/**
+ * A 404 is a normal REST answer on this API — `/accounts/:id/details` returns
+ * one for every account with no tech profile yet, which is most of them, on
+ * every sync. Logging those as warnings buried the failures that matter.
+ */
+function responseDiagnosticLevel(status, durationMs) {
+  if (status >= 500) return 'error';
+  if (status === 404 && durationMs < 5_000) return 'debug';
+  return 'warn';
+}
+
 function emitDiagnostic(onDiagnostic, level, event, details) {
   try {
     onDiagnostic?.(level, event, details);
@@ -157,6 +168,18 @@ async function staticResponse(request, rendererRoot) {
   return new Response(body, { status: 200, headers: securityHeaders(filePath) });
 }
 
+/**
+ * Electron's `session.fetch` runs on undici, which rejects a `ReadableStream`
+ * body unless `duplex: 'half'` is set — and a stream body cannot be replayed
+ * across the `redirect: 'follow'` below. Buffering the renderer's body avoids
+ * both problems, so every write reaches the upstream server intact.
+ */
+async function upstreamBody(request, method) {
+  if (method === 'GET' || method === 'HEAD' || !request.body) return undefined;
+  const buffered = await request.arrayBuffer();
+  return buffered.byteLength ? buffered : undefined;
+}
+
 async function proxyApiRequest(
   request,
   serverUrl,
@@ -167,24 +190,30 @@ async function proxyApiRequest(
   const method = request.method.toUpperCase();
   const path = requestPathForDiagnostics(request.url);
   const controller = new AbortController();
+  const startedAt = Date.now();
   let timeout;
   const timeoutPromise = new Promise((_, reject) => {
     timeout = setTimeout(() => {
-      const error = new Error(`CRAM API request timed out after ${apiTimeoutMs}ms.`);
+      // setTimeout is wall-clock, so a laptop that slept mid-request wakes to a
+      // far larger elapsed time than the limit. Report what actually elapsed
+      // rather than claiming the limit was the duration.
+      const error = new Error(
+        `CRAM API request exceeded its ${apiTimeoutMs}ms limit (elapsed ${Date.now() - startedAt}ms).`,
+      );
       error.name = 'APIProxyTimeoutError';
       error.code = 'CRAM_API_TIMEOUT';
       controller.abort(error);
       reject(error);
     }, apiTimeoutMs);
   });
-  const startedAt = Date.now();
 
   try {
+    const body = await upstreamBody(request, method);
     const response = await Promise.race([
       fetchUpstream(buildUpstreamUrl(serverUrl, request.url), {
         method,
         headers: forwardedHeaders(request.headers),
-        body: method === 'GET' || method === 'HEAD' ? undefined : request.body,
+        body,
         credentials: 'include',
         redirect: 'follow',
         signal: controller.signal,
@@ -195,7 +224,7 @@ async function proxyApiRequest(
     if (response.status >= 400 || durationMs >= 5_000) {
       emitDiagnostic(
         onDiagnostic,
-        response.status >= 500 ? 'error' : 'warn',
+        responseDiagnosticLevel(response.status, durationMs),
         'protocol.api.response',
         { method, path, status: response.status, durationMs },
       );

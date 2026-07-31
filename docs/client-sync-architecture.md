@@ -12,7 +12,7 @@ offline snapshot planner in `gui/src/lib/offline.ts`.
 | Client | App shell | Durable API snapshot | Writes while offline |
 |---|---|---|---|
 | Web/PWA | Service worker | Browser CacheStorage | Rejected |
-| Electron | Bundled renderer | Endpoint-specific Electron profile / CacheStorage | Rejected |
+| Electron | Bundled renderer | Endpoint-specific native response files | Rejected |
 | Swift mobile | Bundled renderer | Endpoint-specific native response cache through the mobile bridge | Rejected |
 
 The current planner downloads complete core collections plus the detail URLs
@@ -30,9 +30,11 @@ The Swift implementation separates:
   platform storage.
 
 Electron and the PWA already have equivalent transport/storage boundaries in
-`gui/src/lib/offline.ts` and their platform shell. The shared renderer means a
-future protocol client can land once in TypeScript for web/Electron, with a
-small conforming Swift transport on iOS.
+`gui/src/lib/offline.ts` and their platform shell. Electron uses a narrow
+preload/IPC bridge because Chromium CacheStorage cannot persist request keys
+from the custom `cram://` application origin. The shared renderer means a future
+protocol client can land once in TypeScript for web/Electron, with a small
+conforming Swift transport on iOS.
 
 ## Future backend protocol
 

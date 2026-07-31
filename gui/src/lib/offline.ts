@@ -2,8 +2,15 @@ import { createSignal } from 'solid-js';
 import {
   isCramMobile,
   mobileCacheBridge,
-  type MobileCachedResponse,
 } from './mobile';
+import {
+  desktopCacheBridge,
+  isCramDesktop,
+} from './desktop';
+import type {
+  CachedApiResponse,
+  ClientCacheBridge,
+} from './clientCache';
 
 const API_CACHE_NAME = 'cram-api-v1';
 const LAST_SYNC_STORAGE_KEY = 'cram.offline-sync.v1';
@@ -91,6 +98,21 @@ export {
 export const isOffline = () => !browserOnline() || serverReachable() === false;
 export const hasOfflineCopy = () => Boolean(lastSyncAt());
 
+/**
+ * `browserOnline` latches on the window `online`/`offline` events, which only
+ * fire on a *transition*. A renderer that starts up — or reloads — during a
+ * network blip latches false and then never hears an `online` event to clear
+ * it, because by then there is no transition left to observe. That wedges the
+ * app read-only for the rest of the session: writes are refused and reads are
+ * served from cache while `navigator.onLine` says the network is fine.
+ * Re-read the live value before any decision that depends on it.
+ */
+function refreshBrowserOnline(): boolean {
+  const live = typeof navigator === 'undefined' ? true : navigator.onLine;
+  if (live !== browserOnline()) setBrowserOnline(live);
+  return live;
+}
+
 let noticeTimer: number | undefined;
 function showNotice(message: string) {
   setNotice(message);
@@ -108,6 +130,10 @@ function absoluteUrl(input: RequestInfo | URL): string {
 
 function cacheRequest(input: RequestInfo | URL): Request {
   return new Request(absoluteUrl(input), { method: 'GET' });
+}
+
+function nativeCacheBridge(): ClientCacheBridge | null {
+  return mobileCacheBridge() || desktopCacheBridge();
 }
 
 /**
@@ -135,7 +161,7 @@ export function isOfflineCacheableApiPath(input: string | URL): boolean {
 }
 
 async function putApiCache(request: Request, response: Response, required: boolean) {
-  const nativeCache = mobileCacheBridge();
+  const nativeCache = nativeCacheBridge();
   if (nativeCache) {
     try {
       const bodyBase64 = arrayBufferToBase64(await response.arrayBuffer());
@@ -163,11 +189,11 @@ async function putApiCache(request: Request, response: Response, required: boole
 }
 
 async function getApiCache(request: Request): Promise<Response | undefined> {
-  const nativeCache = mobileCacheBridge();
+  const nativeCache = nativeCacheBridge();
   if (nativeCache) {
     try {
       const cached = await nativeCache.get(request.url);
-      return cached ? responseFromMobileCache(cached) : undefined;
+      return cached ? responseFromNativeCache(cached) : undefined;
     } catch {
       return undefined;
     }
@@ -191,7 +217,7 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-function responseFromMobileCache(cached: MobileCachedResponse): Response {
+function responseFromNativeCache(cached: CachedApiResponse): Response {
   const binary = atob(cached.bodyBase64);
   const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
   return new Response(bytes.buffer, {
@@ -215,8 +241,12 @@ function markOfflineReplay(response: Response): Response {
 async function pruneApiCache(requiredPaths: string[]) {
   const origin = typeof window === 'undefined' ? 'https://cram.invalid' : window.location.origin;
   const keep = new Set(requiredPaths.map((path) => new URL(path, origin).toString()));
-  const nativeCache = mobileCacheBridge();
+  const nativeCache = nativeCacheBridge();
   if (nativeCache) {
+    if (nativeCache.prune) {
+      await nativeCache.prune([...keep]);
+      return;
+    }
     const keys = await nativeCache.keys();
     await Promise.all(keys
       .filter((key) => !keep.has(key))
@@ -232,7 +262,7 @@ async function pruneApiCache(requiredPaths: string[]) {
 }
 
 export async function hasCompleteOfflineCopy(paths: string[]): Promise<boolean> {
-  const nativeCache = mobileCacheBridge();
+  const nativeCache = nativeCacheBridge();
   if (nativeCache) {
     const storedKeys = new Set(await nativeCache.keys());
     return paths.every((path) => storedKeys.has(cacheRequest(path).url));
@@ -273,14 +303,15 @@ export async function apiFetch(
   const method = (init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
   const cacheable = method === 'GET' && isOfflineCacheableApiPath(absoluteUrl(input));
   const request = cacheable ? cacheRequest(input) : null;
+  const online = refreshBrowserOnline();
 
-  if (method !== 'GET' && !browserOnline()) {
+  if (method !== 'GET' && !online) {
     const error = new OfflineWriteError();
     showNotice(error.message);
     throw error;
   }
 
-  if (cacheable && !browserOnline() && !options.forceNetwork) {
+  if (cacheable && !online && !options.forceNetwork) {
     const cached = await getApiCache(request!);
     if (cached) {
       setServerReachable(false);
@@ -289,26 +320,37 @@ export async function apiFetch(
     throw new OfflineDataUnavailableError(new URL(request!.url).pathname + new URL(request!.url).search);
   }
 
+  let response: Response;
   try {
-    const response = await fetch(input, init);
-    const offlineReplay = response.headers.get('X-CRAM-Offline') === 'true';
-    if (new URL(absoluteUrl(input)).pathname.startsWith('/api/')) setServerReachable(!offlineReplay);
-    if (cacheable && response.status < 500 && !offlineReplay) {
-      await putApiCache(request!, response.clone(), Boolean(options.requireCache));
-    }
-    return response;
+    response = await fetch(input, init);
   } catch (error) {
     if (new URL(absoluteUrl(input)).pathname.startsWith('/api/') && isNetworkFailure(error)) {
       setServerReachable(false);
     }
     if (cacheable) {
       const cached = await getApiCache(request!);
-      if (cached) return markOfflineReplay(cached);
+      if (cached) {
+        // Falling back to the snapshot is the point of offline support, but it
+        // must never look like a fresh read. A silent replay right after a
+        // write reads as "my change did not save" when the server in fact
+        // took it and only the confirming GET lost the network.
+        if (!options.requireCache) {
+          showNotice('The server could not be reached. Showing the last synced copy.');
+        }
+        return markOfflineReplay(cached);
+      }
       throw new OfflineDataUnavailableError(new URL(request!.url).pathname + new URL(request!.url).search);
     }
     if (method !== 'GET') showNotice('The server could not be reached. No changes were saved.');
     throw error;
   }
+
+  const offlineReplay = response.headers.get('X-CRAM-Offline') === 'true';
+  if (new URL(absoluteUrl(input)).pathname.startsWith('/api/')) setServerReachable(!offlineReplay);
+  if (cacheable && response.status < 500 && !offlineReplay) {
+    await putApiCache(request!, response.clone(), Boolean(options.requireCache));
+  }
+  return response;
 }
 
 async function fetchForSync<T>(path: string): Promise<T> {
@@ -398,7 +440,7 @@ let activeSync: Promise<void> | null = null;
 export function syncNow(): Promise<void> {
   if (activeSync) return activeSync;
   activeSync = (async () => {
-    if (!browserOnline()) {
+    if (!refreshBrowserOnline()) {
       setSyncPhase(lastSyncAt() ? 'ready' : 'idle');
       showNotice(lastSyncAt() ? 'Offline copy is ready, but it cannot be refreshed without a connection.' : 'Connect once to prepare CRAM for offline use.');
       return;
@@ -513,7 +555,7 @@ export function initializeOfflineSupport() {
   initialized = true;
   const cacheValidation = verifyStoredOfflineCopy(initialLastSync);
 
-  if (!isCramMobile() && 'serviceWorker' in navigator && import.meta.env.PROD) {
+  if (!isCramMobile() && !isCramDesktop() && 'serviceWorker' in navigator && import.meta.env.PROD) {
     navigator.serviceWorker.register('/sw.js').catch(() => {
       setSyncError('The offline app shell could not be installed.');
     });
@@ -546,6 +588,13 @@ export function initializeOfflineSupport() {
   window.setTimeout(() => {
     void cacheValidation.finally(() => syncNow());
   }, 0);
+}
+
+/** Test-only: the notice banner is module state shared across cases. */
+export function resetNoticeForTests() {
+  if (noticeTimer !== undefined && typeof window !== 'undefined') window.clearTimeout(noticeTimer);
+  noticeTimer = undefined;
+  setNotice(null);
 }
 
 export function disposeOfflineSupportForTests() {

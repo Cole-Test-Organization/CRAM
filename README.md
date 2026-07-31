@@ -190,15 +190,17 @@ automatically at calendar meeting start. Its keystrokes are protected by a
 device-local draft; general offline writes and automatic conflict reconciliation
 remain out of scope.
 
-Build and run it from `client/`:
+Build, install, and launch the terminal-independent local app from `client/`:
 
 ```bash
 npm install
-npm start
+npm run release:local
 ```
 
-See the client README for endpoint configuration, local storage location, and
-DMG packaging commands.
+That command also creates the local DMG/ZIP and is the repeatable local-update
+path. `npm start` remains available only as a terminal-attached development
+run. See the client README for endpoint configuration, local storage location,
+Apple signing, and packaging details.
 
 ### iPhone and iPad client
 

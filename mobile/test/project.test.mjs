@@ -85,10 +85,10 @@ test('the native bridge actions agree on both sides', () => {
     join(mobileRoot, 'CRAMMobile', 'Web', 'MobileBridge.swift'),
     'utf8',
   );
-  const browserBridge = readFileSync(
-    join(repoRoot, 'gui', 'src', 'lib', 'mobile.ts'),
-    'utf8',
-  );
+  const browserBridge = [
+    readFileSync(join(repoRoot, 'gui', 'src', 'lib', 'clientCache.ts'), 'utf8'),
+    readFileSync(join(repoRoot, 'gui', 'src', 'lib', 'mobile.ts'), 'utf8'),
+  ].join('\n');
 
   for (const action of [
     'put',

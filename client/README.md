@@ -3,7 +3,7 @@
 `client/` is a minimal Electron wrapper around the existing SolidJS GUI. It
 packages the application shell into the `.app`, proxies `/api` requests to the
 configured CRAM server while connected, and keeps the existing website offline
-snapshot in a persistent Electron session on the Mac.
+snapshot in a private, endpoint-specific native cache on the Mac.
 
 The desktop client intentionally has the same offline boundary as the website:
 
@@ -28,7 +28,7 @@ network access.
 - An Apple Silicon (`arm64`) or Intel (`x64`) Mac to create the corresponding
   DMG
 
-## Install dependencies and run
+## Development run
 
 From this folder:
 
@@ -37,10 +37,14 @@ npm install
 npm start
 ```
 
-`npm start` builds the shared GUI into `client/dist/renderer` and opens it in
-Electron. On first launch, connect Tailscale and wait for the CRAM header to show
-a successful sync time. After that, quit, disconnect, and reopen the app to
-verify the local read-only copy.
+`npm start` is a development command. It builds the shared GUI into
+`client/dist/renderer` and opens Electron as a child of that terminal, so
+closing the terminal also stops the development process. Use the packaged
+installation below for the normal terminal-independent app.
+
+On first launch, connect Tailscale and wait for the CRAM header to show a
+successful sync time. After that, quit, disconnect, and reopen the app to verify
+the local read-only copy.
 
 ## Server configuration
 
@@ -147,9 +151,45 @@ If the local shell itself fails, the window is now shown with an error dialog
 and a direct path to this log instead of remaining hidden behind
 `ready-to-show`.
 
-## Build a macOS installer
+## Build, install, and locally update on macOS
 
-Run on the target Mac:
+For this Mac, one command creates an ad-hoc-signed DMG/ZIP, installs or replaces
+the app under `~/Applications`, keeps the previous build as a rollback copy, and
+launches the packaged app:
+
+```bash
+npm run release:local
+```
+
+The installed `CRAM Desktop.app` is independent of Terminal. Packaged builds
+also register as a per-user login item when `launchAtLogin` is enabled, so the
+meeting scheduler can keep running after login. macOS may ask you to approve
+the login item and Local Network access the first time; Local Network access is
+required to refresh from a private LAN or Tailscale address, but the existing
+offline copy remains readable when that network is unavailable.
+
+If Local Network access was previously denied, open **System Settings → Privacy
+& Security → Local Network** and enable **CRAM Desktop**, then click the sync
+status in CRAM to retry. The same pane is available inside the app at **File →
+Open Local Network Privacy Settings**.
+
+Run the same command after pulling/building newer source to update the
+installation. The app must be quit during replacement. Application data is
+stored separately under `~/Library/Application Support/CRAM Desktop`, so
+replacing the `.app` does not remove the offline snapshot, configuration, or
+meeting drafts. The immediately previous app bundle is retained at:
+
+```text
+~/Library/Application Support/CRAM Desktop/Updates/Previous CRAM Desktop.bundle-backup
+```
+
+Artifacts land in `client/release/`, including
+`CRAM Desktop-<version>-<arch>.dmg`. The DMG can also be opened and dragged into
+`/Applications` manually; dragging a newer version over the old app is the
+manual update path.
+
+For a Developer ID release instead of this Mac-only local build, run:
+
 
 ```bash
 npm run dist:mac
@@ -162,19 +202,20 @@ npm run dist:mac:arm64
 npm run dist:mac:x64
 ```
 
-DMG and ZIP artifacts land in `client/release/`. If an Apple signing identity is
-available, electron-builder uses it. Without one, it creates an unsigned local
-build; macOS may require **Control-click → Open** the first time. Signing and
-notarization should be configured before distributing the application to other
-people.
+If a **Developer ID Application** signing identity is installed in the login
+keychain, electron-builder uses it. Apple Developer membership by itself does
+not install that certificate. Notarization credentials are also required before
+distributing the app to other people. `release:local` deliberately uses ad-hoc
+signing and does not require either credential.
 
 ## Local data
 
-Chromium CacheStorage and localStorage (including unsynced floating-note drafts)
-live under CRAM Desktop's macOS Application Support folder. The endpoint-keyed
-meeting schedule is stored there as a private JSON file. This storage is
-persistent but is not an encrypted vault. The application menu has
-**File → Open Local Data Folder** so the exact location can be inspected.
+The offline API snapshot uses an endpoint-specific native file cache, matching
+the storage boundary used by the Swift mobile client. Chromium localStorage
+(including unsynced floating-note drafts) and the endpoint-keyed meeting
+schedule live under the same macOS Application Support folder. This storage is
+persistent but is not an encrypted vault. The application menu has **File →
+Open Local Data Folder** so the exact location can be inspected.
 
 ## Validation
 

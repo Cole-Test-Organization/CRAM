@@ -87,8 +87,11 @@ test('proxies API method, query, headers, and body without touching remote UI co
   const handler = createProtocolHandler({
     rendererRoot,
     serverUrl: 'https://crm.example.test',
+    // Electron's session.fetch builds an undici Request from this init, which
+    // is where a streamed body is rejected. Construct one here so the stub
+    // cannot accept an init that the real client would throw on.
     fetchUpstream: async (url, init) => {
-      calls.push({ url, init });
+      calls.push({ url, init, upstream: new Request(url, init) });
       return new Response('{"ok":true}', {
         headers: { 'Content-Type': 'application/json' },
       });
@@ -99,7 +102,6 @@ test('proxies API method, query, headers, and body without touching remote UI co
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: '{"title":"Demo"}',
-    duplex: 'half',
   });
   const response = await handler(request);
 
@@ -110,6 +112,101 @@ test('proxies API method, query, headers, and body without touching remote UI co
   assert.equal(calls[0].init.headers.get('x-cram-client'), 'desktop');
   assert.ok(calls[0].init.signal instanceof AbortSignal);
   assert.equal(await new Response(calls[0].init.body).text(), '{"title":"Demo"}');
+  assert.equal(await calls[0].upstream.text(), '{"title":"Demo"}');
+});
+
+test('forwards a write body undici can send without a duplex option', async (t) => {
+  const rendererRoot = await mkdtemp(path.join(os.tmpdir(), 'cram-client-write-'));
+  t.after(() => rm(rendererRoot, { recursive: true, force: true }));
+  const calls = [];
+  const handler = createProtocolHandler({
+    rendererRoot,
+    serverUrl: 'https://crm.example.test',
+    fetchUpstream: async (url, init) => {
+      // A ReadableStream body throws "duplex option is required" here, exactly
+      // as it did in the packaged client when saving meeting notes.
+      calls.push({ init, upstream: new Request(url, init) });
+      return new Response('{"id":574}', {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    },
+  });
+
+  const response = await handler(new Request(`${APP_URL}api/meetings/574`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{"body":"Meeting notes"}',
+  }));
+
+  assert.equal(response.status, 200);
+  assert.equal(calls.length, 1);
+  assert.ok(!(calls[0].init.body instanceof ReadableStream));
+  assert.equal(calls[0].init.duplex, undefined);
+  assert.equal(await calls[0].upstream.text(), '{"body":"Meeting notes"}');
+});
+
+test('omits a request body entirely for bodyless methods', async (t) => {
+  const rendererRoot = await mkdtemp(path.join(os.tmpdir(), 'cram-client-bodyless-'));
+  t.after(() => rm(rendererRoot, { recursive: true, force: true }));
+  const calls = [];
+  const handler = createProtocolHandler({
+    rendererRoot,
+    serverUrl: 'https://crm.example.test',
+    fetchUpstream: async (url, init) => {
+      calls.push({ init, upstream: new Request(url, init) });
+      return new Response(null, { status: 204 });
+    },
+  });
+
+  for (const method of ['GET', 'DELETE']) {
+    await handler(new Request(`${APP_URL}api/meetings/574`, { method }));
+  }
+
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((call) => call.init.body === undefined));
+});
+
+test('keeps an expected 404 out of the warning stream but still records it', async (t) => {
+  const rendererRoot = await mkdtemp(path.join(os.tmpdir(), 'cram-client-404-'));
+  t.after(() => rm(rendererRoot, { recursive: true, force: true }));
+  const diagnostics = [];
+  const handler = createProtocolHandler({
+    rendererRoot,
+    serverUrl: 'https://crm.example.test',
+    // `/accounts/:id/details` 404s for every account with no tech profile, so a
+    // full sync produces hundreds of these. They must not bury real failures.
+    fetchUpstream: async (url) => new Response('{"error":"none yet"}', {
+      status: url.endsWith('/details') ? 404 : 500,
+    }),
+    onDiagnostic: (...event) => diagnostics.push(event),
+  });
+
+  await handler(new Request(`${APP_URL}api/accounts/7/details`));
+  await handler(new Request(`${APP_URL}api/accounts/7/org-chart`));
+
+  assert.equal(diagnostics.length, 2);
+  assert.equal(diagnostics[0][0], 'debug');
+  assert.equal(diagnostics[0][2].status, 404);
+  assert.equal(diagnostics[1][0], 'error');
+  assert.equal(diagnostics[1][2].status, 500);
+});
+
+test('reports the elapsed time a timed-out request actually took', async (t) => {
+  const rendererRoot = await mkdtemp(path.join(os.tmpdir(), 'cram-client-elapsed-'));
+  t.after(() => rm(rendererRoot, { recursive: true, force: true }));
+  const handler = createProtocolHandler({
+    rendererRoot,
+    serverUrl: 'https://crm.example.test',
+    fetchUpstream: () => new Promise(() => {}),
+    apiTimeoutMs: 10,
+  });
+
+  await assert.rejects(
+    handler(new Request(`${APP_URL}api/accounts`)),
+    // A sleeping laptop wakes long past the limit, so the message must not
+    // claim the limit was the duration.
+    (error) => /exceeded its 10ms limit \(elapsed \d+ms\)/.test(error.message),
+  );
 });
 
 test('times out a stalled API proxy request and emits a sanitized diagnostic', async (t) => {

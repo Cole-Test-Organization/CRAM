@@ -1,6 +1,7 @@
 {
   "name": "cram-desktop",
-  "version": "1.0.0",
+  "productName": "CRAM Desktop",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "Minimal macOS Electron client for CRAM with durable offline reads.",
@@ -14,11 +15,15 @@
     "build:renderer": "npm --prefix ../gui run build -- --outDir ../client/dist/renderer",
     "start": "npm run build:renderer && electron .",
     "test": "node --test",
-    "check": "node --check src/main.mjs && node --check src/config.mjs && node --check src/logger.mjs && node --check src/protocol.mjs && node --check src/meeting-scheduler.mjs && node --check src/preload.cjs && npm test",
+    "check": "node --check src/main.mjs && node --check src/config.mjs && node --check src/logger.mjs && node --check src/protocol.mjs && node --check src/response-cache.mjs && node --check src/meeting-scheduler.mjs && node --check src/preload.cjs && node --check scripts/install-local.cjs && npm test",
     "pack": "npm run build:renderer && electron-builder --dir",
+    "pack:local": "npm run build:renderer && electron-builder --dir --mac --config.mac.identity=-",
     "dist:mac": "npm run build:renderer && electron-builder --mac dmg zip",
+    "dist:mac:local": "npm run build:renderer && electron-builder --mac dmg zip --config.mac.identity=-",
     "dist:mac:arm64": "npm run build:renderer && electron-builder --mac dmg zip --arm64",
-    "dist:mac:x64": "npm run build:renderer && electron-builder --mac dmg zip --x64"
+    "dist:mac:x64": "npm run build:renderer && electron-builder --mac dmg zip --x64",
+    "install:local": "npm run pack:local && node scripts/install-local.cjs",
+    "release:local": "npm run dist:mac:local && node scripts/install-local.cjs"
   },
   "devDependencies": {
     "electron": "43.2.0",
@@ -43,6 +48,7 @@
       "minimumSystemVersion": "12.0.0",
       "icon": "../gui/public/icon-512.png",
       "extendInfo": {
+        "NSLocalNetworkUsageDescription": "CRAM Desktop connects to your private CRAM server over your local or Tailscale network so it can refresh the offline CRM copy.",
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": false,
           "NSAllowsLocalNetworking": true,

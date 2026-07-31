@@ -2,9 +2,14 @@ import {
   isCramMobile,
   openMobileMeetingNotes,
 } from './mobile';
+import {
+  isClientCacheBridge,
+  type ClientCacheBridge,
+} from './clientCache';
 
 type CramDesktopBridge = {
   isDesktop: true;
+  cache: ClientCacheBridge;
   openMeetingNotes: (meetingId: number) => Promise<{
     opened: boolean;
     meetingId: number;
@@ -16,12 +21,22 @@ function desktopBridge(): CramDesktopBridge | null {
   const candidate = (window as Window & { cramDesktop?: unknown }).cramDesktop;
   if (!candidate || typeof candidate !== 'object') return null;
   const bridge = candidate as Partial<CramDesktopBridge>;
-  if (bridge.isDesktop !== true || typeof bridge.openMeetingNotes !== 'function') return null;
+  if (
+    bridge.isDesktop !== true
+    || !isClientCacheBridge(bridge.cache)
+    || typeof bridge.openMeetingNotes !== 'function'
+  ) {
+    return null;
+  }
   return bridge as CramDesktopBridge;
 }
 
 export function isCramDesktop() {
   return desktopBridge() !== null;
+}
+
+export function desktopCacheBridge(): ClientCacheBridge | null {
+  return desktopBridge()?.cache || null;
 }
 
 export async function openFloatingMeetingNotes(meetingId: number) {
