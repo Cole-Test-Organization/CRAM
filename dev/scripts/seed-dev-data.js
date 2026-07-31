@@ -79,6 +79,53 @@ async function loadVendorProductCatalog() {
 	};
 }
 
+// The per-user `products` table is a different namespace from vendor_products,
+// and neither its ids nor its exact names are stable. Ids advance as the
+// catalog is re-seeded per user (a live dev DB can start at 4, with gaps), and
+// the names drift between the migration-seeded catalog and a customized one —
+// "GlobalProtect" in one is "GlobalProtect/PAA" in another. So match on a
+// normalized key, then fall back to a prefix match.
+function productKey(name) {
+	return String(name)
+		.split('/')[0]              // "GlobalProtect/PAA" -> "GlobalProtect"
+		.toLowerCase()
+		.replace(/[^a-z0-9]/g, '');
+}
+
+async function loadProductCatalog() {
+	const res = await fetch(`${API}/products?limit=500`);
+	if (!res.ok) throw new Error(`Failed to load product catalog: ${res.status}`);
+	const { products } = await res.json();
+	const byKey = new Map();
+	for (const p of products) {
+		const key = productKey(p.name);
+		if (!byKey.has(key)) byKey.set(key, p.id);
+	}
+	return {
+		// Unresolved products warn and drop out rather than aborting the run: a
+		// dev seed is still useful with one product link missing, and failing
+		// the whole dataset over a renamed catalog entry helps nobody.
+		ids(...names) {
+			const resolved = [];
+			for (const name of names) {
+				const key = productKey(name);
+				let id = byKey.get(key);
+				if (!id) {
+					for (const [candidate, candidateId] of byKey) {
+						if (candidate.startsWith(key) || key.startsWith(candidate)) {
+							id = candidateId;
+							break;
+						}
+					}
+				}
+				if (id) resolved.push(id);
+				else console.warn(`  ! product "${name}" not in this catalog — skipping that link`);
+			}
+			return resolved;
+		},
+	};
+}
+
 function daysFromNow(n) {
 	const d = new Date();
 	d.setDate(d.getDate() + n);
@@ -513,54 +560,57 @@ async function main() {
 	}
 
 	console.log('Creating opportunities…');
-	// product_ids reference the seeded Palo Alto catalog (see migrations
-	// 1000000000012 / 1000000000014). IDs are stable because the catalog
-	// is seeded by migration in fixed order.
+	// Products are named, not numbered — see loadProductCatalog above.
 	const opportunities = [
-		{ customer: 'acme-manufacturing', name: 'Acme — XDR Replacement', stage: 'pov_tech_validation', product_ids: [1, 2],
+		{ customer: 'acme-manufacturing', name: 'Acme — XDR Replacement', stage: 'pov_tech_validation', products: ['Cortex XDR', 'Cortex XSIAM'],
 			why_change: ['Legacy AV missing modern fileless threats', 'IR retainer flagging dwell time > 30 days'],
 			why_now: ['Cyber insurance renewal Q3 requires EDR with behavioral detection'],
 			why_us: ['MITRE Engenuity coverage', 'Cortex XSIAM as path to consolidate SOC tooling'] },
-		{ customer: 'riverstone-health', name: 'Riverstone — Endpoint Modernization', stage: 'tech_discovery', product_ids: [1, 2],
+		{ customer: 'riverstone-health', name: 'Riverstone — Endpoint Modernization', stage: 'tech_discovery', products: ['Cortex XDR', 'Cortex XSIAM'],
 			why_change: ['HIPAA audit flagged endpoint visibility gap', '14-site deployment overhead with current vendor'],
 			why_now: ['Legacy AV contract expires October 2026'],
 			why_us: ['VDI-aware sensor', 'Healthcare references with similar Citrix footprint'] },
-		{ customer: 'blueoak-financial', name: 'BlueOak — SOC Consolidation', stage: 'non_pov_tech_validation', product_ids: [2, 5],
+		{ customer: 'blueoak-financial', name: 'BlueOak — SOC Consolidation', stage: 'non_pov_tech_validation', products: ['Cortex XSIAM', 'Unit 42'],
 			why_change: ['SOC analyst turnover, hiring market is rough', 'Tool sprawl across 5 vendors'],
 			why_now: ['FFIEC exam scheduled for Q3'],
 			why_us: ['XSIAM + Unit 42 managed offering replaces three vendors'] },
-		{ customer: 'northland-credit-union', name: 'Northland — 24x7 Monitoring', stage: 'opp_identification', product_ids: [2],
+		{ customer: 'northland-credit-union', name: 'Northland — 24x7 Monitoring', stage: 'opp_identification', products: ['Cortex XSIAM'],
 			why_change: ['No after-hours coverage today', 'Recent phishing incident undetected for 4 days'],
 			why_now: ['NCUA examiner requested enhanced monitoring in last review'],
 			why_us: ['Lower TCO than building in-house SOC at their scale'] },
-		{ customer: 'pearl-mining-logistics', name: 'Pearl Mining — OT Visibility & Segmentation', stage: 'tech_discovery', product_ids: [9, 11, 1],
+		{ customer: 'pearl-mining-logistics', name: 'Pearl Mining — OT Visibility & Segmentation', stage: 'tech_discovery', products: ['PA-Series Firewalls', 'Panorama', 'Cortex XDR'],
 			why_change: ['OT network is flat — IT and ICS share L2', 'No telemetry on PLC traffic'],
 			why_now: ['Ransomware hit a peer mining op last month — board wants action'],
 			why_us: ['OT signatures + segmentation playbook for mining'] },
-		{ customer: 'cascade-insurance', name: 'Cascade — SASE Rollout', stage: 'pov_planning', product_ids: [13, 17, 16],
+		{ customer: 'cascade-insurance', name: 'Cascade — SASE Rollout', stage: 'pov_planning', products: ['Prisma Access', 'GlobalProtect', 'CASB'],
 			why_change: ['Phishing-driven account compromise pattern', 'Legacy VPN is the bottleneck'],
 			why_now: ['Cyber insurance renewal demands hardware-key MFA and inline web filtering'],
 			why_us: ['Prisma Access + CASB + GlobalProtect as one platform'] },
-		{ customer: 'sentinel-aerospace', name: 'Sentinel — CMMC L2 Boundary', stage: 'tech_decision_pending', product_ids: [9, 11, 1],
+		{ customer: 'sentinel-aerospace', name: 'Sentinel — CMMC L2 Boundary', stage: 'tech_decision_pending', products: ['PA-Series Firewalls', 'Panorama', 'Cortex XDR'],
 			why_change: ['Current boundary controls don\'t map cleanly to CMMC AC/SC families'],
 			why_now: ['DoD contract requires CMMC L2 certification by December 2026'],
 			why_us: ['CMMC reference architecture', 'Pre-built control mapping docs'] },
-		{ customer: 'granite-state-university', name: 'Granite State — Email & Web Security', stage: 'pov_tech_validation', product_ids: [13, 16],
+		{ customer: 'granite-state-university', name: 'Granite State — Email & Web Security', stage: 'pov_tech_validation', products: ['Prisma Access', 'CASB'],
 			why_change: ['Phishing → student credential theft, repeating incidents each semester'],
 			why_now: ['Budget freed up post-audit findings'],
 			why_us: ['Native Google Workspace integration', 'Better admin UX than incumbent'] },
-		{ customer: 'meridian-telecom', name: 'Meridian — SASE-as-a-Service Platform', stage: 'tech_discovery', product_ids: [13, 14, 18],
+		{ customer: 'meridian-telecom', name: 'Meridian — SASE-as-a-Service Platform', stage: 'tech_discovery', products: ['Prisma Access', 'Prisma SD-WAN', 'Prisma Browser'],
 			why_change: ['SMB customers demanding SASE, current upstream can\'t deliver'],
 			why_now: ['Lost two prospects to competitors who already had this'],
 			why_us: ['Multi-tenant management', 'White-label options for MSP partners'] },
-		{ customer: 'harbormaster-logistics', name: 'Harbormaster — Post-Breach Rebuild', stage: 'pov_planning', product_ids: [1, 2, 17, 5],
+		{ customer: 'harbormaster-logistics', name: 'Harbormaster — Post-Breach Rebuild', stage: 'pov_planning', products: ['Cortex XDR', 'Cortex XSIAM', 'GlobalProtect', 'Unit 42'],
 			why_change: ['Recently breached, IR completed last month', 'Old stack proven inadequate'],
 			why_now: ['Board allocated emergency budget with a 90-day implementation window'],
 			why_us: ['Rapid deploy with Unit 42 retainer attached', 'Identity-first rebuild aligned to their plan'] },
 	];
+	const productCatalog = await loadProductCatalog();
 	for (const o of opportunities) {
-		const { customer, ...body } = o;
-		await post('/opportunities', { account_id: customerIds[customer], ...body });
+		const { customer, products, ...body } = o;
+		await post('/opportunities', {
+			account_id: customerIds[customer],
+			product_ids: productCatalog.ids(...products),
+			...body,
+		});
 	}
 
 	console.log('Creating meetings…');
