@@ -149,6 +149,16 @@ If DEV.md's command ever diverges from what's pasted here, **DEV.md wins** — u
 docker compose --profile prod up -d --build
 ```
 
+**Restarting prod — use the script, from either host:**
+
+```bash
+./scripts/restart-prod.sh
+```
+
+It reads `LOG_ENV_LABEL` itself and does the right thing: on the prod host it restarts locally (`down` → `git pull --ff-only` → `up -d --build`); on a **dev** host it re-runs itself over SSH on the prod box rather than rebuilding the dev stack. Prefer it over hand-composing the commands above — "restart prod" typed on the dev host otherwise turns into a dev rebuild that tears down the observability profiles.
+
+**Push before you run it.** Prod rebuilds from `git pull`, not from your working tree, so unpushed commits yield a restart that succeeds and ships stale code — the failure mode where every step reports green and nothing changed. The script warns about unpushed commits and a dirty tree, but the warning scrolls past in the build output; verify `git log @{u}..HEAD` is empty first.
+
 Skipping the env check is not a judgment call. The cost of `cat .env | grep LOG_ENV_LABEL` is trivial; the cost of running a prod rebuild on a dev host (or vice versa) is hours of phantom debugging.
 
 ### Run the test suite after every change — MANDATORY
