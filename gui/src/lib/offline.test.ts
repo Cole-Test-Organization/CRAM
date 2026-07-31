@@ -12,6 +12,7 @@ import {
   setConnectionMode,
 } from './offline';
 import {
+  isWriteQueued,
   queuedWriteCount,
   replayWriteQueue,
   resetWriteQueueForTests,
@@ -279,6 +280,23 @@ describe('offline API transport', () => {
     // local draft and report "Saved to CRAM" for data only held locally.
     expect(fetchMock).not.toHaveBeenCalled();
     expect(queuedWriteCount()).toBe(1);
+  });
+
+  it('marks a queued write as accepted so optimistic UI does not roll it back', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+    await setConnectionMode('offline');
+
+    // Caught live in the packaged app: AccountList reverted the star it had
+    // just flipped, leaving the row contradicting the write sitting in the
+    // queue. Call sites need to tell "queued" apart from "failed".
+    const error = await apiFetch('/api/accounts/146', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"favorite":false}',
+    }).catch((caught) => caught);
+
+    expect(isWriteQueued(error)).toBe(true);
+    expect(isWriteQueued(new TypeError('Failed to fetch'))).toBe(false);
   });
 
   it('makes no network call at all for an Offline-mode read', async () => {

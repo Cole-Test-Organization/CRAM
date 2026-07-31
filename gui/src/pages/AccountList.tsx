@@ -4,6 +4,7 @@ import { api } from '../lib/api';
 import { AccountFormModal, AccountReviewModal } from '../components/FormModals';
 import Button from '../components/Button';
 import { createPersistentSignal } from '../lib/persistentSignal';
+import { isWriteQueued } from '../lib/writeQueue';
 
 export default function AccountList(props: { type?: 'account' | 'partner' }) {
   const [filter, setFilter] = createSignal('');
@@ -54,8 +55,10 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
     try {
       await api.clearAccountReview(ids);
       refetch();
-    } catch {
-      if (snapshot) mutate(snapshot);
+    } catch (error) {
+      // A queued write is accepted, not failed — keep the optimistic rows so
+      // the list does not contradict what is sitting in the offline queue.
+      if (snapshot && !isWriteQueued(error)) mutate(snapshot);
     } finally {
       setApproving(false);
     }
@@ -68,7 +71,8 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
     });
 
   // Toggle favorite optimistically — re-sort favorites to the top to match the
-  // server ordering (favorite DESC, name ASC). On error, revert to the snapshot.
+  // server ordering (favorite DESC, name ASC). On a real failure, revert to the
+  // snapshot; a write queued offline is accepted and must keep its update.
   const toggleFavorite = async (acct: any) => {
     const current = data();
     if (!current) return;
@@ -77,8 +81,8 @@ export default function AccountList(props: { type?: 'account' | 'partner' }) {
     mutate({ ...current, accounts: updated });
     try {
       await api.patchAccount(acct.id, { favorite: next });
-    } catch {
-      mutate(current);
+    } catch (error) {
+      if (!isWriteQueued(error)) mutate(current);
     }
   };
 

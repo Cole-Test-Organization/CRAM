@@ -35,6 +35,15 @@ export class WriteQueuedError extends Error {
   }
 }
 
+/**
+ * A queued write is accepted, not failed. Optimistic UI must keep its update
+ * rather than roll it back — the change is going to land, and reverting leaves
+ * the screen contradicting the queue.
+ */
+export function isWriteQueued(error: unknown): boolean {
+  return error instanceof WriteQueuedError;
+}
+
 export class WriteQueueFullError extends Error {
   constructor() {
     super(`The offline queue is full (${MAX_ENTRIES} changes). Go back online to sync before editing more.`);

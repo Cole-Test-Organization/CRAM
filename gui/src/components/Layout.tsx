@@ -154,7 +154,8 @@ export default function Layout(props: ParentProps) {
                 <div class="mt-auto px-3 pt-5">
                     <SyncStatus />
                     <div class="text-[9px] text-base-500 leading-relaxed mt-2 px-1">
-                        Offline mode is read-only. Open CRAM while connected to refresh this device.
+                        Offline mode stops all network requests. Reads come from the last sync and
+                        your edits are queued until you go back online.
                     </div>
                 </div>
             </aside>
