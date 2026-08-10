@@ -93,7 +93,8 @@ docker compose --profile prod up -d --build
 | `SELF_DOMAINS` | Comma-separated company email domains; contacts/attendees from them are flagged "internal" (skipped for account creation + outreach). `setup.sh` seeds it from your email — a bootstrap default until you curate the list in Settings. |
 | `LOCAL_BASE_URL` | The agent runs on a **local LLM** — by default Ollama on the device hosting the app. Point this at a LAN machine to use a server elsewhere. No API keys required. The *model* is chosen per-user in the GUI (**Settings → Agent LLM**) or auto-selected from what your Ollama has installed — there is no model env var. |
 | `POSTGRES_*` | DB credentials for the bundled compose stack |
-| `BIND_ADDRESS` | Host interface the app's ports (3200, 3100) bind to. `127.0.0.1` = this machine only (**default**); set `0.0.0.0` to expose CRAM on your LAN. Postgres always stays local. |
+| `BIND_ADDRESS` | Host interface the app ports bind to. `127.0.0.1` = this machine only (**default**); set `0.0.0.0` to expose CRAM on your LAN. Postgres always stays local. |
+| `API_HOST_PORT`, `MCP_HOST_PORT`, `GUI_PORT`, `GRAFANA_HOST_PORT` | Optional host-port overrides. Container-internal service ports stay unchanged. |
 | `TODOIST_ENABLED` | Set `false` to skip the Todoist integration entirely |
 
 The agent runs entirely on a local LLM (Ollama on the device by default). Choose the model and where it runs — this device or another machine on your LAN — per-user in the GUI (**Settings → Agent LLM**); the env vars above are the server-wide default.

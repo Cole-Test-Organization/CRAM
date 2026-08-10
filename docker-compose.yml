@@ -137,8 +137,8 @@ services:
     ports:
       # BIND_ADDRESS = host interface to bind to. 127.0.0.1 (default) keeps the
       # app on this machine only; 0.0.0.0 exposes it on the LAN. Set in .env.
-      - "${BIND_ADDRESS:-127.0.0.1}:3200:3200"
-      - "${BIND_ADDRESS:-127.0.0.1}:3100:3100"
+      - "${BIND_ADDRESS:-127.0.0.1}:${API_HOST_PORT:-3200}:3200"
+      - "${BIND_ADDRESS:-127.0.0.1}:${MCP_HOST_PORT:-3100}:3100"
       - "${PROVISIONING_RDP_TUNNEL_PUBLISH_ADDRESS:-127.0.0.1}:13389-13399:13389-13399"
     profiles: ["prod"]
 
@@ -233,8 +233,8 @@ services:
       - ${HOME}/.ssh/id_rsa.pub:/root/.ssh/id_rsa.pub:ro
     ports:
       # BIND_ADDRESS = host interface to bind to (see app service / .env).
-      - "${BIND_ADDRESS:-127.0.0.1}:3200:3200"
-      - "${BIND_ADDRESS:-127.0.0.1}:3100:3100"
+      - "${BIND_ADDRESS:-127.0.0.1}:${API_HOST_PORT:-3200}:3200"
+      - "${BIND_ADDRESS:-127.0.0.1}:${MCP_HOST_PORT:-3100}:3100"
       - "${BIND_ADDRESS:-127.0.0.1}:${GUI_PORT:-80}:80"
       - "${PROVISIONING_RDP_TUNNEL_PUBLISH_ADDRESS:-127.0.0.1}:13389-13399:13389-13399"
     profiles: ["dev"]
