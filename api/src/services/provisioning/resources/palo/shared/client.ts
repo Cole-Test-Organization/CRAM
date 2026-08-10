@@ -17,6 +17,12 @@ export class PanosApiError extends Error {
     }
 }
 
+export interface LicenseDeactivationCommandResult {
+    /** PAN-OS returned a success response (and any returned job finished OK). */
+    acknowledged: boolean;
+    jobId: string | null;
+}
+
 export class PanosApiClient {
     private apiKey: string | null = null;
 
@@ -96,17 +102,31 @@ export class PanosApiClient {
         await this.op("<request><license><fetch></fetch></license></request>");
     }
 
-    async setLicenseDeactivationApiKey(apiKey: string): Promise<void> {
-        await this.op(
+    async setLicenseDeactivationApiKey(apiKey: string): Promise<boolean> {
+        const body = await this.op(
             `<request><license><api-key><set><key>${xmlEscape(apiKey)}</key></set></api-key></license></request>`,
+            // PAN-OS documentation says installing this key reboots a VM-Series
+            // firewall. A reset after accepting the command is therefore not, by
+            // itself, proof that installation failed; the lifecycle waits for API
+            // recovery before attempting deactivation.
+            { ignoreDisconnect: true },
         );
+        return body.length > 0;
     }
 
-    async deactivateVmSeriesLicense(timeoutMs = 300_000): Promise<void> {
+    async deactivateVmSeriesLicense(
+        timeoutMs = 300_000,
+    ): Promise<LicenseDeactivationCommandResult> {
         const body = await this.op(
             "<request><license><deactivate><VM-Capacity><mode>auto</mode></VM-Capacity></deactivate></license></request>",
             { ignoreDisconnect: true },
         );
+        if (!body) {
+            this.log(
+                "PAN-OS disconnected before acknowledging license deactivation; verifying the license state before destroy",
+            );
+            return { acknowledged: false, jobId: null };
+        }
         const jobId = xmlText(body, "job");
         if (jobId) {
             this.log(`PAN-OS license deactivation started (job ${jobId})`);
@@ -116,10 +136,12 @@ export class PanosApiClient {
                 `license deactivation job ${jobId}`,
             );
             this.log(`PAN-OS license deactivation finished (job ${jobId})`);
+            return { acknowledged: true, jobId };
         } else {
             this.log(
                 "PAN-OS license deactivation completed (no job id returned)",
             );
+            return { acknowledged: true, jobId: null };
         }
     }
 

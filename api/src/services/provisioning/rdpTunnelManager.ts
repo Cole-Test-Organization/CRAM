@@ -101,7 +101,7 @@ export class RdpTunnelManager {
 
   async open(resource: ResourceRecord, options: TunnelOpenOptions = {}): Promise<TunnelView> {
     const protocol = options.protocol ?? "rdp";
-    const existing = this.findByResource(resource.id) ?? this.findByResource(resource.hostname);
+    const existing = this.findByResource(resource.id, protocol) ?? this.findByResource(resource.hostname, protocol);
     if (existing?.status === "running" || existing?.status === "opening") {
       return toView(existing);
     }
@@ -119,7 +119,10 @@ export class RdpTunnelManager {
 
     const publicPort = await this.selectPublicPort(options.port ?? null);
     const internalPort = await this.selectInternalPort();
-    const remotePort = sanitizePort(options.remotePort ?? defaultRemotePort(protocol), "remotePort");
+    const remotePort = sanitizePort(
+      options.remotePort ?? extractAdvertisedRemotePort(resource.outputs, protocol) ?? defaultRemotePort(protocol),
+      "remotePort",
+    );
     const ttlSeconds = options.ttlSeconds == null
       ? this.defaultTtlSeconds
       : sanitizeNonNegativeInteger(options.ttlSeconds, "ttlSeconds");
@@ -212,9 +215,10 @@ export class RdpTunnelManager {
     return toView(tunnel);
   }
 
-  private findByResource(idOrHostname: string): TunnelRecord | null {
+  private findByResource(idOrHostname: string, protocol?: TunnelProtocol): TunnelRecord | null {
     return [...this.tunnels.values()].find((tunnel) => (
-      tunnel.resourceId === idOrHostname || tunnel.hostname === idOrHostname
+      (!protocol || tunnel.protocol === protocol) &&
+      (tunnel.resourceId === idOrHostname || tunnel.hostname === idOrHostname)
     )) ?? null;
   }
 
@@ -408,9 +412,49 @@ function validateResourceProtocol(resource: ResourceRecord, protocol: TunnelProt
   if (protocol === "rdp" && resource.kind !== "windows-endpoint") {
     throw httpError(400, `${resource.hostname} is not a Windows endpoint`);
   }
-  if (protocol === "ssh" && resource.kind !== "ubuntu-server") {
-    throw httpError(400, `${resource.hostname} is not a Linux SSH endpoint`);
+  if (protocol === "rdp" && hasExplicitlyDisabledRemotePort(resource.outputs, "rdp_port")) {
+    throw httpError(400, `${resource.hostname} does not advertise an inbound RDP service`);
   }
+  if (
+    protocol === "ssh" &&
+    resource.kind !== "ubuntu-server" &&
+    resource.kind !== "windows-endpoint"
+  ) {
+    throw httpError(400, `${resource.hostname} is not an SSH-capable endpoint`);
+  }
+  if (
+    protocol === "ssh" &&
+    resource.kind === "windows-endpoint" &&
+    extractAdvertisedRemotePort(resource.outputs, "ssh") === null
+  ) {
+    throw httpError(400, `${resource.hostname} does not advertise an inbound SSH service`);
+  }
+}
+
+function hasExplicitlyDisabledRemotePort(
+  outputs: Record<string, unknown> | null | undefined,
+  field: "rdp_port" | "ssh_port",
+): boolean {
+  const endpoint = outputs?.endpoint;
+  return Boolean(
+    endpoint &&
+    typeof endpoint === "object" &&
+    !Array.isArray(endpoint) &&
+    Object.prototype.hasOwnProperty.call(endpoint, field) &&
+    (endpoint as Record<string, unknown>)[field] === null,
+  );
+}
+
+function extractAdvertisedRemotePort(
+  outputs: Record<string, unknown> | null | undefined,
+  protocol: TunnelProtocol,
+): number | null {
+  const endpoint = outputs?.endpoint;
+  if (!endpoint || typeof endpoint !== "object" || Array.isArray(endpoint)) return null;
+  const value = (endpoint as Record<string, unknown>)[protocol === "rdp" ? "rdp_port" : "ssh_port"];
+  return typeof value === "number" && Number.isInteger(value) && value > 0 && value <= 65535
+    ? value
+    : null;
 }
 
 function appendLog(tunnel: TunnelRecord, line: string): void {
@@ -433,6 +477,11 @@ function extractRdpUsername(outputs: Record<string, unknown> | null | undefined)
 }
 
 function extractSshUsername(outputs: Record<string, unknown> | null | undefined): string {
+  const endpoint = outputs?.endpoint;
+  if (endpoint && typeof endpoint === "object" && !Array.isArray(endpoint)) {
+    const username = (endpoint as { ssh_username?: unknown }).ssh_username;
+    if (typeof username === "string" && username) return username;
+  }
   const server = outputs?.server;
   if (server && typeof server === "object" && !Array.isArray(server)) {
     const username = (server as { ssh_username?: unknown }).ssh_username;

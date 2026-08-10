@@ -23,17 +23,20 @@ export async function proxmoxGet<T>(
 export async function proxmoxPost<T>(
   connection: ProxmoxConnection,
   apiPath: string,
+  form?: ProxmoxForm,
 ): Promise<T> {
-  return await proxmoxRequest<T>(connection, "POST", apiPath);
+  return await proxmoxRequest<T>(connection, "POST", apiPath, form);
 }
 
 async function proxmoxRequest<T>(
   connection: ProxmoxConnection,
   method: "GET" | "POST",
   apiPath: string,
+  form?: ProxmoxForm,
 ): Promise<T> {
   const endpoint = connection.endpoint.replace(/\/+$/, "");
   const url = new URL(`/api2/json${apiPath}`, endpoint);
+  const body = form ? encodeProxmoxForm(form) : "";
 
   return await new Promise<T>((resolve, reject) => {
     const request = https.request(
@@ -42,6 +45,10 @@ async function proxmoxRequest<T>(
         method,
         headers: {
           Authorization: `PVEAPIToken=${connection.apiToken}`,
+          ...(body ? {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Length": Buffer.byteLength(body),
+          } : {}),
         },
         rejectUnauthorized: !(connection.insecure ?? false),
         timeout: 15_000,
@@ -70,6 +77,18 @@ async function proxmoxRequest<T>(
       request.destroy(new Error(`Timed out calling ${url.origin}${url.pathname}`));
     });
     request.on("error", reject);
-    request.end();
+    request.end(body || undefined);
   });
+}
+
+type ProxmoxFormScalar = string | number | boolean;
+type ProxmoxForm = Record<string, ProxmoxFormScalar | readonly ProxmoxFormScalar[]>;
+
+function encodeProxmoxForm(form: ProxmoxForm): string {
+  const params = new URLSearchParams();
+  for (const [key, rawValue] of Object.entries(form)) {
+    const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+    for (const value of values) params.append(key, String(value));
+  }
+  return params.toString();
 }

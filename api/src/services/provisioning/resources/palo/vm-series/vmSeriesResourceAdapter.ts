@@ -22,12 +22,23 @@ import { terraformApplyVm, terraformDestroyVm } from "../../../providers/proxmox
 import { resolveProjectPath, toProjectRelativePath } from "../../../utils/paths.js";
 import { expandVmSeriesConfigProfiles } from "./configProfiles.js";
 
+interface ProxmoxTerraformLifecycle {
+  apply: typeof terraformApplyVm;
+  destroy: typeof terraformDestroyVm;
+}
+
+const defaultProxmoxTerraformLifecycle: ProxmoxTerraformLifecycle = {
+  apply: terraformApplyVm,
+  destroy: terraformDestroyVm,
+};
+
 export class VmSeriesResourceAdapter implements ResourceAdapter<PanwVmseriesResourceConfig> {
   readonly kind = "panw-vmseries";
 
   constructor(
     private readonly panwBootstrap = new PanwBootstrapService(),
     private readonly terraformResource = new GenericTerraformResourceAdapter<PanwVmseriesResourceConfig>(),
+    private readonly proxmoxTerraform = defaultProxmoxTerraformLifecycle,
   ) {}
 
   async prepareDeployment(
@@ -74,7 +85,12 @@ export class VmSeriesResourceAdapter implements ResourceAdapter<PanwVmseriesReso
         context.configPath,
       );
       log("Applying Proxmox Terraform module");
-      applyResult = await terraformApplyVm(config, bootstrap.isoPath, log, context.deployment.name);
+      applyResult = await this.proxmoxTerraform.apply(
+        config,
+        bootstrap.isoPath,
+        log,
+        context.deployment.name,
+      );
     } else {
       applyResult = await context.terraform.apply(context, log);
     }
@@ -112,7 +128,7 @@ export class VmSeriesResourceAdapter implements ResourceAdapter<PanwVmseriesReso
       const isoPath = record.bootstrapIsoPath
         ? resolveProjectPath(record.bootstrapIsoPath)
         : "";
-      await terraformDestroyVm(
+      await this.proxmoxTerraform.destroy(
         config,
         record.terraformStatePath ?? null,
         log,
@@ -136,7 +152,7 @@ export class VmSeriesResourceAdapter implements ResourceAdapter<PanwVmseriesReso
         await context.stateRepository.patchResource(record.id, {
           lifecycleStatus: "panos_bootstrapping",
         });
-        const outputs = await context.terraform.readOutputs(context, record, log);
+        const outputs = await this.readOutputsForAction(context, record, log);
         return await this.bootstrapFirewall(context, record, outputs, log);
       }
       case "apply-config-addon":
@@ -149,6 +165,21 @@ export class VmSeriesResourceAdapter implements ResourceAdapter<PanwVmseriesReso
       default:
         throw new Error(`Resource kind ${this.kind} does not support action ${request.action}`);
     }
+  }
+
+  /**
+   * Provider actions should consume the outputs persisted by `up` before asking
+   * Terraform to read them again. This is required for Proxmox, whose dedicated
+   * VM-Series stack intentionally does not have a generic resource profile, and
+   * also avoids an unnecessary Terraform init/output round trip for other providers.
+   */
+  private async readOutputsForAction(
+    context: ResourceAdapterContext<PanwVmseriesResourceConfig>,
+    record: ResourceRecord,
+    log: LogFn,
+  ): Promise<Record<string, unknown>> {
+    if (record.outputs) return record.outputs;
+    return await context.terraform.readOutputs(context, record, log);
   }
 
   /**
@@ -216,7 +247,7 @@ export class VmSeriesResourceAdapter implements ResourceAdapter<PanwVmseriesReso
       }),
     );
 
-    const outputs = await context.terraform.readOutputs(context, record, log);
+    const outputs = await this.readOutputsForAction(context, record, log);
     const result = await this.panwBootstrap.applyFirewallConfigAddOns(
       context.deployment,
       context.resource,

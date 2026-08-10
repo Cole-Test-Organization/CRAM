@@ -62,3 +62,22 @@ export interface ProxmoxVmseriesPlacement extends ResourcePlacementConfig {
   isoDatastoreId: string;
   interfaces?: NetworkInterfaceConfig[];
 }
+
+export interface ProxmoxWindowsEndpointPlacement extends ResourcePlacementConfig {
+  provider?: "proxmox";
+  targetNode?: string | null;
+  sourceVmId: number;
+  sourceNode?: string | null;
+  vmId?: number | null;
+  vmDatastoreId?: string | null;
+  interfaces?: NetworkInterfaceConfig[];
+  agentEnabled?: boolean;
+  agentTimeout?: string;
+  waitForIpv4?: boolean;
+  operatingSystemType?: string;
+  bootstrapMethod?: "template" | "qemu-agent";
+  bootstrapTimeoutSeconds?: number;
+  rdpPort?: number | null;
+  sshPort?: number | null;
+  tags?: string[];
+}

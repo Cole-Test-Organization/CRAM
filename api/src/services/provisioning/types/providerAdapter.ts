@@ -156,6 +156,19 @@ export interface ProviderAdapter {
     options?: ProviderPowerShellCommandOptions,
   ): Promise<string>;
 
+  /**
+   * Set a local Windows user's password through a provider-native, write-only
+   * guest channel. This keeps credentials out of command text and logs.
+   */
+  setWindowsUserPassword?(
+    context: ProviderGenericResourceContext,
+    record: ResourceRecord,
+    username: string,
+    password: string,
+    description: string,
+    log: LogFn,
+  ): Promise<void>;
+
   waitForWindowsBootstrap?(
     context: ProviderGenericResourceContext,
     record: ResourceRecord,

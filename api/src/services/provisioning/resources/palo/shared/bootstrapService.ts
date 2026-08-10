@@ -418,7 +418,13 @@ export class PanwBootstrapService {
     // firewall to stall a destroy for 40 minutes.
     const deactivateProbeMs = Math.min(settings.readinessTimeoutMs, 180_000);
     try {
-      await waitForApiAccessBounded(client, settings, deactivateProbeMs);
+      await ensureDeactivationApiAccess(
+        client,
+        managementAddress,
+        settings,
+        deactivateProbeMs,
+        log,
+      );
     } catch (error) {
       return {
         deactivated: false,
@@ -445,6 +451,48 @@ export class PanwBootstrapService {
       log(`Could not read firewall license state before deactivation: ${errorMessage(error)}`);
     }
 
+    // Installing the Licensing API key can reboot a VM-Series firewall. Do this
+    // once, then explicitly wait for PAN-OS to recover before issuing the
+    // deactivation command. Keeping this in the shared PAN-OS lifecycle makes
+    // AWS, GCP, and Proxmox teardown behavior identical.
+    let installedNewDeactivationKey = false;
+    try {
+      const acknowledged = await client.setLicenseDeactivationApiKey(deactivationApiKey);
+      installedNewDeactivationKey = true;
+      if (!acknowledged) {
+        log(
+          "PAN-OS disconnected while installing the license deactivation API key; " +
+            "waiting for the documented VM-Series reboot to finish",
+        );
+      }
+    } catch (error) {
+      if (isSameLicenseDeactivationKeyError(error)) {
+        log("PAN-OS license deactivation API key is already set; continuing to deactivate");
+      } else {
+        return {
+          deactivated: false,
+          serial,
+          reason: `could not install license deactivation API key: ${errorMessage(error)}`,
+        };
+      }
+    }
+
+    if (installedNewDeactivationKey) {
+      const rebootRecoveryMs = Math.min(settings.readinessTimeoutMs, 600_000);
+      // Give PAN-OS a chance to begin the documented reboot before probing; an
+      // immediate successful request could otherwise race the shutdown.
+      await sleep(15_000);
+      try {
+        await waitForApiAccessBounded(client, settings, rebootRecoveryMs);
+      } catch (error) {
+        return {
+          deactivated: false,
+          serial,
+          reason: `firewall API did not recover after installing the deactivation key: ${errorMessage(error)}`,
+        };
+      }
+    }
+
     let lastError: unknown = null;
     for (let attempt = 1; attempt <= LICENSE_DEACTIVATION_ATTEMPTS; attempt += 1) {
       try {
@@ -453,16 +501,20 @@ export class PanwBootstrapService {
             (serial ? ` (serial ${serial})` : "") +
             ` (attempt ${attempt}/${LICENSE_DEACTIVATION_ATTEMPTS})`,
         );
-        try {
-          await client.setLicenseDeactivationApiKey(deactivationApiKey);
-        } catch (error) {
-          if (isSameLicenseDeactivationKeyError(error)) {
-            log("PAN-OS license deactivation API key is already set; continuing to deactivate");
-          } else {
-            throw error;
+        const command = await client.deactivateVmSeriesLicense(300_000);
+        if (!command.acknowledged) {
+          const confirmed = await waitForUnlicensedFirewall(
+            client,
+            settings,
+            Math.min(settings.readinessTimeoutMs, 300_000),
+            log,
+          );
+          if (!confirmed) {
+            throw new Error(
+              "PAN-OS disconnected before acknowledging deactivation and the firewall did not confirm an unlicensed state",
+            );
           }
         }
-        await client.deactivateVmSeriesLicense(300_000);
         return { deactivated: true, serial };
       } catch (error) {
         lastError = error;
@@ -757,6 +809,112 @@ async function waitForApiAccessBounded(
   throw new Error(`Timed out waiting for PAN-OS API readiness: ${errorMessage(lastError)}`);
 }
 
+/**
+ * Establish API access for teardown without weakening the de-license guard.
+ *
+ * A VM-Series licensing reboot can return a newly bootstrapped firewall to the
+ * first-login password-change state. In that state the configured password is
+ * rejected by keygen while the initial credential is accepted only over the
+ * interactive SSH password-change flow. Deployment already handles that flow;
+ * teardown must do the same before it can safely deactivate the license.
+ *
+ * Only credential/bootstrap errors trigger SSH recovery. Network/readiness
+ * failures keep using the bounded API probe, and every failure still bubbles up
+ * to the strict destroy guard so the VM is never removed without confirmation.
+ */
+async function ensureDeactivationApiAccess(
+  client: PanosApiClient,
+  managementAddress: string,
+  settings: ResolvedBootstrapSettings,
+  windowMs: number,
+  log: LogFn,
+): Promise<void> {
+  const startedAt = Date.now();
+  try {
+    await client.generateApiKey(settings.adminUsername, settings.adminPassword);
+    await client.showSystemInfo();
+    return;
+  } catch (error) {
+    if (!isFirstLoginCredentialError(error)) {
+      await waitForApiAccessBounded(
+        client,
+        settings,
+        remainingWindowMs(startedAt, windowMs),
+      );
+      return;
+    }
+
+    log(
+      "PAN-OS API requires first-login credential recovery before deactivation; " +
+        "trying the shared SSH password bootstrap",
+    );
+  }
+
+  const recoveryWindowMs = Math.min(
+    remainingWindowMs(startedAt, windowMs),
+    240_000,
+  );
+  await setInitialAdminPassword({
+    host: managementAddress,
+    port: settings.sshPort,
+    username: settings.adminUsername,
+    initialPassword: settings.initialAdminPassword,
+    privateKeyPath: settings.sshPrivateKeyPath,
+    agentSocket: settings.sshAgentSocket,
+    newPassword: settings.adminPassword,
+    timeoutMs: recoveryWindowMs,
+    log,
+  });
+  log("PAN-OS first-login credential recovery completed; verifying API access");
+
+  await waitForApiAccessBounded(
+    client,
+    settings,
+    remainingWindowMs(startedAt, windowMs),
+  );
+}
+
+function remainingWindowMs(startedAt: number, windowMs: number): number {
+  return Math.max(1, windowMs - (Date.now() - startedAt));
+}
+
+function isFirstLoginCredentialError(error: unknown): boolean {
+  return /invalid credentials?|please change (?:your )?password/i.test(errorMessage(error));
+}
+
+async function waitForUnlicensedFirewall(
+  client: PanosApiClient,
+  settings: ResolvedBootstrapSettings,
+  windowMs: number,
+  log: LogFn,
+): Promise<boolean> {
+  const deadline = Date.now() + windowMs;
+  let lastLicense: string | null = null;
+  let lastError: unknown = null;
+  while (Date.now() < deadline) {
+    try {
+      await client.generateApiKey(settings.adminUsername, settings.adminPassword);
+      const info = await client.showSystemInfo();
+      const vmLicense = info.vmLicense?.trim() ?? null;
+      lastLicense = vmLicense;
+      if (!vmLicense || ["none", "unknown"].includes(vmLicense.toLowerCase())) {
+        log(`PAN-OS confirmed VM-Series license is inactive (${vmLicense ?? "none"})`);
+        return true;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(10_000);
+  }
+
+  log(
+    "Could not confirm an unlicensed PAN-OS state after an unacknowledged deactivation" +
+      (lastLicense ? `; last reported license was ${lastLicense}` : "") +
+      (lastError ? `; last API error was ${errorMessage(lastError)}` : ""),
+  );
+  return false;
+}
+
 async function waitForLicensedPanorama(
   client: PanosApiClient,
   settings: ResolvedBootstrapSettings,
@@ -924,6 +1082,8 @@ function shouldRetryLicenseDeactivationError(error: unknown): boolean {
     message.includes("timed out") ||
     message.includes("timeout") ||
     message.includes("econnreset") ||
+    message.includes("econnrefused") ||
+    message.includes("network is unreachable") ||
     message.includes("socket hang up")
   );
 }

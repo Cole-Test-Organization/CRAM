@@ -44,6 +44,35 @@ describe('Provisioning — config catalog validation', () => {
     }
   });
 
+  it('connects the Proxmox firewalls to the shared bootstrap and strict de-license lifecycle', () => {
+    const proxmox = deployments.find((deployment) => deployment.name === 'proxmox-fw-lab');
+    assert.ok(proxmox, 'proxmox-fw-lab should exist');
+    assert.deepEqual(
+      proxmox.steps?.map((step) => ({ action: step.action, targets: step.targets })),
+      [
+        { action: 'up', targets: ['fw-lab-02', 'fw-lab-03'] },
+        { action: 'bootstrap', targets: ['fw-lab-02', 'fw-lab-03'] },
+      ],
+    );
+
+    for (const firewall of proxmox.resources) {
+      assert.equal(firewall.kind, 'panw-vmseries');
+      assert.equal(firewall.license?.authCodeEnv, 'PANW_NGFW_AUTH_CODE');
+      assert.equal(
+        firewall.license?.deactivationApiKeyEnv,
+        'PANW_LICENSE_DEACTIVATION_API_KEY',
+      );
+      assert.equal(firewall.bootstrap?.adminPasswordEnv, 'PANOS_ADMIN_PASSWORD');
+      assert.notEqual(firewall.destroy?.allowWithoutDelicense, true);
+    }
+
+    const proxmox2Firewall = proxmox.resources.find((resource) => resource.name === 'fw-lab-02');
+    assert.equal(proxmox2Firewall?.placement?.targetNode, 'proxmox2');
+    assert.equal(proxmox2Firewall?.placement?.templateNode, 'proxmox');
+    assert.equal(proxmox2Firewall?.placement?.templateVmId, 800);
+    assert.equal(proxmox2Firewall?.placement?.vmId, 804);
+  });
+
   it('flags a deployment referencing a missing terraform resource profile', async () => {
     const catalog = {
       ...EMPTY,

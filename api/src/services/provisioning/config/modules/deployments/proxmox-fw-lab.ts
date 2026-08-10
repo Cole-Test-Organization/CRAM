@@ -13,11 +13,32 @@ const deployment = {
     "defaultVmDatastoreId": "local-lvm",
     "defaultIsoDatastoreId": "local"
   },
+  "steps": [
+    {
+      "name": "firewalls-up",
+      "action": "up",
+      "targets": [
+        "fw-lab-02",
+        "fw-lab-03"
+      ],
+      "description": "Clone and start both Proxmox VM-Series firewalls with their bootstrap ISOs."
+    },
+    {
+      "name": "firewalls-bootstrap",
+      "action": "bootstrap",
+      "targets": [
+        "fw-lab-02",
+        "fw-lab-03"
+      ],
+      "description": "Use the shared VM-Series lifecycle to fetch and verify each license and record its serial."
+    }
+  ],
   "resources": [
     {
       "kind": "panw-vmseries",
       "name": "fw-lab-02",
       "hostname": "fw-lab-02",
+      "terraformProfile": null,
       "vm": {
         "cpuCores": 4,
         "memoryMb": 8192,
@@ -47,8 +68,14 @@ const deployment = {
         "pinIdEnv": "PANW_DEVICE_CERT_PIN_ID",
         "pinValueEnv": "PANW_DEVICE_CERT_PIN_VALUE"
       },
+      "bootstrap": {
+        "adminPasswordEnv": "PANOS_ADMIN_PASSWORD",
+        "readinessTimeoutSeconds": 2400
+      },
       "placement": {
         "provider": "proxmox",
+        "targetNode": "proxmox2",
+        "templateNode": "proxmox",
         "templateVmId": 800,
         "vmId": 804,
         "interfaces": [
@@ -70,6 +97,7 @@ const deployment = {
       "kind": "panw-vmseries",
       "name": "fw-lab-03",
       "hostname": "fw-lab-03",
+      "terraformProfile": null,
       "vm": {
         "cpuCores": 4,
         "memoryMb": 8192,
@@ -98,6 +126,10 @@ const deployment = {
       "deviceCertificate": {
         "pinIdEnv": "PANW_DEVICE_CERT_PIN_ID",
         "pinValueEnv": "PANW_DEVICE_CERT_PIN_VALUE"
+      },
+      "bootstrap": {
+        "adminPasswordEnv": "PANOS_ADMIN_PASSWORD",
+        "readinessTimeoutSeconds": 2400
       },
       "placement": {
         "provider": "proxmox",

@@ -43,6 +43,7 @@ test("broker allowlist includes the real deployment secrets", () => {
     "PANW_NGFW_AUTH_CODE",
     "PANW_PANORAMA_AUTH_CODE",
     "PANW_PANORAMA_SERIAL",
+    "PANW_VM_AUTH_KEY",
     "PANOS_ADMIN_PASSWORD",
     "PROXMOX_VE_API_TOKEN",
     "WINDOWS_ENDPOINT_ADMIN_PASSWORD",
@@ -55,7 +56,6 @@ test("allowlist excludes runtime-generated / machine-derived / vestigial keys", 
   // The broker sources each of these itself at deploy time, so they must NOT be seeded
   // as secrets (see the exclusion notes in secrets/seedSecrets.ts).
   for (const excluded of [
-    "PANW_VM_AUTH_KEY", // generated on Panorama at deploy time
     "PANOS_INITIAL_ADMIN_PASSWORD", // adapter defaults it ("admin")
     "PANOS_SSH_PRIVATE_KEY", // read from the host filesystem
     "PANOS_SSH_PUBLIC_KEY",

@@ -17,9 +17,11 @@ import { withDefaultVmSeriesDeviceCertificate } from "../resources/palo/vm-serie
 // `requiredEnv` advertises the *stored secrets* a deploy needs. Only env vars that are
 // real broker secrets qualify. The config tree also references env vars that are
 // infra/connection config or machine-sourced — AWS_PROFILE (defaults to the standard
-// AWS credential chain), the auto-detected source CIDR, the local SSH public key, the
-// Panorama-generated vm-auth-key — each of which carries its own default/resolver and
-// must not be surfaced as a "missing secret". BROKER_SECRET_KEYS is the canonical
+// AWS credential chain), the auto-detected source CIDR, and the local SSH public key —
+// each of which carries its own default/resolver and must not be surfaced as a "missing
+// secret". A Panorama generated inside the deployment supplies its VM auth key through
+// a resource reference; an external Panorama's PANW_VM_AUTH_KEY is a real stored secret.
+// BROKER_SECRET_KEYS is the canonical
 // real-secret allowlist (shared with the .env secret seeder), so filtering against it
 // keeps requiredEnv and the seeder in lockstep.
 const BROKER_SECRET_NAMES = new Set<string>(BROKER_SECRET_KEYS);

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { rm } from "node:fs/promises";
 import { getProviderAdapter } from "./providers/index.js";
 import {
     ResourceAdapterRegistry,
@@ -52,6 +53,7 @@ import {
     projectRoot,
     resolveProjectPath as resolveProjectFilePath,
     toProjectRelativePath,
+    workDir,
 } from "./utils/paths.js";
 
 export interface ResourceBrokerOptions {
@@ -343,6 +345,7 @@ export class ResourceBroker {
         const next = await this.stateRepository.patchResource(record.id, {
             lifecycleStatus: "destroyed",
         });
+        await this.cleanupResourceRuntime(record.hostname, log);
         log(`${record.hostname} destroyed`);
         return next;
     }
@@ -1096,6 +1099,36 @@ export class ResourceBroker {
         if (state.activeJobId) {
             throw new Error(
                 `Another job is already running: ${state.activeJobId}`,
+            );
+        }
+    }
+
+    /**
+     * A successful provider destroy leaves no reason to retain generated
+     * tfvars, local Terraform metadata, bootstrap ISOs, auth-code files, or
+     * endpoint bootstrap payloads. Keep them when destroy fails so a retry has
+     * the same inputs; remove them only after the resource is marked destroyed.
+     */
+    private async cleanupResourceRuntime(
+        hostname: string,
+        log: LogFn,
+    ): Promise<void> {
+        const runtimeRoot = path.resolve(workDir);
+        const resourceRuntime = path.resolve(runtimeRoot, hostname);
+        if (!resourceRuntime.startsWith(`${runtimeRoot}${path.sep}`)) {
+            log(
+                `WARNING: Refusing to clean runtime artifacts for unsafe hostname ${hostname}`,
+            );
+            return;
+        }
+
+        try {
+            await rm(resourceRuntime, { recursive: true, force: true });
+            log(`Removed generated runtime artifacts for ${hostname}`);
+        } catch (error) {
+            log(
+                `WARNING: Could not remove generated runtime artifacts for ${hostname}: ` +
+                    `${error instanceof Error ? error.message : String(error)}`,
             );
         }
     }

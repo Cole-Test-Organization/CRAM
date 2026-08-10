@@ -23,6 +23,7 @@ import rp_aws_ubuntu_server from "./resource-profiles/aws-ubuntu-server.js";
 import rp_aws_windows_endpoint from "./resource-profiles/aws-windows-endpoint.js";
 import rp_gcp_network from "./resource-profiles/gcp-network.js";
 import rp_gcp_ubuntu_server from "./resource-profiles/gcp-ubuntu-server.js";
+import rp_proxmox_windows_endpoint from "./resource-profiles/proxmox-windows-endpoint.js";
 import dep_aws_enterprise_firewall from "./deployments/aws-enterprise-firewall.js";
 import dep_aws_gp_lab_trusted_users from "./deployments/aws-gp-lab-trusted-users.js";
 import dep_aws_panorama_lan from "./deployments/aws-panorama-lan.js";
@@ -35,6 +36,8 @@ import dep_aws_windows_endpoint from "./deployments/aws-windows-endpoint.js";
 import dep_gcp_shared_network from "./deployments/gcp-shared-network.js";
 import dep_gcp_ubuntu_server from "./deployments/gcp-ubuntu-server.js";
 import dep_proxmox_fw_lab from "./deployments/proxmox-fw-lab.js";
+import dep_proxmox_windows11_endpoint from "./deployments/proxmox-windows11-endpoint.js";
+import dep_proxmox_windows_endpoint from "./deployments/proxmox-windows-endpoint.js";
 import app_linux_codex_claude from "./app-profiles/linux/codex-claude.js";
 import app_windows_cortex_xdr from "./app-profiles/windows/cortex-xdr.js";
 import app_windows_developer from "./app-profiles/windows/developer.js";
@@ -57,6 +60,7 @@ export const resourceProfiles: ResourceProfileModule[] = [
   rp_aws_windows_endpoint,
   rp_gcp_network,
   rp_gcp_ubuntu_server,
+  rp_proxmox_windows_endpoint,
 ];
 
 export const deployments: DeploymentModule[] = [
@@ -72,6 +76,8 @@ export const deployments: DeploymentModule[] = [
   dep_gcp_shared_network,
   dep_gcp_ubuntu_server,
   dep_proxmox_fw_lab,
+  dep_proxmox_windows11_endpoint,
+  dep_proxmox_windows_endpoint,
 ];
 
 export const appProfiles: GroupedProfile<AppProfileModule>[] = [

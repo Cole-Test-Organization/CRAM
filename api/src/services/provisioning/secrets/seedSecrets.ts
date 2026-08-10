@@ -11,9 +11,6 @@ import { SecretsService } from "./secretsService.js";
 //
 // Just as important, these are EXCLUDED because the broker already sources them itself,
 // so persisting them as secrets would be wrong (verified against the adapters/config):
-//   • PANW_VM_AUTH_KEY              — generated on Panorama at deploy time (`request
-//     bootstrap vm-auth-key generate`); firewalls read it via a resource reference, not
-//     env. (Only a Panorama-less Proxmox firewall supplies it as input — set via the GUI.)
 //   • PANOS_INITIAL_ADMIN_PASSWORD — first-login bootstrap password; the adapter already
 //     defaults it ("admin"), so it isn't a stored secret.
 //   • PANOS_SSH_PRIVATE_KEY / _PUBLIC_KEY / _PUBLIC_KEY_FILE — read from the host
@@ -29,6 +26,10 @@ export const BROKER_SECRET_KEYS: readonly string[] = [
   "PANW_NGFW_AUTH_CODE",
   "PANW_PANORAMA_AUTH_CODE",
   "PANW_PANORAMA_SERIAL",
+  // External-Panorama deployments (such as Proxmox) cannot use an in-deployment
+  // resource reference, so their numeric bootstrap VM auth key is a stored input.
+  // Deployments that create Panorama themselves still consume the generated value.
+  "PANW_VM_AUTH_KEY",
   // Optional VM-Series device-certificate registration PIN (CSP)
   "PANW_DEVICE_CERT_PIN_ID",
   "PANW_DEVICE_CERT_PIN_VALUE",

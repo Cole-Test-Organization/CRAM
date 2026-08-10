@@ -75,6 +75,23 @@ describe('Provisioning — discovery and safe enqueue validation', () => {
         `${required} must be required for standalone VM-Series deployments too`,
       );
     }
+
+    const proxmox = await get('/provisioning/deployments/proxmox-fw-lab');
+    assert.equal(proxmox.status, 200);
+    assert.deepEqual(proxmox.body.steps.map((step) => step.action), ['up', 'bootstrap']);
+    for (const required of [
+      'PANW_NGFW_AUTH_CODE',
+      'PANW_LICENSE_DEACTIVATION_API_KEY',
+      'PANOS_ADMIN_PASSWORD',
+      'PANW_VM_AUTH_KEY',
+      'PROXMOX_VE_ENDPOINT',
+      'PROXMOX_VE_API_TOKEN',
+    ]) {
+      assert.ok(
+        proxmox.body.requiredEnv.includes(required),
+        `${required} must be required for the Proxmox VM-Series lifecycle`,
+      );
+    }
   });
 
   it('lists resources, jobs, and secret summaries with values only for readable secrets', async () => {

@@ -10,6 +10,7 @@ import type {
 } from "../../types/index.js";
 import type { LogFn } from "../../types/logging.js";
 import type { ProviderStagedLocalArtifactSet } from "../../types/providerAdapter.js";
+import { optionalEnv } from "../../utils/index.js";
 import type { ResourceAdapter, ResourceAdapterContext, ResourceUpResult } from "../types.js";
 import { GenericTerraformResourceAdapter } from "../genericTerraformResourceAdapter.js";
 import { expandWindowsAppProfiles } from "./appProfiles.js";
@@ -43,15 +44,19 @@ export class WindowsEndpointResourceAdapter implements ResourceAdapter<ResourceC
 
     try {
       const result = await this.terraformResource.up(stagedContext, record, log);
+      const provisionedRecord = {
+        ...record,
+        ...result.resourcePatch,
+      };
+      if (bootstrapMethod(stagedContext.resource) === "qemu-agent") {
+        await this.bootstrapViaQemuAgent(stagedContext, provisionedRecord, log);
+      }
       // Always wait for the Windows bootstrap to truly finish before reporting ready.
       // The SSM bootstrap renames the host, reboots, then resumes to install apps and run
       // Koi under the corrected hostname; the success marker is the only reliable end signal.
       await this.waitForBootstrapCompletion(
         stagedContext,
-        {
-          ...record,
-          ...result.resourcePatch,
-        },
+        provisionedRecord,
         log,
       );
       return result;
@@ -62,6 +67,70 @@ export class WindowsEndpointResourceAdapter implements ResourceAdapter<ResourceC
         });
       }
     }
+  }
+
+  private async bootstrapViaQemuAgent(
+    context: ResourceAdapterContext<ResourceConfig>,
+    record: ResourceRecord,
+    log: LogFn,
+  ): Promise<void> {
+    if (!record.providerResourceId) {
+      throw new Error(`Cannot bootstrap ${record.hostname}: no provider resource id is recorded`);
+    }
+    if (!context.provider.capturePowerShellCommand || !context.provider.runPowerShellCommand) {
+      throw new Error(
+        `Provider ${context.provider.type} cannot run the qemu-agent Windows bootstrap for ${record.hostname}`,
+      );
+    }
+    if (applicationList((context.resource as WindowsEndpointResource).applications).length || hasKoiConfig(context.resource)) {
+      throw new Error(
+        `qemu-agent bootstrap for ${record.hostname} currently supports the base Windows endpoint only; ` +
+          `application profiles and Koi require a provider artifact transport`,
+      );
+    }
+
+    const settings = qemuAgentBootstrapSettings(context.resource);
+    const password = resolveWindowsAdminPassword(context.resource);
+    if (password) {
+      if (!context.provider.setWindowsUserPassword) {
+        throw new Error(
+          `Provider ${context.provider.type} cannot set the Windows credential for ${record.hostname} ` +
+            `through a write-only guest channel`,
+        );
+      }
+      await context.provider.setWindowsUserPassword(
+        context,
+        record,
+        settings.adminUsername,
+        password,
+        `apply broker-managed credential for ${settings.adminUsername}`,
+        log,
+      );
+    }
+
+    const timeoutSeconds = bootstrapTimeoutSeconds(context.resource);
+    const output = await context.provider.capturePowerShellCommand(
+      context,
+      record,
+      qemuAgentBootstrapCommands(settings),
+      `configure base Windows guest services and hostname ${settings.computerName}`,
+      log,
+      { timeoutSeconds: Math.min(timeoutSeconds, 900) },
+    );
+
+    if (/RESTART_SCHEDULED/i.test(output)) {
+      log(`Windows endpoint ${record.hostname} scheduled a restart to apply hostname ${settings.computerName}.`);
+      await waitForQemuAgentHostname(context, record, settings.computerName, timeoutSeconds, log);
+    }
+
+    await context.provider.runPowerShellCommand(
+      context,
+      record,
+      qemuAgentFinalizeCommands(),
+      `write Windows bootstrap success marker for ${record.hostname}`,
+      log,
+      { timeoutSeconds: 120 },
+    );
   }
 
   async down(
@@ -190,8 +259,8 @@ export class WindowsEndpointResourceAdapter implements ResourceAdapter<ResourceC
     record: ResourceRecord,
     log: LogFn,
   ): Promise<void> {
-    if (bootstrapMethod(context.resource) !== "ssm") {
-      log(`Skipping Windows bootstrap wait for ${record.hostname}: bootstrap method is not ssm.`);
+    if (!["ssm", "qemu-agent"].includes(bootstrapMethod(context.resource))) {
+      log(`Skipping Windows bootstrap wait for ${record.hostname}: bootstrap method has no broker-observed marker.`);
       return;
     }
     if (!record.providerResourceId) {
@@ -234,7 +303,11 @@ export class WindowsEndpointResourceAdapter implements ResourceAdapter<ResourceC
 
       if (status) {
         if (status.success && hostnameOk(status.hostname, expectedHostname)) {
-          log(`Windows bootstrap completed on ${record.hostname}; Koi registered under hostname ${status.hostname}.`);
+          log(
+            hasKoiConfig(context.resource)
+              ? `Windows bootstrap completed on ${record.hostname}; Koi registered under hostname ${status.hostname}.`
+              : `Windows bootstrap completed on ${record.hostname} under hostname ${status.hostname}.`,
+          );
           return;
         }
         if (status.success && !hostnameOk(status.hostname, expectedHostname)) {
@@ -269,6 +342,10 @@ export class WindowsEndpointResourceAdapter implements ResourceAdapter<ResourceC
     record: ResourceRecord,
     log: LogFn,
   ): Promise<void> {
+    if (!hasKoiConfig(context.resource)) {
+      log(`Skipping Koi rollback for ${record.hostname}: no Koi configuration is present.`);
+      return;
+    }
     if (!record.providerResourceId) {
       log(`Skipping Koi rollback for ${record.hostname}: no provider resource id is recorded.`);
       return;
@@ -316,6 +393,137 @@ export class WindowsEndpointResourceAdapter implements ResourceAdapter<ResourceC
         `The endpoint may still appear registered in Koi and may need manual cleanup.`,
     );
   }
+}
+
+function hasKoiConfig(resource: ResourceConfig): boolean {
+  const koi = (resource as { koi?: unknown }).koi;
+  return Boolean(koi && typeof koi === "object" && !Array.isArray(koi));
+}
+
+interface QemuAgentBootstrapSettings {
+  adminUsername: string;
+  computerName: string;
+  enableRdp: boolean;
+  enableSsh: boolean;
+}
+
+function qemuAgentBootstrapSettings(resource: ResourceConfig): QemuAgentBootstrapSettings {
+  const bootstrap = (resource as { bootstrap?: unknown }).bootstrap;
+  const values = bootstrap && typeof bootstrap === "object" && !Array.isArray(bootstrap)
+    ? bootstrap as Record<string, unknown>
+    : {};
+  const adminUsername = stringSetting(values.adminUsername) ?? "Administrator";
+  const computerName = stringSetting(values.computerName) ?? hostnameOf(resource);
+  if (!computerName) throw new Error(`A Windows computer name is required for ${resource.hostname}`);
+  if (computerName.length > 15) {
+    throw new Error(`Windows computer name ${computerName} exceeds the 15-character NetBIOS limit`);
+  }
+  return {
+    adminUsername,
+    computerName,
+    enableRdp: values.enableRdp === true,
+    enableSsh: values.enableSsh === true,
+  };
+}
+
+function resolveWindowsAdminPassword(resource: ResourceConfig): string | null {
+  const bootstrap = (resource as { bootstrap?: unknown }).bootstrap;
+  if (!bootstrap || typeof bootstrap !== "object" || Array.isArray(bootstrap)) return null;
+  const values = bootstrap as Record<string, unknown>;
+  const direct = stringSetting(values.adminPassword);
+  if (direct) return direct;
+  const envName = stringSetting(values.adminPasswordEnv);
+  if (!envName) return null;
+  const value = optionalEnv(envName);
+  if (!value) throw new Error(`Missing required Windows credential secret ${envName}`);
+  return value;
+}
+
+function qemuAgentBootstrapCommands(settings: QemuAgentBootstrapSettings): string[] {
+  const computerName = powershellLiteral(settings.computerName);
+  const commands = [
+    "$ErrorActionPreference = 'Stop'",
+    "$Root = 'C:\\ProgramData\\panw-broker'",
+    "New-Item -ItemType Directory -Path $Root -Force | Out-Null",
+    "Remove-Item (Join-Path $Root 'koi.success'), (Join-Path $Root 'koi.failed') -Force -ErrorAction SilentlyContinue",
+    `if (-not (Get-LocalUser -Name ${powershellLiteral(settings.adminUsername)} -ErrorAction SilentlyContinue)) { throw 'Configured local Windows user does not exist' }`,
+    "Get-NetConnectionProfile -ErrorAction SilentlyContinue | Where-Object IPv4Connectivity -ne 'Disconnected' | Set-NetConnectionProfile -NetworkCategory Private -ErrorAction SilentlyContinue",
+  ];
+
+  if (settings.enableSsh) {
+    commands.push(
+      "$SshCapability = Get-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0'",
+      "if ($SshCapability.State -ne 'Installed') { Add-WindowsCapability -Online -Name 'OpenSSH.Server~~~~0.0.1.0' | Out-Null }",
+      "Set-Service -Name sshd -StartupType Automatic",
+      "Start-Service -Name sshd",
+      "if (-not (Get-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -ErrorAction SilentlyContinue)) { New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null } else { Enable-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' }",
+    );
+  }
+  if (settings.enableRdp) {
+    commands.push(
+      "$RdpRules = Get-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction SilentlyContinue",
+      "if (-not $RdpRules) { throw 'This Windows edition does not expose the inbound Remote Desktop firewall rules' }",
+      "Set-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 0",
+      "$RdpRules | Enable-NetFirewallRule",
+    );
+  }
+
+  commands.push(
+    `$TargetComputerName = ${computerName}`,
+    "if ($env:COMPUTERNAME -ine $TargetComputerName) {",
+    "  Rename-Computer -NewName $TargetComputerName -Force",
+    "  Set-Content -Path (Join-Path $Root 'rename-pending') -Value (Get-Date).ToString('o')",
+    "  Start-Process shutdown.exe -ArgumentList '/r','/t','5','/f' -WindowStyle Hidden",
+    "  Write-Output 'RESTART_SCHEDULED'",
+    "} else { Write-Output 'RESTART_NOT_REQUIRED' }",
+  );
+  return commands;
+}
+
+function qemuAgentFinalizeCommands(): string[] {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    "$Root = 'C:\\ProgramData\\panw-broker'",
+    "New-Item -ItemType Directory -Path $Root -Force | Out-Null",
+    "Remove-Item (Join-Path $Root 'rename-pending'), (Join-Path $Root 'koi.failed') -Force -ErrorAction SilentlyContinue",
+    "Set-Content -Path (Join-Path $Root 'koi.success') -Value \"Windows endpoint bootstrap completed at $(Get-Date -Format o).\"",
+  ];
+}
+
+async function waitForQemuAgentHostname(
+  context: ResourceAdapterContext<ResourceConfig>,
+  record: ResourceRecord,
+  expectedHostname: string,
+  timeoutSeconds: number,
+  log: LogFn,
+): Promise<void> {
+  if (!context.provider.capturePowerShellCommand) return;
+  const deadline = Date.now() + timeoutSeconds * 1000;
+  while (Date.now() < deadline) {
+    try {
+      const output = await context.provider.capturePowerShellCommand(
+        context,
+        record,
+        ["Write-Output ([System.Net.Dns]::GetHostName())"],
+        `wait for Windows hostname ${expectedHostname}`,
+        () => undefined,
+        { timeoutSeconds: 30 },
+      );
+      if (hostnameOk(output.trim(), expectedHostname)) return;
+    } catch (error) {
+      log(`QEMU guest agent is not ready after the Windows restart: ${errorMessage(error)}`);
+    }
+    await sleep(5_000);
+  }
+  throw new Error(`Timed out waiting for ${record.hostname} to restart as ${expectedHostname}`);
+}
+
+function powershellLiteral(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function stringSetting(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function requireRollbackOnDestroy(resource: ResourceConfig): boolean {
@@ -367,6 +575,11 @@ function bootstrapMethod(resource: ResourceConfig): string {
 }
 
 function hostnameOf(resource: ResourceConfig): string {
+  const bootstrap = (resource as { bootstrap?: unknown }).bootstrap;
+  if (bootstrap && typeof bootstrap === "object" && !Array.isArray(bootstrap)) {
+    const computerName = (bootstrap as { computerName?: unknown }).computerName;
+    if (typeof computerName === "string" && computerName) return computerName;
+  }
   const value = (resource as { hostname?: unknown }).hostname;
   return typeof value === "string" ? value : "";
 }

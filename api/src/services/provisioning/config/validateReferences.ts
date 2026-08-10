@@ -90,9 +90,14 @@ export async function collectDeploymentReferenceProblems(
 
   // Per-resource: terraform profile exists, agrees on provider+kind, and any
   // fromResource references inside it name a real resource in this deployment.
+  // `terraformProfile: null` is an explicit opt-out for a resource adapter that
+  // owns its own Terraform lifecycle (VM-Series on Proxmox is one example).
   const terraformProviders = new Set(await config.listResourceProfileProviders());
   for (const resource of resources) {
     const where = resourceLabel(resource);
+    if (Object.prototype.hasOwnProperty.call(resource, "terraformProfile") && resource.terraformProfile === null) {
+      continue;
+    }
     const explicitProfile =
       typeof resource.terraformProfile === "string" && resource.terraformProfile
         ? resource.terraformProfile
