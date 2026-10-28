@@ -1,260 +1,122 @@
-// Krisp webhook importer — parse + idempotent fold + time-proximity match.
-//
-// Ignores emails entirely; keys first on the meeting's start time. The Krisp
-// meeting id is only a fallback after a row has already been linked/parked, so
-// retries and transcript/outline follow-ups do not duplicate. Drives the real
-// KrispWebhookService against the seeded test DB (the pattern
-// calendar-import-backfill.test.js uses) — no LLM, no network. Created
-// meetings (incl. any tombstoned by a later test) are hard-deleted after.
+// Krisp webhook → email — parse, env config, message building, and the
+// send / ignore / error paths. Pure: the service gets an injected fake transport
+// (or none), so nothing touches SMTP or the DB. The HTTP wiring is covered in
+// krisp-webhook-e2e.test.js.
 
-import { describe, it, before, after } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { AccountsService } from '../src/services/accounts/accounts.js';
-import { ContactsService } from '../src/services/contacts/contacts.js';
-import { MeetingsService } from '../src/services/meetings/meetings.js';
-import { InternalDomainsService } from '../src/services/internal-domains/internal-domains.js';
-import { KrispWebhookService, parseKrisp, pickMatch } from '../src/services/krisp-webhook/krisp-webhook.js';
-import { getDefaultUserId } from '../src/auth.js';
-import { withUser, closeDb } from '../src/db/connection.js';
+import { KrispWebhookService, parseKrisp, buildEmail, emailConfigFromEnv } from '../src/services/krisp-webhook/krisp-webhook.js';
+import { krispWebhookPayload } from './fixtures/krisp-webhook-payloads.js';
 
-let userId;
-let meetingsService;
-let svc;
-const createdMeetingIds = new Set();
+const CONFIG = { user: 'me@gmail.example', pass: 'abcdefghijklmnop', to: 'me@gmail.example', timeZone: 'America/New_York' };
 
-// Build a Krisp note_generated payload in the confirmed shape.
-function krispNote({ id, title = 'ZZZ Krisp Test', start, end, event = 'note_generated', content = 'These are the notes.' }) {
-  const meeting = { id, title };
-  if (start) meeting.start_date = start;
-  if (end) meeting.end_date = end;
-  return { id: `evt-${id}-${event}`, event, data: { meeting, raw_content: content } };
+// Records what would have been sent; `fail` rejects the way nodemailer does on a
+// bad App Password.
+function fakeTransport({ fail = false } = {}) {
+  const sent = [];
+  return {
+    sent,
+    async sendMail(message) {
+      if (fail) throw Object.assign(new Error('Invalid login: 535-5.7.8 Username and Password not accepted'), { code: 'EAUTH' });
+      sent.push(message);
+      return { messageId: `<fake-${sent.length}@test>` };
+    },
+  };
 }
 
 describe('Krisp webhook — parse', () => {
-  it('pulls event, the MEETING id (not the event id), title, times, and raw_content', () => {
-    const p = parseKrisp({
-      id: 'event-xyz',
-      event: 'note_generated',
-      data: { meeting: { id: 'meeting-abc', title: 'Acme sync', start_date: '2026-06-12T15:00:00.000Z', end_date: '2026-06-12T15:30:00.000Z' }, raw_content: '## Notes\n- hi' },
-    });
+  it('pulls event, the MEETING id (not the event id), title, times, url, and raw_content', () => {
+    const p = parseKrisp(krispWebhookPayload({
+      eventId: 'event-xyz', meetingId: 'meeting-abc', title: 'Acme sync',
+      start: '2026-06-12T15:00:00.000Z', end: '2026-06-12T15:30:00.000Z',
+    }));
     assert.equal(p.eventType, 'note');
     assert.equal(p.krispMeetingId, 'meeting-abc');
     assert.equal(p.title, 'Acme sync');
     assert.equal(p.startsAt, '2026-06-12T15:00:00.000Z');
     assert.equal(p.endsAt, '2026-06-12T15:30:00.000Z');
-    assert.match(p.content, /## Notes/);
+    assert.equal(p.url, 'https://app.krisp.ai/n/meeting-abc');
+    assert.match(p.content, /## Action Items/);
   });
 
   it('canonicalizes event types and falls back to a JSON dump without raw_content', () => {
     assert.equal(parseKrisp({ event: 'transcript_generated', data: {} }).eventType, 'transcript');
     assert.equal(parseKrisp({ event: 'outline_generated', data: {} }).eventType, 'outline');
+    assert.equal(parseKrisp({ event: 'brand_new_trigger', data: {} }).eventType, 'note', 'unknown triggers are emailed as notes');
     const p = parseKrisp({ event: 'note_generated', data: { meeting: { id: 'm1' }, sections: { foo: 1 } } });
     assert.match(p.content, /```json/);
   });
 });
 
-describe('Krisp webhook — pickMatch', () => {
-  it('returns the only in-window candidate', () => {
-    const c = [{ id: 1, starts_at: '2026-06-12T15:00:00Z', ends_at: '2026-06-12T16:00:00Z' }];
-    assert.equal(pickMatch(c, new Date('2026-06-12T15:02:00Z').getTime(), null)?.id, 1);
+describe('Krisp webhook — email config from env', () => {
+  it('strips the spaces Google shows in an App Password and defaults the recipient to the sender', () => {
+    const c = emailConfigFromEnv({ GMAIL_USER: ' me@gmail.example ', GMAIL_APP_PASSWORD: 'abcd efgh ijkl mnop' });
+    assert.deepEqual(c, { user: 'me@gmail.example', pass: 'abcdefghijklmnop', to: 'me@gmail.example', timeZone: 'America/New_York' });
   });
-  it('breaks ties by largest overlap', () => {
-    const c = [
-      { id: 1, starts_at: '2026-06-12T15:00:00Z', ends_at: '2026-06-12T15:10:00Z' }, // tiny overlap
-      { id: 2, starts_at: '2026-06-12T15:00:00Z', ends_at: '2026-06-12T16:00:00Z' }, // big overlap
-    ];
-    assert.equal(pickMatch(c, new Date('2026-06-12T15:00:00Z').getTime(), new Date('2026-06-12T15:45:00Z').getTime())?.id, 2);
+
+  it('honors KRISP_EMAIL_TO / KRISP_EMAIL_TZ and falls back from an invalid timezone', () => {
+    const c = emailConfigFromEnv({ GMAIL_USER: 'me@gmail.example', GMAIL_APP_PASSWORD: 'x', KRISP_EMAIL_TO: 'notes@example.com', KRISP_EMAIL_TZ: 'America/Chicago' });
+    assert.equal(c.to, 'notes@example.com');
+    assert.equal(c.timeZone, 'America/Chicago');
+    assert.equal(emailConfigFromEnv({ KRISP_EMAIL_TZ: 'Central' }).timeZone, 'America/New_York');
   });
-  it('is null (ambiguous) when two candidates are effectively tied', () => {
-    // Two meetings at the same time → equal overlap, equal proximity → don't guess.
-    const c = [
-      { id: 1, starts_at: '2026-06-12T15:00:00Z', ends_at: '2026-06-12T16:00:00Z' },
-      { id: 2, starts_at: '2026-06-12T15:00:00Z', ends_at: '2026-06-12T16:00:00Z' },
-    ];
-    assert.equal(pickMatch(c, new Date('2026-06-12T15:00:00Z').getTime(), new Date('2026-06-12T16:00:00Z').getTime()), null);
+
+  it('is unconfigured when the Gmail vars are unset', () => {
+    assert.deepEqual(emailConfigFromEnv({}), { user: null, pass: null, to: null, timeZone: 'America/New_York' });
   });
 });
 
-describe('Krisp webhook — import (park / dedupe / append / time-match)', () => {
-  before(async () => {
-    userId = await getDefaultUserId();
-    const accountsService = new AccountsService();
-    const internalDomainsService = new InternalDomainsService();
-    const contactsService = new ContactsService({ accountsService, internalDomainsService });
-    meetingsService = new MeetingsService({ contactsService, accountsService, internalDomainsService });
-    svc = new KrispWebhookService({ meetingsService });
+describe('Krisp webhook — message', () => {
+  it('puts the title and the LOCAL meeting date in the subject, so an evening meeting stays on its own day', () => {
+    // 01:30Z on Jun 13 is 9:30 PM EDT on Jun 12.
+    const p = parseKrisp(krispWebhookPayload({ meetingId: 'meeting-abc', title: 'Acme sync', start: '2026-06-13T01:30:00.000Z', end: '2026-06-13T02:00:00.000Z' }));
+    const { subject, text } = buildEmail(p, 'America/New_York');
+    assert.equal(subject, 'Krisp notes: Acme sync (Jun 12, 2026)');
+    // \s: ICU separates "9:30" and "PM" with a narrow no-break space.
+    assert.match(text, /^Acme sync\nStarted: Fri, Jun 12, 2026, 9:30\sPM EDT\nKrisp: https:\/\/app\.krisp\.ai\/n\/meeting-abc\n\n## Action Items/);
+    assert.match(text, /## Key Points[\s\S]*## Outline/, 'Krisp notes included verbatim');
   });
 
-  after(async () => {
-    // Hard-delete everything created (including merge/soft-delete tombstones).
-    const ids = [...createdMeetingIds];
-    if (ids.length) {
-      await withUser(userId, async (client) => {
-        await client.query('DELETE FROM meeting_attendees WHERE meeting_id = ANY($1::bigint[])', [ids]);
-        await client.query('DELETE FROM meetings WHERE id = ANY($1::bigint[])', [ids]);
-      });
+  it('copes with a delivery that has no title or start time', () => {
+    const { subject, text } = buildEmail(parseKrisp({ event: 'note_generated', data: { raw_content: 'Just notes.' } }), 'UTC');
+    assert.equal(subject, 'Krisp notes: Untitled meeting');
+    assert.equal(text, 'Untitled meeting\n\nJust notes.\n');
+  });
+});
+
+describe('Krisp webhook — ingest', () => {
+  it('emails a notes delivery from the Gmail account to the recipient', async () => {
+    const transport = fakeTransport();
+    const svc = new KrispWebhookService({ config: { ...CONFIG, to: 'notes@example.com' }, transport });
+    const res = await svc.ingest(krispWebhookPayload({ meetingId: 'meeting-1', title: 'Acme sync', start: '2026-06-12T15:00:00.000Z' }));
+    assert.deepEqual(res, { ok: true, event: 'note', krisp_meeting_id: 'meeting-1', outcome: 'emailed', message_id: '<fake-1@test>' });
+
+    assert.equal(transport.sent.length, 1);
+    const [mail] = transport.sent;
+    assert.deepEqual(mail.from, { name: 'Krisp notes', address: 'me@gmail.example' });
+    assert.equal(mail.to, 'notes@example.com');
+    assert.equal(mail.subject, 'Krisp notes: Acme sync (Jun 12, 2026)');
+    assert.match(mail.text, /## Action Items/);
+  });
+
+  it('acknowledges transcript and outline deliveries without sending', async () => {
+    const transport = fakeTransport();
+    const svc = new KrispWebhookService({ config: CONFIG, transport });
+    for (const event of ['transcript_generated', 'outline_generated']) {
+      const res = await svc.ingest(krispWebhookPayload({ event }));
+      assert.equal(res.outcome, 'ignored', event);
     }
-    await closeDb();
+    assert.equal(transport.sent.length, 0);
   });
 
-  it('parks a new meeting when nothing matches, then dedupes and appends follow-up events', async () => {
-    const kid = `zzz_krisp_${Date.now()}`;
-
-    // No start time → no time-match → parks a new internal needs_review meeting.
-    const first = await svc.ingest(userId, krispNote({ id: kid, content: 'Note body one.' }));
-    assert.equal(first.outcome, 'created', JSON.stringify(first));
-    assert.equal(first.needs_review, true);
-    assert.equal(first.review_reason, 'krisp_no_match');
-    assert.ok(first.meeting_id);
-    createdMeetingIds.add(first.meeting_id);
-
-    const parked = await meetingsService.getById(userId, first.meeting_id);
-    assert.equal(parked.internal, true);
-    assert.equal(parked.review_reason, 'krisp_no_match');
-    assert.equal(parked.krisp_meeting_id, kid);
-    assert.match(parked.body, /Note body one\./);
-
-    // Re-deliver the SAME event with no start time → no time-match is possible,
-    // so the stored Krisp id acts as retry fallback and the marker makes it a no-op.
-    const dupe = await svc.ingest(userId, krispNote({ id: kid, content: 'Note body one.' }));
-    assert.equal(dupe.outcome, 'noop', JSON.stringify(dupe));
-    assert.equal(dupe.meeting_id, first.meeting_id);
-
-    // A different event (transcript) for the same no-start meeting → appended to
-    // the same row via the stored-id fallback.
-    const transcript = await svc.ingest(userId, krispNote({ id: kid, event: 'transcript_generated', content: 'Full transcript text.' }));
-    assert.equal(transcript.outcome, 'updated', JSON.stringify(transcript));
-    assert.equal(transcript.meeting_id, first.meeting_id);
-
-    const after = await meetingsService.getById(userId, first.meeting_id);
-    assert.match(after.body, /Note body one\./);
-    assert.match(after.body, /Full transcript text\./);
-    assert.match(after.body, /<!-- krisp:transcript -->/);
+  it('is a 503 for a notes delivery when Gmail is not configured, but still acknowledges ignored events', async () => {
+    const svc = new KrispWebhookService({ config: emailConfigFromEnv({}) });
+    await assert.rejects(svc.ingest(krispWebhookPayload()), (err) => err.statusCode === 503 && /GMAIL_USER/.test(err.message));
+    assert.equal((await svc.ingest(krispWebhookPayload({ event: 'transcript_generated' }))).outcome, 'ignored');
   });
 
-  it('appends cleanly to the only existing meeting whose start time is within the window, and links it', async () => {
-    // A meeting that already exists in the CRM (stand-in for a calendar import),
-    // far in the future so no seeded meeting is nearby. Internal so we need no account.
-    const base = await meetingsService.create(userId, null, {
-      date: '2030-03-01',
-      starts_at: '2030-03-01T15:00:00.000Z',
-      ends_at: '2030-03-01T16:00:00.000Z',
-      title: 'ZZZ Existing Meeting',
-      filename: `zzz-existing-${Date.now()}`,
-      body: 'Pre-existing meeting notes.',
-      internal: true,
-    });
-    createdMeetingIds.add(base.id);
-    assert.equal(base.needs_review, false);
-
-    // Krisp meeting started 3 min later and ran short — START is within ±10 min,
-    // so it matches even though the END differs.
-    const kid = `zzz_krisp_match_${Date.now()}`;
-    const res = await svc.ingest(userId, krispNote({
-      id: kid,
-      start: '2030-03-01T15:03:00.000Z',
-      end: '2030-03-01T15:38:00.000Z',
-      content: 'Krisp notes for the existing meeting.',
-    }));
-    assert.equal(res.outcome, 'matched', JSON.stringify(res));
-    assert.equal(res.meeting_id, base.id, 'appended to the existing meeting, no new row');
-
-    const after = await meetingsService.getById(userId, base.id);
-    assert.match(after.body, /Pre-existing meeting notes\./);
-    assert.match(after.body, /Krisp notes for the existing meeting\./);
-    assert.equal(after.krisp_meeting_id, kid, 'krisp id linked onto the matched meeting');
-    assert.equal(after.needs_review, false, 'single time-match appends cleanly');
-    assert.equal(after.review_reason, null);
-
-    // A follow-up event for that Krisp id still resolves by time first; the stored
-    // id is fallback only.
-    const followup = await svc.ingest(userId, krispNote({ id: kid, event: 'outline_generated', content: 'Outline bullets.' }));
-    assert.equal(followup.meeting_id, base.id, JSON.stringify(followup));
-    const after2 = await meetingsService.getById(userId, base.id);
-    assert.match(after2.body, /Outline bullets\./);
-    assert.equal(after2.needs_review, false, 'follow-up event remains clean');
-    assert.equal(after2.review_reason, null);
-  });
-
-  it('flags review when multiple meetings are within the time-match window', async () => {
-    const base = await meetingsService.create(userId, null, {
-      date: '2030-04-01',
-      starts_at: '2030-04-01T15:00:00.000Z',
-      ends_at: '2030-04-01T16:00:00.000Z',
-      title: 'ZZZ Primary Candidate',
-      filename: `zzz-primary-${Date.now()}`,
-      body: 'Primary candidate notes.',
-      internal: true,
-    });
-    const other = await meetingsService.create(userId, null, {
-      date: '2030-04-01',
-      starts_at: '2030-04-01T15:04:00.000Z',
-      ends_at: '2030-04-01T15:20:00.000Z',
-      title: 'ZZZ Nearby Candidate',
-      filename: `zzz-nearby-${Date.now()}`,
-      body: 'Nearby candidate notes.',
-      internal: true,
-    });
-    createdMeetingIds.add(base.id);
-    createdMeetingIds.add(other.id);
-
-    const kid = `zzz_krisp_multi_${Date.now()}`;
-    const res = await svc.ingest(userId, krispNote({
-      id: kid,
-      start: '2030-04-01T15:00:00.000Z',
-      end: '2030-04-01T15:55:00.000Z',
-      content: 'Krisp notes with more than one candidate.',
-    }));
-    assert.equal(res.outcome, 'matched', JSON.stringify(res));
-    assert.equal(res.meeting_id, base.id, 'best candidate won by overlap');
-    assert.equal(res.needs_review, true);
-    assert.equal(res.review_reason, 'krisp_multiple_matches');
-
-    const after = await meetingsService.getById(userId, base.id);
-    assert.match(after.body, /Krisp notes with more than one candidate\./);
-    assert.equal(after.needs_review, true);
-    assert.equal(after.review_reason, 'krisp_multiple_matches');
-  });
-
-  it('keeps multiple-match review when an ambiguous follow-up falls back to Krisp id', async () => {
-    const kid = `zzz_krisp_ambiguous_fallback_${Date.now()}`;
-    const base = await meetingsService.create(userId, null, {
-      date: '2030-05-01',
-      starts_at: '2030-05-01T15:00:00.000Z',
-      ends_at: '2030-05-01T16:00:00.000Z',
-      title: 'ZZZ Already Linked Candidate',
-      filename: `zzz-linked-${Date.now()}`,
-      body: 'Already linked candidate notes.',
-      internal: true,
-      krisp_meeting_id: kid,
-    });
-    const other = await meetingsService.create(userId, null, {
-      date: '2030-05-01',
-      starts_at: '2030-05-01T15:00:00.000Z',
-      ends_at: '2030-05-01T16:00:00.000Z',
-      title: 'ZZZ Equal Candidate',
-      filename: `zzz-equal-${Date.now()}`,
-      body: 'Equal candidate notes.',
-      internal: true,
-    });
-    createdMeetingIds.add(base.id);
-    createdMeetingIds.add(other.id);
-
-    const res = await svc.ingest(userId, krispNote({
-      id: kid,
-      event: 'transcript_generated',
-      start: '2030-05-01T15:00:00.000Z',
-      end: '2030-05-01T16:00:00.000Z',
-      content: 'Follow-up transcript on an ambiguous time match.',
-    }));
-    assert.equal(res.outcome, 'updated', JSON.stringify(res));
-    assert.equal(res.meeting_id, base.id, 'stored Krisp id chooses the row after time match is ambiguous');
-    assert.equal(res.needs_review, true);
-    assert.equal(res.review_reason, 'krisp_multiple_matches');
-
-    const after = await meetingsService.getById(userId, base.id);
-    assert.match(after.body, /Follow-up transcript on an ambiguous time match\./);
-    assert.equal(after.needs_review, true);
-    assert.equal(after.review_reason, 'krisp_multiple_matches');
+  it("is a 502 carrying nodemailer's error code when Gmail rejects the send", async () => {
+    const svc = new KrispWebhookService({ config: CONFIG, transport: fakeTransport({ fail: true }) });
+    await assert.rejects(svc.ingest(krispWebhookPayload()), (err) => err.statusCode === 502 && /\(EAUTH\)/.test(err.message));
   });
 });

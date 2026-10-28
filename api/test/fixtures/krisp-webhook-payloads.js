@@ -1,6 +1,6 @@
 // A real Krisp webhook payload, captured verbatim from a live "Send sample note"
 // delivery (the note_generated trigger). Mirrors fixtures/google-drive-zip.js: a
-// builder producing realistic input so the importer is tested against the EXACT
+// builder producing realistic input so the webhook is tested against the EXACT
 // shape Krisp sends — nested under `data`, the emoji title, Krisp's pre-rendered
 // `raw_content` markdown, and the fields we deliberately ignore
 // (speakers / participants / calendar_event_id). Overridable bits (event id,

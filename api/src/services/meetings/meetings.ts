@@ -176,47 +176,6 @@ export class MeetingsService {
     });
   }
 
-  // Krisp idempotency/linkage: find the LIVE meeting carrying this Krisp meeting
-  // id. Set on first import and carried onto the surviving row across a merge, so
-  // a re-delivery or a follow-up event (e.g. the transcript after the note) folds
-  // into the same meeting instead of spawning a duplicate. Returns the full row.
-  async findByKrispMeetingId(userId: number, krispMeetingId: string) {
-    if (!krispMeetingId) return null;
-    return withUser(userId, async (client) => {
-      const res = await client.query(
-        `SELECT ${MEETING_COLS} FROM meetings WHERE krisp_meeting_id = $1 AND deleted_at IS NULL LIMIT 1`,
-        [krispMeetingId]
-      );
-      return res.rows[0] || null;
-    });
-  }
-
-  // Candidate meetings for time-proximity matching (the Krisp webhook): LIVE
-  // meetings whose start instant falls within ±windowMs of `startsAtIso`. Returns
-  // the light fields the matcher needs (id, starts_at, ends_at, title,
-  // account_id, internal). The caller picks the winner (start proximity + overlap
-  // tiebreak); we just do the cheap index-backed range scan. Bounds are computed
-  // in JS so the query is a plain BETWEEN that uses idx_meetings_starts_at.
-  async findTimeMatchCandidates(userId: number, startsAtIso: string, windowMs: number) {
-    if (!startsAtIso) return [];
-    const center = new Date(startsAtIso).getTime();
-    if (Number.isNaN(center)) return [];
-    const lo = new Date(center - windowMs).toISOString();
-    const hi = new Date(center + windowMs).toISOString();
-    return withUser(userId, async (client) => {
-      const res = await client.query(
-        `SELECT id, starts_at, ends_at, title, account_id, internal
-           FROM meetings
-          WHERE deleted_at IS NULL
-            AND starts_at IS NOT NULL
-            AND starts_at BETWEEN $1::timestamptz AND $2::timestamptz
-          ORDER BY starts_at`,
-        [lo, hi]
-      );
-      return res.rows;
-    });
-  }
-
   // Soft-delete (tombstone) a meeting — used by the merge feature to retire the
   // absorbed row non-destructively (its un-pulled fields remain recoverable).
   // Distinct from delete() (hard delete for an explicit user delete). Returns the

@@ -61,6 +61,11 @@ const serverEnv = {
   // and could fire the daily news refresh (external Google News + local LLM).
   // The scheduler is exercised directly in news.test.js instead.
   SCHEDULER_ENABLED: 'false',
+  // Never send real email from the suite, even if Gmail creds are exported in the
+  // shell — the Krisp webhook test expects the unconfigured 503.
+  GMAIL_USER: '',
+  GMAIL_APP_PASSWORD: '',
+  KRISP_EMAIL_TO: '',
   // Throwaway AES master key for tests that prove write-only settings are
   // encrypted in the isolated database. This is not an LLM bearer token.
   PROVISIONING_SECRETS_KEY:

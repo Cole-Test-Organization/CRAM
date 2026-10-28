@@ -104,7 +104,7 @@ export class MeetingMergeHandler implements MergeHandler {
         bodyChoice === 'base' ? base.body :
         bodyChoice === 'source' ? source.body :
         `${(base.body || '').trimEnd()}\n\n---\n\n${source.body || ''}`.trim();
-      // Carry a Krisp link onto the survivor so future Krisp events fold in here.
+      // Keep any Krisp link (from the old Krisp → CRM import) on the survivor.
       const nextKrisp = base.krisp_meeting_id || source.krisp_meeting_id || null;
 
       if (nextInternal && nextAccountId) throw badRequest('An internal meeting cannot keep an account.');

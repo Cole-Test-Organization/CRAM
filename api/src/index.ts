@@ -131,7 +131,7 @@ const orgChartService = new OrgChartService();
 const importExportService = new ImportExportService({ contactsService, accountsService });
 const notesImportService = new NotesImportService({ meetingsService, accountsService, agentSettingsService });
 const calendarImportService = new CalendarImportService({ meetingsService, accountsService, contactsService, internalDomainsService });
-const krispWebhookService = new KrispWebhookService({ meetingsService });
+const krispWebhookService = new KrispWebhookService();
 const mergeService = new MergeService({ meetings: new MeetingMergeHandler({ meetingsService }) });
 const notesService = new NotesService();
 const backupService = new BackupService();
@@ -213,7 +213,7 @@ await fastify.register(swagger, {
       { name: 'import-export', description: 'Portable JSON bundles for moving accounts between tenants' },
       { name: 'notes-import', description: 'Bulk-import a notes directory (or .zip with text/.docx/text-PDF conversion): per-file local-LLM extraction → account resolution → meetings, with parked/triage fallback' },
       { name: 'calendar-import', description: 'Ingest a day of Google Calendar events (forwarded via tunnel): domain-classify attendees → contacts + account, one meeting per non-declined event' },
-      { name: 'krisp-webhook', description: 'Receive Krisp webhook deliveries (notes / transcript / outline) and import the notes: time-match the existing meeting and append, or park a new meeting for review' },
+      { name: 'krisp-webhook', description: 'Receive Krisp webhook deliveries (notes / transcript / outline) and email the meeting notes through Gmail; transcript / outline are acknowledged and ignored' },
       { name: 'merge', description: 'Generic merge of two same-type records (currently meetings): preview a plan, then apply selected fields/relations; the source is tombstoned (soft-deleted)' },
       { name: 'backup', description: 'Database backup configuration, pg_dump scheduling, list/restore/download' },
       { name: 'provisioning', description: 'Homelab/cloud infrastructure broker — deployments, resources, async lifecycle jobs, and encrypted secrets (Terraform + PAN-OS/AWS)' },

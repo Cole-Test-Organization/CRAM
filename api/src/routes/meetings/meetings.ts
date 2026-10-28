@@ -63,7 +63,7 @@ export default async function meetingRoutes(fastify: FastifyInstance, { meetings
         properties: {
           account_id: { type: 'integer', description: 'Account this meeting is tied to. Omit when internal=true.' },
           internal: { type: 'boolean', default: false, description: 'true for internal-only notes (no account). Default false.' },
-          needs_review: { type: 'boolean', description: 'Park this meeting/note for triage. Set true for uncertain meeting placement or Krisp matching; surfaced by GET /api/meetings?needs_review=true and cleared by the assign-account/reassign-account/update paths.' },
+          needs_review: { type: 'boolean', description: 'Park this meeting/note for triage. Set true for uncertain meeting placement; surfaced by GET /api/meetings?needs_review=true and cleared by the assign-account/reassign-account/update paths.' },
           review_reason: { type: ['string', 'null'], enum: [...REVIEW_REASON_ENUM, null], description: 'Typed reason when needs_review=true. Examples: account_unassigned, account_ambiguous, krisp_no_match, krisp_multiple_matches. Omit for manual review; null clears only when needs_review=false.' },
           date: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'Meeting date (YYYY-MM-DD)' },
           starts_at: { type: ['string', 'null'], format: 'date-time', description: 'Optional precise start as an ISO 8601 timestamp (e.g. "2026-05-31T13:30:00Z"). Powers the GUI Today timeline and time-of-day ordering; the calendar import sets it from the event start. Distinct from `date` (the calendar day). null/omit = no start time.' },
